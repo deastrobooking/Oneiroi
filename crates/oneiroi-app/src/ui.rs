@@ -5,12 +5,19 @@
 //! path the parameter/modulation system takes later.
 
 use oneiroi_core::FrameTime;
-use oneiroi_media::{DeckId, DeckState, FourDeckMixer, MediaHealth};
+use oneiroi_media::{
+    CrossfadeBus, DeckId, DeckState, DeckTransport, EndMode, FourDeckMixer, MediaHealth,
+};
+use oneiroi_render::DeckEffects;
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.
 pub struct UiState {
     pub master_opacity: f32,
     pub blackout: bool,
+    pub master_freeze: bool,
+    pub crossfader: f32,
+    pub equal_power: bool,
+    pub effects: [DeckEffects; 4],
     fps: FpsMeter,
 }
 
@@ -19,6 +26,10 @@ impl Default for UiState {
         Self {
             master_opacity: 1.0,
             blackout: false,
+            master_freeze: false,
+            crossfader: 0.5,
+            equal_power: true,
+            effects: [DeckEffects::default(); 4],
             fps: FpsMeter::default(),
         }
     }
@@ -54,14 +65,22 @@ impl FpsMeter {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum UiAction {
+    Restart(DeckId),
+    Seek(DeckId),
+}
+
 pub fn draw(
     ctx: &egui::Context,
     state: &mut UiState,
     mixer: &mut FourDeckMixer,
+    transports: &mut [DeckTransport; 4],
     time: &FrameTime,
     gpu_info: &str,
-) {
+) -> Vec<UiAction> {
     state.fps.push(time.delta);
+    let mut actions = Vec::new();
 
     egui::Window::new("oneiroi")
         .default_pos([16.0, 16.0])
@@ -89,7 +108,14 @@ pub fn draw(
                 .spacing([12.0, 12.0])
                 .show(ui, |ui| {
                     for (index, deck_id) in DeckId::ALL.into_iter().enumerate() {
-                        draw_deck(ui, mixer, deck_id);
+                        draw_deck(
+                            ui,
+                            mixer,
+                            deck_id,
+                            &mut transports[deck_id.index()],
+                            &mut state.effects[deck_id.index()],
+                            &mut actions,
+                        );
                         if index % 2 == 1 {
                             ui.end_row();
                         }
@@ -97,6 +123,19 @@ pub fn draw(
                 });
 
             ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("A");
+                ui.add(
+                    egui::Slider::new(&mut state.crossfader, 0.0..=1.0)
+                        .text("crossfader")
+                        .clamping(egui::SliderClamping::Always),
+                );
+                ui.label("B");
+                ui.checkbox(&mut state.equal_power, "equal power");
+                if ui.button("Center").clicked() {
+                    state.crossfader = 0.5;
+                }
+            });
             ui.horizontal(|ui| {
                 ui.add(
                     egui::Slider::new(&mut state.master_opacity, 0.0..=1.0)
@@ -106,11 +145,20 @@ pub fn draw(
                 if ui.selectable_label(state.blackout, "BLACKOUT").clicked() {
                     state.blackout = !state.blackout;
                 }
+                ui.checkbox(&mut state.master_freeze, "master freeze");
             });
         });
+    actions
 }
 
-fn draw_deck(ui: &mut egui::Ui, mixer: &mut FourDeckMixer, id: DeckId) {
+fn draw_deck(
+    ui: &mut egui::Ui,
+    mixer: &mut FourDeckMixer,
+    id: DeckId,
+    transport: &mut DeckTransport,
+    effects: &mut DeckEffects,
+    actions: &mut Vec<UiAction>,
+) {
     let selected = mixer.selected() == id;
     let frame = egui::Frame::group(ui.style())
         .fill(if selected {
@@ -197,10 +245,59 @@ fn draw_deck(ui: &mut egui::Ui, mixer: &mut FourDeckMixer, id: DeckId) {
         }
 
         let deck = mixer.deck_mut(id);
-        ui.add(
-            egui::Slider::new(&mut deck.level, 0.0..=1.0)
-                .text("level")
-                .clamping(egui::SliderClamping::Always),
-        );
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::Slider::new(&mut deck.level, 0.0..=1.0)
+                    .text("level")
+                    .clamping(egui::SliderClamping::Always),
+            );
+            ui.selectable_value(&mut deck.bus, CrossfadeBus::Left, "Bus A");
+            ui.selectable_value(&mut deck.bus, CrossfadeBus::Right, "Bus B");
+        });
+        ui.horizontal(|ui| {
+            if ui
+                .button(if transport.playing { "Pause" } else { "Play" })
+                .clicked()
+            {
+                transport.playing = !transport.playing;
+            }
+            if ui.button("Restart").clicked() {
+                transport.restart();
+                actions.push(UiAction::Restart(id));
+            }
+            ui.checkbox(&mut transport.frozen, "Freeze");
+            let mut looping = transport.end_mode == EndMode::Loop;
+            if ui.checkbox(&mut looping, "Loop").changed() {
+                transport.end_mode = if looping {
+                    EndMode::Loop
+                } else {
+                    EndMode::OneShot
+                };
+            }
+            ui.add(
+                egui::Slider::new(&mut transport.speed, 0.25..=4.0)
+                    .text("speed")
+                    .logarithmic(true),
+            );
+        });
+        if let Some(duration) = transport.duration.filter(|duration| *duration > 0.0) {
+            let mut progress = (transport.position / duration).clamp(0.0, 1.0) as f32;
+            if ui
+                .add(egui::Slider::new(&mut progress, 0.0..=1.0).text("playhead"))
+                .changed()
+            {
+                transport.seek_normalized(progress);
+                actions.push(UiAction::Seek(id));
+            }
+        }
+        egui::CollapsingHeader::new("GPU effects")
+            .id_salt(format!("effects-{}", id.label()))
+            .show(ui, |ui| {
+                ui.add(egui::Slider::new(&mut effects.contrast, 0.0..=2.0).text("contrast"));
+                ui.add(egui::Slider::new(&mut effects.saturation, 0.0..=2.0).text("saturation"));
+                ui.add(egui::Slider::new(&mut effects.pixelate, 0.0..=0.1).text("pixelate"));
+                ui.add(egui::Slider::new(&mut effects.luma_key, 0.0..=1.0).text("luma key"));
+                ui.checkbox(&mut effects.mirror, "mirror");
+            });
     });
 }

@@ -9,6 +9,6 @@ pub mod triangle;
 pub mod upload;
 
 pub use gpu::Gpu;
-pub use mixer::{FourDeckCompositor, MixerParams, MixerUploadError};
+pub use mixer::{DeckEffects, FourDeckCompositor, MixerParams, MixerUploadError};
 pub use triangle::{Globals, TrianglePass};
 pub use upload::{CompressedTexture, UploadError};

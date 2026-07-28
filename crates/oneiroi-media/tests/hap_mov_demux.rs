@@ -253,3 +253,27 @@ fn bounded_deck_worker_decodes_off_the_calling_thread() {
         VideoFramePayload::Rgba8(ref rgba) if rgba.data[..4] == [255, 0, 0, 255]
     ));
 }
+
+#[test]
+fn deck_worker_seek_discards_pre_target_frames_and_changes_epoch() {
+    let fixture = Fixture::raw_rgba_mov();
+    let decoder = DeckDecoder::spawn(2);
+    decoder.load_at(
+        fixture.path.clone(),
+        DecodePath::FfmpegVideo,
+        43,
+        Some(MediaTime::new(1, 30).unwrap()),
+    );
+
+    assert_eq!(
+        decoder.recv_event_timeout(Duration::from_secs(2)).unwrap(),
+        DecoderEvent::Loaded { generation: 43 }
+    );
+    let frame = decoder.recv_frame_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(frame.generation, 43);
+    assert_eq!(frame.pts, MediaTime::new(1, 30).unwrap());
+    assert!(matches!(
+        frame.payload,
+        VideoFramePayload::Rgba8(ref rgba) if rgba.data[..4] == [0, 255, 0, 255]
+    ));
+}

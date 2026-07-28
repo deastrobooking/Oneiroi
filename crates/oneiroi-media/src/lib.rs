@@ -11,6 +11,7 @@ mod frame;
 mod mixer;
 mod probe;
 mod schedule;
+mod transport;
 mod worker;
 
 pub use decode_ffmpeg::{DecodedRgbaFrame, FfmpegDecodeError, FfmpegVideoDecoder};
@@ -19,11 +20,13 @@ pub use demux::{
 };
 pub use frame::{RgbaFrame, VideoFrame, VideoFramePayload};
 pub use mixer::{
-    Deck, DeckId, DeckState, FourDeckMixer, ImportRequest, ImportResult, MediaImporter, SubmitError,
+    CrossfadeBus, Deck, DeckId, DeckState, FourDeckMixer, ImportRequest, ImportResult,
+    MediaImporter, SubmitError, crossfade_gains,
 };
 pub use probe::{AlphaMode, DecodePath, MediaHealth, MovieMetadata, ProbeError, probe_movie};
 pub use schedule::{
     DiscontinuityPolicy, EnqueueError, FrameScheduler, FrameSelection, ScheduledFrame,
     SchedulerError, SchedulerStats,
 };
+pub use transport::{DeckTransport, EndMode, TransportEvent};
 pub use worker::{DeckDecoder, DecoderEvent};

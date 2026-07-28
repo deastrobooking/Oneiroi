@@ -39,30 +39,8 @@ impl CompressedTexture {
         {
             return Err(UploadError::BcTexturesUnsupported);
         }
+        validate_plane(plane)?;
         let [coded_width, coded_height] = plane.coded_extent;
-        let [visible_width, visible_height] = plane.visible_extent;
-        if coded_width == 0
-            || coded_height == 0
-            || coded_width % 4 != 0
-            || coded_height % 4 != 0
-            || visible_width == 0
-            || visible_height == 0
-            || visible_width > coded_width
-            || visible_height > coded_height
-        {
-            return Err(UploadError::InvalidExtent);
-        }
-
-        let expected = plane
-            .format
-            .expected_bytes(visible_width, visible_height)
-            .map_err(|_| UploadError::InvalidExtent)?;
-        if plane.data.len() != expected {
-            return Err(UploadError::DataSize {
-                actual: plane.data.len(),
-                expected,
-            });
-        }
 
         let format = wgpu_format(plane.format);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -80,28 +58,7 @@ impl CompressedTexture {
             view_formats: &[],
         });
 
-        let bytes_per_row = (coded_width / 4)
-            .checked_mul(plane.format.bytes_per_block() as u32)
-            .ok_or(UploadError::LayoutOverflow)?;
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &plane.data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: Some(coded_height / 4),
-            },
-            wgpu::Extent3d {
-                width: coded_width,
-                height: coded_height,
-                depth_or_array_layers: 1,
-            },
-        );
+        write_plane(queue, &texture, plane)?;
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         Ok(Self {
@@ -112,6 +69,81 @@ impl CompressedTexture {
             visible_extent: plane.visible_extent,
         })
     }
+
+    /// Update an existing allocation when format and coded size are stable.
+    ///
+    /// Returns `false` when the caller must replace the texture.
+    pub fn update(
+        &mut self,
+        queue: &wgpu::Queue,
+        plane: &DecodedPlane,
+    ) -> Result<bool, UploadError> {
+        validate_plane(plane)?;
+        if self.format != plane.format || self.coded_extent != plane.coded_extent {
+            return Ok(false);
+        }
+        write_plane(queue, &self.texture, plane)?;
+        self.visible_extent = plane.visible_extent;
+        Ok(true)
+    }
+}
+
+fn validate_plane(plane: &DecodedPlane) -> Result<(), UploadError> {
+    let [coded_width, coded_height] = plane.coded_extent;
+    let [visible_width, visible_height] = plane.visible_extent;
+    if coded_width == 0
+        || coded_height == 0
+        || coded_width % 4 != 0
+        || coded_height % 4 != 0
+        || visible_width == 0
+        || visible_height == 0
+        || visible_width > coded_width
+        || visible_height > coded_height
+    {
+        return Err(UploadError::InvalidExtent);
+    }
+    let expected = plane
+        .format
+        .expected_bytes(visible_width, visible_height)
+        .map_err(|_| UploadError::InvalidExtent)?;
+    if plane.data.len() != expected {
+        return Err(UploadError::DataSize {
+            actual: plane.data.len(),
+            expected,
+        });
+    }
+    Ok(())
+}
+
+fn write_plane(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    plane: &DecodedPlane,
+) -> Result<(), UploadError> {
+    let [coded_width, coded_height] = plane.coded_extent;
+    let bytes_per_row = (coded_width / 4)
+        .checked_mul(plane.format.bytes_per_block() as u32)
+        .ok_or(UploadError::LayoutOverflow)?;
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &plane.data,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(bytes_per_row),
+            rows_per_image: Some(coded_height / 4),
+        },
+        wgpu::Extent3d {
+            width: coded_width,
+            height: coded_height,
+            depth_or_array_layers: 1,
+        },
+    );
+    Ok(())
 }
 
 fn wgpu_format(format: CompressedPlaneFormat) -> wgpu::TextureFormat {

@@ -16,6 +16,22 @@ pub enum DeckId {
     D,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CrossfadeBus {
+    Left,
+    Right,
+}
+
+pub fn crossfade_gains(position: f32, equal_power: bool) -> [f32; 2] {
+    let position = position.clamp(0.0, 1.0);
+    if equal_power {
+        let phase = position * std::f32::consts::FRAC_PI_2;
+        [phase.cos(), phase.sin()]
+    } else {
+        [1.0 - position, position]
+    }
+}
+
 impl DeckId {
     pub const ALL: [Self; 4] = [Self::A, Self::B, Self::C, Self::D];
 
@@ -60,6 +76,7 @@ pub struct Deck {
     pub id: DeckId,
     pub generation: u64,
     pub level: f32,
+    pub bus: CrossfadeBus,
     pub state: DeckState,
 }
 
@@ -69,6 +86,11 @@ impl Deck {
             id,
             generation: 0,
             level: 1.0,
+            bus: if id.index().is_multiple_of(2) {
+                CrossfadeBus::Left
+            } else {
+                CrossfadeBus::Right
+            },
             state: DeckState::Empty,
         }
     }
@@ -244,6 +266,15 @@ mod tests {
     fn mixer_has_exactly_four_named_decks() {
         let mixer = FourDeckMixer::default();
         assert_eq!(DeckId::ALL.map(|id| mixer.deck(id).id), DeckId::ALL);
+    }
+
+    #[test]
+    fn crossfade_curves_reach_clean_endpoints() {
+        assert_eq!(crossfade_gains(0.0, false), [1.0, 0.0]);
+        assert_eq!(crossfade_gains(1.0, false), [0.0, 1.0]);
+        let center = crossfade_gains(0.5, true);
+        assert!((center[0] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6);
+        assert!((center[1] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6);
     }
 
     #[test]

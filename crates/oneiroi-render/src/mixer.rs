@@ -12,14 +12,45 @@ use crate::{CompressedTexture, UploadError};
 struct MixerGlobals {
     levels: [f32; 4],
     source_kinds: [u32; 4],
+    contrast: [f32; 4],
+    saturation: [f32; 4],
+    pixelate: [f32; 4],
+    luma_key: [f32; 4],
+    mirror: [u32; 4],
     master_opacity: f32,
     blackout: u32,
     _padding: [u32; 2],
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct DeckEffects {
+    /// 1.0 is neutral.
+    pub contrast: f32,
+    /// 1.0 is neutral, 0.0 is monochrome.
+    pub saturation: f32,
+    /// Normalized block size. Zero disables pixelation.
+    pub pixelate: f32,
+    /// Luma threshold. Zero disables the key.
+    pub luma_key: f32,
+    pub mirror: bool,
+}
+
+impl Default for DeckEffects {
+    fn default() -> Self {
+        Self {
+            contrast: 1.0,
+            saturation: 1.0,
+            pixelate: 0.0,
+            luma_key: 0.0,
+            mirror: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct MixerParams {
     pub levels: [f32; 4],
+    pub effects: [DeckEffects; 4],
     pub master_opacity: f32,
     pub blackout: bool,
 }
@@ -28,6 +59,7 @@ impl Default for MixerParams {
     fn default() -> Self {
         Self {
             levels: [1.0; 4],
+            effects: [DeckEffects::default(); 4],
             master_opacity: 1.0,
             blackout: false,
         }
@@ -50,8 +82,9 @@ pub enum MixerUploadError {
 
 enum TextureResource {
     Rgba {
-        _texture: wgpu::Texture,
+        texture: wgpu::Texture,
         view: wgpu::TextureView,
+        extent: [u32; 2],
     },
     Compressed(CompressedTexture),
 }
@@ -178,6 +211,27 @@ impl FourDeckCompositor {
         if deck >= 4 {
             return Err(MixerUploadError::InvalidDeck(deck));
         }
+        if let VideoFramePayload::Rgba8(frame) = payload
+            && let Some(DeckSource {
+                primary:
+                    TextureResource::Rgba {
+                        texture, extent, ..
+                    },
+                secondary: None,
+                kind: 0,
+            }) = self.sources[deck].as_mut()
+            && *extent == frame.extent
+        {
+            validate_rgba(frame)?;
+            write_rgba(queue, texture, frame);
+            return Ok(());
+        }
+        if let VideoFramePayload::BlockCompressed(frame) = payload
+            && let Some(source) = self.sources[deck].as_mut()
+            && update_hap_source(queue, source, frame)?
+        {
+            return Ok(());
+        }
         let source = match payload {
             VideoFramePayload::Rgba8(frame) => DeckSource {
                 primary: upload_rgba(device, queue, frame)?,
@@ -242,12 +296,23 @@ impl FourDeckCompositor {
         let kinds = std::array::from_fn(|index| {
             self.sources[index].as_ref().map_or(0, |source| source.kind)
         });
+        let contrast = std::array::from_fn(|index| params.effects[index].contrast.clamp(0.0, 4.0));
+        let saturation =
+            std::array::from_fn(|index| params.effects[index].saturation.clamp(0.0, 4.0));
+        let pixelate = std::array::from_fn(|index| params.effects[index].pixelate.clamp(0.0, 0.5));
+        let luma_key = std::array::from_fn(|index| params.effects[index].luma_key.clamp(0.0, 1.0));
+        let mirror = std::array::from_fn(|index| u32::from(params.effects[index].mirror));
         queue.write_buffer(
             &self.globals,
             0,
             bytemuck::bytes_of(&MixerGlobals {
                 levels: params.levels,
                 source_kinds: kinds,
+                contrast,
+                saturation,
+                pixelate,
+                luma_key,
+                mirror,
                 master_opacity: params.master_opacity,
                 blackout: u32::from(params.blackout),
                 _padding: [0; 2],
@@ -318,6 +383,46 @@ impl FourDeckCompositor {
     }
 }
 
+fn update_hap_source(
+    queue: &wgpu::Queue,
+    source: &mut DeckSource,
+    frame: &oneiroi_hap::DecodedFrame,
+) -> Result<bool, MixerUploadError> {
+    let color = frame
+        .planes
+        .iter()
+        .find(|plane| plane.format != CompressedPlaneFormat::Bc4Alpha)
+        .or_else(|| frame.planes.first())
+        .ok_or(MixerUploadError::UnsupportedHapPlanes)?;
+    let alpha = frame
+        .planes
+        .iter()
+        .find(|plane| plane.format == CompressedPlaneFormat::Bc4Alpha);
+    let kind = match (color.format, alpha) {
+        (CompressedPlaneFormat::Bc3ScaledYCoCg, Some(_)) => 3,
+        (CompressedPlaneFormat::Bc3ScaledYCoCg, None) => 1,
+        (CompressedPlaneFormat::Bc4Alpha, _) => 2,
+        (_, None) if frame.planes.len() == 1 => 0,
+        _ => return Err(MixerUploadError::UnsupportedHapPlanes),
+    };
+    if source.kind != kind {
+        return Ok(false);
+    }
+    let TextureResource::Compressed(primary) = &mut source.primary else {
+        return Ok(false);
+    };
+    if !primary.update(queue, color)? {
+        return Ok(false);
+    }
+    match (alpha, source.secondary.as_mut()) {
+        (None, None) => Ok(true),
+        (Some(plane), Some(TextureResource::Compressed(secondary))) => {
+            secondary.update(queue, plane).map_err(Into::into)
+        }
+        _ => Ok(false),
+    }
+}
+
 fn sampler_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -369,6 +474,32 @@ fn upload_rgba(
     queue: &wgpu::Queue,
     frame: &RgbaFrame,
 ) -> Result<TextureResource, MixerUploadError> {
+    validate_rgba(frame)?;
+    let [width, height] = frame.extent;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("rgba-deck-source"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    write_rgba(queue, &texture, frame);
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    Ok(TextureResource::Rgba {
+        texture,
+        view,
+        extent: frame.extent,
+    })
+}
+
+fn validate_rgba(frame: &RgbaFrame) -> Result<(), MixerUploadError> {
     let [width, height] = frame.extent;
     let expected = usize::try_from(width)
         .ok()
@@ -384,23 +515,14 @@ fn upload_rgba(
             expected,
         });
     }
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("rgba-deck-source"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
+    Ok(())
+}
+
+fn write_rgba(queue: &wgpu::Queue, texture: &wgpu::Texture, frame: &RgbaFrame) {
+    let [width, height] = frame.extent;
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
-            texture: &texture,
+            texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
@@ -417,9 +539,4 @@ fn upload_rgba(
             depth_or_array_layers: 1,
         },
     );
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    Ok(TextureResource::Rgba {
-        _texture: texture,
-        view,
-    })
 }

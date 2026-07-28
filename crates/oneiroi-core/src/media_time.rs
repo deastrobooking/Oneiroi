@@ -84,6 +84,14 @@ impl MediaTime {
             i64::try_from(timescale).map_err(|_| MediaTimeError::Overflow)?,
         )
     }
+
+    pub fn checked_sub(self, other: Self) -> Result<Self, MediaTimeError> {
+        let negated = other.ticks.checked_neg().ok_or(MediaTimeError::Overflow)?;
+        self.checked_add(Self {
+            ticks: negated,
+            timescale: other.timescale,
+        })
+    }
 }
 
 impl fmt::Debug for MediaTime {
@@ -155,5 +163,14 @@ mod tests {
             .checked_add(MediaTime::new(1, 30).unwrap())
             .unwrap();
         assert_eq!(sum, MediaTime::new(3, 40).unwrap());
+    }
+
+    #[test]
+    fn subtracts_exactly() {
+        let difference = MediaTime::new(5, 4)
+            .unwrap()
+            .checked_sub(MediaTime::new(1, 2).unwrap())
+            .unwrap();
+        assert_eq!(difference, MediaTime::new(3, 4).unwrap());
     }
 }

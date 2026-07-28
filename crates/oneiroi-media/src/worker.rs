@@ -5,6 +5,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use oneiroi_core::MediaTime;
 use oneiroi_hap::Decoder as HapDecoder;
 
 use crate::{DecodePath, FfmpegVideoDecoder, HapDemuxer, ScheduledFrame, VideoFramePayload};
@@ -15,6 +16,7 @@ enum DecoderCommand {
         path: PathBuf,
         decode_path: DecodePath,
         generation: u64,
+        start_at: Option<MediaTime>,
     },
     Stop,
     Shutdown,
@@ -52,10 +54,26 @@ impl DeckDecoder {
     }
 
     pub fn load(&self, path: PathBuf, decode_path: DecodePath, generation: u64) {
+        self.load_at(path, decode_path, generation, None);
+    }
+
+    /// Reopens the source and discards decoded frames before `start_at`.
+    ///
+    /// Reopening is intentionally performed on the worker. It provides a
+    /// codec-independent seek path while container-specific random access is
+    /// introduced, without ever blocking the render thread.
+    pub fn load_at(
+        &self,
+        path: PathBuf,
+        decode_path: DecodePath,
+        generation: u64,
+        start_at: Option<MediaTime>,
+    ) {
         let _ = self.commands.send(DecoderCommand::Load {
             path,
             decode_path,
             generation,
+            start_at,
         });
     }
 
@@ -100,10 +118,12 @@ enum Session {
         demuxer: HapDemuxer,
         decoder: HapDecoder,
         generation: u64,
+        skip_before: Option<MediaTime>,
     },
     Ffmpeg {
         decoder: FfmpegVideoDecoder,
         generation: u64,
+        skip_before: Option<MediaTime>,
     },
 }
 
@@ -120,33 +140,47 @@ impl Session {
                 demuxer,
                 decoder,
                 generation,
-            } => demuxer
-                .next_scheduled(decoder, *generation)
-                .map(|frame| {
-                    frame.map(|frame| ScheduledFrame {
-                        pts: frame.pts,
-                        duration: frame.duration,
-                        generation: frame.generation,
-                        sequence: frame.sequence,
-                        payload: VideoFramePayload::BlockCompressed(frame.payload),
-                    })
-                })
-                .map_err(|error| error.to_string()),
+                skip_before,
+            } => loop {
+                let frame = demuxer
+                    .next_scheduled(decoder, *generation)
+                    .map_err(|error| error.to_string())?;
+                let Some(frame) = frame else {
+                    return Ok(None);
+                };
+                if skip_before.is_some_and(|target| frame.pts < target) {
+                    continue;
+                }
+                *skip_before = None;
+                return Ok(Some(ScheduledFrame {
+                    pts: frame.pts,
+                    duration: frame.duration,
+                    generation: frame.generation,
+                    sequence: frame.sequence,
+                    payload: VideoFramePayload::BlockCompressed(frame.payload),
+                }));
+            },
             Self::Ffmpeg {
                 decoder,
                 generation,
-            } => decoder
-                .next_frame()
-                .map(|frame| {
-                    frame.map(|frame| ScheduledFrame {
-                        pts: frame.pts,
-                        duration: frame.duration,
-                        generation: *generation,
-                        sequence: frame.sequence,
-                        payload: VideoFramePayload::Rgba8(frame.pixels),
-                    })
-                })
-                .map_err(|error| error.to_string()),
+                skip_before,
+            } => loop {
+                let frame = decoder.next_frame().map_err(|error| error.to_string())?;
+                let Some(frame) = frame else {
+                    return Ok(None);
+                };
+                if skip_before.is_some_and(|target| frame.pts < target) {
+                    continue;
+                }
+                *skip_before = None;
+                return Ok(Some(ScheduledFrame {
+                    pts: frame.pts,
+                    duration: frame.duration,
+                    generation: *generation,
+                    sequence: frame.sequence,
+                    payload: VideoFramePayload::Rgba8(frame.pixels),
+                }));
+            },
         }
     }
 }
@@ -231,6 +265,7 @@ fn handle_command(
             path,
             decode_path,
             generation,
+            start_at,
         } => {
             *pending = None;
             let opened = match decode_path {
@@ -239,12 +274,14 @@ fn handle_command(
                         demuxer,
                         decoder: HapDecoder::default(),
                         generation,
+                        skip_before: start_at,
                     })
                     .map_err(|error| error.to_string()),
                 DecodePath::FfmpegVideo => FfmpegVideoDecoder::open(&path)
                     .map(|decoder| Session::Ffmpeg {
                         decoder,
                         generation,
+                        skip_before: start_at,
                     })
                     .map_err(|error| error.to_string()),
             };

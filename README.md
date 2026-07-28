@@ -25,9 +25,17 @@ target OS:
   fallback conversion to RGBA.
 - Four-source linear-light GPU composition with per-deck levels, master
   opacity and next-frame blackout.
+- Per-deck play/pause, restart, freeze, loop/one-shot, 0.25–4× playback and
+  asynchronous generation-safe seeking.
+- Assignable A/B buses with linear or equal-power crossfading.
+- Native per-deck contrast, saturation, pixelate, luma-key and mirror controls.
+- Reused RGBA and HAP GPU texture allocations for stable-resolution clips.
+- Device-neutral MIDI learn/mapping state with toggle, momentary, continuous
+  and soft-takeover behavior, ready for a platform MIDI input adapter.
 
-Reusable CPU frame leases, seeking/loop prefetch, crossfader routing, effects
-and MIDI have not landed yet.
+Reusable CPU frame leases, keyframe-indexed seeks, a platform MIDI input
+adapter, blur/feedback effects, clip slots, BPM quantization and project
+persistence have not landed yet.
 
 ```sh
 cargo run          # the app; select a deck and drop movies
@@ -37,6 +45,9 @@ cargo run -p oneiroi-media --example probe_movie -- footage.mp4
 cargo run -p oneiroi-render --example dump_frame > frame.raw \
   && ffmpeg -f rawvideo -pix_fmt rgba -s 512x512 -i frame.raw -y frame.png
 ```
+
+Safety/performance keys: `B` toggles blackout, `Space` toggles master freeze,
+arrow keys move the crossfader, and `Home` centers it.
 
 In the app, click deck A, B, C or D and drag a movie onto the window. Imports
 are probed on a background worker and the next deck is selected automatically.

@@ -1,5 +1,5 @@
 use oneiroi_media::{RgbaFrame, VideoFramePayload};
-use oneiroi_render::{FourDeckCompositor, MixerParams};
+use oneiroi_render::{DeckEffects, FourDeckCompositor, MixerParams};
 
 const SIZE: u32 = 4;
 const ROW_BYTES: u32 = 256;
@@ -116,4 +116,34 @@ fn composites_decks_in_linear_light_and_honors_blackout() {
         },
     );
     assert_eq!(&black[..4], &[0, 0, 0, 255]);
+
+    // Same-sized frames update the existing GPU texture allocation.
+    mixer.clear_deck(1);
+    mixer
+        .upload(&device, &queue, 0, &solid([0, 0, 255, 255]))
+        .unwrap();
+    let blue = render(&device, &queue, &mut mixer, MixerParams::default());
+    assert_eq!(&blue[..4], &[0, 0, 255, 255]);
+
+    let monochrome = render(
+        &device,
+        &queue,
+        &mut mixer,
+        MixerParams {
+            effects: std::array::from_fn(|index| {
+                if index == 0 {
+                    DeckEffects {
+                        saturation: 0.0,
+                        ..Default::default()
+                    }
+                } else {
+                    DeckEffects::default()
+                }
+            }),
+            ..Default::default()
+        },
+    );
+    assert!(
+        monochrome[0].abs_diff(monochrome[1]) <= 1 && monochrome[1].abs_diff(monochrome[2]) <= 1
+    );
 }

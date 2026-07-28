@@ -10,13 +10,15 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use oneiroi_core::{Clock, MediaTime};
 use oneiroi_media::{
-    DeckDecoder, DeckId, DeckState, DecoderEvent, DiscontinuityPolicy, FourDeckMixer,
-    FrameScheduler, FrameSelection, MediaImporter, SubmitError, VideoFramePayload,
+    CrossfadeBus, DeckDecoder, DeckId, DeckState, DeckTransport, DecoderEvent, DiscontinuityPolicy,
+    FourDeckMixer, FrameScheduler, FrameSelection, MediaImporter, SubmitError, TransportEvent,
+    VideoFramePayload, crossfade_gains,
 };
 use oneiroi_render::{FourDeckCompositor, Gpu, MixerParams};
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 fn main() -> Result<()> {
@@ -53,7 +55,8 @@ struct State {
     importer: MediaImporter,
     decoders: [DeckDecoder; 4],
     schedulers: [FrameScheduler<VideoFramePayload>; 4],
-    launch_times: [Instant; 4],
+    transports: [DeckTransport; 4],
+    last_transport_updates: [Instant; 4],
     media_origins: [Option<MediaTime>; 4],
     playback_generations: [u64; 4],
 }
@@ -100,6 +103,13 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.gpu.resize(size.width, size.height),
             WindowEvent::DroppedFile(path) => state.import_movie(path),
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed && !event.repeat =>
+            {
+                if let PhysicalKey::Code(code) = event.physical_key {
+                    state.handle_key(code);
+                }
+            }
             WindowEvent::RedrawRequested => state.render(),
             _ => {}
         }
@@ -111,6 +121,22 @@ impl ApplicationHandler for App {
 }
 
 impl State {
+    fn handle_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::KeyB => self.ui.blackout = !self.ui.blackout,
+            KeyCode::Space => self.ui.master_freeze = !self.ui.master_freeze,
+            KeyCode::ArrowLeft => {
+                self.ui.crossfader = (self.ui.crossfader - 0.05).max(0.0);
+            }
+            KeyCode::ArrowRight => {
+                self.ui.crossfader = (self.ui.crossfader + 0.05).min(1.0);
+            }
+            KeyCode::Home => self.ui.crossfader = 0.5,
+            _ => return,
+        }
+        self.window.request_redraw();
+    }
+
     fn new(event_loop: &ActiveEventLoop) -> Result<Self> {
         let attrs = Window::default_attributes()
             .with_title("oneiroi")
@@ -167,7 +193,8 @@ impl State {
             schedulers: std::array::from_fn(|_| {
                 FrameScheduler::new(4, 0, DiscontinuityPolicy::Blank).expect("non-zero frame queue")
             }),
-            launch_times: [Instant::now(); 4],
+            transports: [DeckTransport::default(); 4],
+            last_transport_updates: [Instant::now(); 4],
             media_origins: [None; 4],
             playback_generations: [0; 4],
         })
@@ -219,18 +246,60 @@ impl State {
         self.compositor.clear_deck(index);
         self.schedulers[index] = FrameScheduler::new(4, generation, DiscontinuityPolicy::Blank)
             .expect("non-zero frame queue");
-        self.launch_times[index] = Instant::now();
+        let duration = match &self.mixer.deck(deck).state {
+            DeckState::Ready(movie) => movie.duration.map(MediaTime::as_seconds),
+            _ => None,
+        };
+        self.transports[index].reset(duration);
+        self.last_transport_updates[index] = Instant::now();
         self.media_origins[index] = None;
         self.playback_generations[index] = generation;
+    }
+
+    fn seek_deck(&mut self, deck: DeckId) {
+        let index = deck.index();
+        let DeckState::Ready(movie) = &self.mixer.deck(deck).state else {
+            return;
+        };
+        let path = movie.path.clone();
+        let decode_path = movie.decode_path;
+        let epoch = self.playback_generations[index].wrapping_add(1);
+        self.playback_generations[index] = epoch;
+        self.schedulers[index] = FrameScheduler::new(4, epoch, DiscontinuityPolicy::HoldLastFrame)
+            .expect("non-zero frame queue");
+        let target = self.media_origins[index].and_then(|origin| {
+            let micros =
+                (self.transports[index].position * 1_000_000.0).clamp(0.0, i64::MAX as f64) as i64;
+            origin
+                .checked_add(MediaTime::new(micros, 1_000_000).ok()?)
+                .ok()
+        });
+        self.decoders[index].load_at(path, decode_path, epoch, target);
+        self.last_transport_updates[index] = Instant::now();
     }
 
     fn update_playback(&mut self, now: Instant) {
         for deck in DeckId::ALL {
             let index = deck.index();
-            let generation = self.mixer.deck(deck).generation;
-            if generation != self.playback_generations[index] {
-                self.reset_playback(deck, generation);
+            let media_generation = self.mixer.deck(deck).generation;
+            if media_generation != self.playback_generations[index]
+                && !matches!(self.mixer.deck(deck).state, DeckState::Ready(_))
+            {
+                self.reset_playback(deck, media_generation);
             }
+            let delta = now
+                .saturating_duration_since(self.last_transport_updates[index])
+                .as_secs_f64();
+            self.last_transport_updates[index] = now;
+            if !self.ui.master_freeze
+                && matches!(
+                    self.transports[index].advance(delta),
+                    TransportEvent::Loop { .. }
+                )
+            {
+                self.seek_deck(deck);
+            }
+            let generation = self.playback_generations[index];
             while let Ok(event) = self.decoders[index].try_event() {
                 if let DecoderEvent::Error {
                     generation: failed_generation,
@@ -261,10 +330,8 @@ impl State {
             let Some(origin) = self.media_origins[index] else {
                 continue;
             };
-            let elapsed = now
-                .saturating_duration_since(self.launch_times[index])
-                .as_micros()
-                .min(i64::MAX as u128) as i64;
+            let elapsed =
+                (self.transports[index].position * 1_000_000.0).clamp(0.0, i64::MAX as f64) as i64;
             let Ok(target) =
                 origin.checked_add(MediaTime::new(elapsed, 1_000_000).expect("positive timescale"))
             else {
@@ -289,15 +356,24 @@ impl State {
         // --- UI pass: pure CPU, produces geometry for the GPU pass below.
         let ctx = self.egui_state.egui_ctx().clone();
         let raw_input = self.egui_state.take_egui_input(&self.window);
+        let mut actions = Vec::new();
         let output = ctx.run_ui(raw_input, |ui| {
-            ui::draw(
+            actions = ui::draw(
                 ui.ctx(),
                 &mut self.ui,
                 &mut self.mixer,
+                &mut self.transports,
                 &time,
                 &self.gpu_info,
             );
         });
+        for action in actions {
+            match action {
+                ui::UiAction::Restart(deck) | ui::UiAction::Seek(deck) => {
+                    self.seek_deck(deck);
+                }
+            }
+        }
         self.egui_state
             .handle_platform_output(&self.window, output.platform_output);
         let pixels_per_point = ctx.pixels_per_point();
@@ -340,11 +416,17 @@ impl State {
                 levels: std::array::from_fn(|index| {
                     let deck = self.mixer.deck(DeckId::ALL[index]);
                     if matches!(deck.state, DeckState::Ready(_)) {
-                        deck.level
+                        let gains = crossfade_gains(self.ui.crossfader, self.ui.equal_power);
+                        let bus_gain = match deck.bus {
+                            CrossfadeBus::Left => gains[0],
+                            CrossfadeBus::Right => gains[1],
+                        };
+                        deck.level * bus_gain
                     } else {
                         0.0
                     }
                 }),
+                effects: self.ui.effects,
                 master_opacity: self.ui.master_opacity,
                 blackout: self.ui.blackout,
             },
