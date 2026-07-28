@@ -4,9 +4,16 @@ Live-performance video app: real-time clip playback with a GPU effect chain.
 
 ## Status
 
-Milestone 1 of 10 — wgpu + winit + egui proven on the target OS. A spinning
-triangle driven by a uniform buffer, with an egui overlay whose slider feeds
-that uniform. No media, no effects, no MIDI yet.
+The display foundation and first HAP credibility slice are proven on the
+target OS:
+
+- wgpu + winit + egui render loop with explicit linear/sRGB handling.
+- Vidvox's reference HAP decoder behind a bounded safe Rust API.
+- BC1, BC3, BC4, BC6H and BC7 plane models, including HAP Q and HAP Q Alpha.
+- Direct block-compressed upload and sampling; HAP is never expanded to CPU
+  RGBA.
+
+MOV demux, timestamped playback, effects and MIDI have not landed yet.
 
 ```sh
 cargo run          # the app
@@ -20,7 +27,9 @@ cargo run -p oneiroi-render --example dump_frame > frame.raw \
 | Crate | Owns |
 |---|---|
 | `oneiroi-core` | Clock, parameters, modulation, scene graph. No GPU, no I/O — testable headless. |
-| `oneiroi-media` | Decode: demux, HAP, ffmpeg fallbacks, frame ring buffers. Empty until M2. |
+| `oneiroi-hap-sys` | Pinned Vidvox HAP C reference source and raw bindings. |
+| `oneiroi-hap` | Bounded safe HAP decode to GPU-native BC planes. |
+| `oneiroi-media` | Demux, codec dispatch, frame queues and scheduling. |
 | `oneiroi-render` | wgpu device, surface, render passes. Knows nothing about winit or egui. |
 | `oneiroi-io` | MIDI, OSC, audio capture, Ableton Link. Empty until M7. |
 | `oneiroi-app` | Windowing, UI, wiring. |

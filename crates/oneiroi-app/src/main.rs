@@ -101,7 +101,12 @@ impl State {
         let gpu = pollster::block_on(Gpu::new(window.clone(), size.width, size.height))?;
 
         let info = gpu.adapter_info();
-        let gpu_info = format!("{} · {:?}", info.name, info.backend);
+        let bc_support = if gpu.supports_bc_textures() {
+            "BC textures"
+        } else {
+            "no BC textures"
+        };
+        let gpu_info = format!("{} · {:?} · {bc_support}", info.name, info.backend);
 
         let triangle = TrianglePass::new(&gpu.device, gpu.content_format());
 

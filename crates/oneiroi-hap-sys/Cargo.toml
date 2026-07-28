@@ -1,0 +1,13 @@
+[package]
+name = "oneiroi-hap-sys"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+rust-version.workspace = true
+links = "hap"
+
+[dependencies]
+snap.workspace = true
+
+[build-dependencies]
+cc = "1"

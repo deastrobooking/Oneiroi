@@ -6,9 +6,12 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+oneiroi-hap.workspace = true
+
 anyhow.workspace = true
 bytemuck.workspace = true
 log.workspace = true
+thiserror.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]

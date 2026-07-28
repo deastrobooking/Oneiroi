@@ -5,6 +5,8 @@
 
 pub mod gpu;
 pub mod triangle;
+pub mod upload;
 
 pub use gpu::Gpu;
 pub use triangle::{Globals, TrianglePass};
+pub use upload::{CompressedTexture, UploadError};

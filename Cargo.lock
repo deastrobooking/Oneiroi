@@ -1897,6 +1897,23 @@ name = "oneiroi-core"
 version = "0.1.0"
 
 [[package]]
+name = "oneiroi-hap"
+version = "0.1.0"
+dependencies = [
+ "oneiroi-hap-sys",
+ "smallvec",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "oneiroi-hap-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "snap",
+]
+
+[[package]]
 name = "oneiroi-io"
 version = "0.1.0"
 
@@ -1911,7 +1928,9 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "log",
+ "oneiroi-hap",
  "pollster",
+ "thiserror 2.0.19",
  "wgpu",
 ]
 
@@ -2516,6 +2535,12 @@ checksum = "dd538fb6910ac1099850255cf94a94df6551fbdd602454387d0adb2d1ca6dead"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "snap"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "199905e6153d6405f9728fe44daace35f8f837bbf830bb6e85fbd5828709a886"
 
 [[package]]
 name = "spirv"

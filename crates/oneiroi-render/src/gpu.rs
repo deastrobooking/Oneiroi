@@ -39,16 +39,20 @@ impl Gpu {
             .context("no GPU adapter supports this surface")?;
 
         let adapter_info = adapter.get_info();
+        let adapter_features = adapter.features();
+        let requested_features = adapter_features & wgpu::Features::TEXTURE_COMPRESSION_BC;
         log::info!(
-            "adapter: {} ({:?}, {:?})",
+            "adapter: {} ({:?}, {:?}); BC textures: {}",
             adapter_info.name,
             adapter_info.device_type,
-            adapter_info.backend
+            adapter_info.backend,
+            requested_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
         );
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("oneiroi-device"),
+                required_features: requested_features,
                 ..Default::default()
             })
             .await
@@ -139,6 +143,12 @@ impl Gpu {
 
     pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
         &self.adapter_info
+    }
+
+    pub fn supports_bc_textures(&self) -> bool {
+        self.device
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
     }
 
     pub fn size(&self) -> (u32, u32) {
