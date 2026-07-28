@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/oneiroi-core",
+    "crates/oneiroi-media",
+    "crates/oneiroi-render",
+    "crates/oneiroi-io",
+    "crates/oneiroi-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+
+[workspace.dependencies]
+oneiroi-core = { path = "crates/oneiroi-core" }
+oneiroi-media = { path = "crates/oneiroi-media" }
+oneiroi-render = { path = "crates/oneiroi-render" }
+oneiroi-io = { path = "crates/oneiroi-io" }
+
+# wgpu is pinned to 29 because egui-wgpu 0.35 depends on wgpu 29.0.
+# Bumping wgpu ahead of egui-wgpu puts two incompatible wgpu versions in the
+# tree and the Device/Queue types stop unifying. Bump them together.
+wgpu = "29.0"
+winit = "0.30.13"
+egui = "0.35"
+egui-wgpu = "0.35"
+egui-winit = "0.35"
+
+anyhow = "1"
+bytemuck = { version = "1", features = ["derive"] }
+env_logger = "0.11"
+log = "0.4"
+pollster = "0.4"
+
+# Media decode and GPU upload are miserable in an unoptimized build; a debug
+# session that can't hold framerate can't tell you anything about pacing.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+debug = 1
