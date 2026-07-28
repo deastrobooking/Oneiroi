@@ -12,8 +12,12 @@ target OS:
 - BC1, BC3, BC4, BC6H and BC7 plane models, including HAP Q and HAP Q Alpha.
 - Direct block-compressed upload and sampling; HAP is never expanded to CPU
   RGBA.
+- MOV probing and raw HAP packet reads through libavformat, with exact rational
+  timestamps.
+- A bounded generation-safe frame scheduler with hold, drop, late, repeat and
+  invalidation accounting.
 
-MOV demux, timestamped playback, effects and MIDI have not landed yet.
+Decoder workers, seeking/loop prefetch, effects and MIDI have not landed yet.
 
 ```sh
 cargo run          # the app

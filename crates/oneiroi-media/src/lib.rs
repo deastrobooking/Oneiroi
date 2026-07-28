@@ -4,3 +4,14 @@
 //! over block-compressed bytes without knowing what a `wgpu::Device` is.
 //! HAP packet decoding itself lives in `oneiroi-hap`; container demux and
 //! timestamped scheduling will be assembled here.
+
+mod demux;
+mod schedule;
+
+pub use demux::{
+    DemuxError, DemuxedHapFrame, EncodedHapPacket, FrameRate, HapDemuxer, HapStreamMetadata,
+};
+pub use schedule::{
+    DiscontinuityPolicy, EnqueueError, FrameScheduler, FrameSelection, ScheduledFrame,
+    SchedulerError, SchedulerStats,
+};

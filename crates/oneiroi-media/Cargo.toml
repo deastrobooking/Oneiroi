@@ -6,3 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+oneiroi-core.workspace = true
+oneiroi-hap.workspace = true
+
+ffmpeg-next.workspace = true
+thiserror.workspace = true
