@@ -1,6 +1,7 @@
 # oneiroi
 
-Live-performance video app: real-time clip playback with a GPU effect chain.
+Four-deck live-performance video mixer with GPU-native HAP playback and
+FFmpeg fallback import.
 
 ## Status
 
@@ -16,15 +17,24 @@ target OS:
   timestamps.
 - A bounded generation-safe frame scheduler with hold, drop, late, repeat and
   invalidation accounting.
+- Four independently assignable decks with non-blocking drag-and-drop movie
+  probing and stale-import rejection.
+- Import health ratings for HAP, ProRes, DNxHD/DNxHR, H.264, H.265 and other
+  FFmpeg-decodable movie formats.
 
-Decoder workers, seeking/loop prefetch, effects and MIDI have not landed yet.
+Pixel decode for non-HAP movies, four-way GPU composition, seeking/loop
+prefetch, effects and MIDI have not landed yet.
 
 ```sh
 cargo run          # the app
 cargo test         # includes a headless GPU readback test
+cargo run -p oneiroi-media --example probe_movie -- footage.mp4
 cargo run -p oneiroi-render --example dump_frame > frame.raw \
   && ffmpeg -f rawvideo -pix_fmt rgba -s 512x512 -i frame.raw -y frame.png
 ```
+
+In the app, click deck A, B, C or D and drag a movie onto the window. Imports
+are probed on a background worker and the next deck is selected automatically.
 
 ## Layout
 

@@ -1990,6 +1990,7 @@ dependencies = [
  "env_logger",
  "log",
  "oneiroi-core",
+ "oneiroi-media",
  "oneiroi-render",
  "pollster",
  "wgpu",

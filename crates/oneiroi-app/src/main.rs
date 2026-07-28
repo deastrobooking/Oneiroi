@@ -3,11 +3,13 @@
 
 mod ui;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
 use oneiroi_core::Clock;
+use oneiroi_media::{DeckState, FourDeckMixer, MediaImporter, SubmitError};
 use oneiroi_render::{Globals, Gpu, TrianglePass};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -37,6 +39,8 @@ struct State {
     clock: Clock,
     ui: ui::UiState,
     gpu_info: String,
+    mixer: FourDeckMixer,
+    importer: MediaImporter,
 }
 
 #[derive(Default)]
@@ -75,6 +79,7 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.gpu.resize(size.width, size.height),
+            WindowEvent::DroppedFile(path) => state.import_movie(path),
             WindowEvent::RedrawRequested => state.render(),
             _ => {}
         }
@@ -136,17 +141,52 @@ impl State {
             clock: Clock::new(Instant::now()),
             ui: ui::UiState::default(),
             gpu_info,
+            mixer: FourDeckMixer::default(),
+            importer: MediaImporter::new(8),
         })
     }
 
+    fn import_movie(&mut self, path: PathBuf) {
+        let deck = self.mixer.selected();
+        let request = self.mixer.begin_import(deck, path);
+        match self.importer.submit(request) {
+            Ok(()) => {
+                self.mixer.select(deck.next());
+                self.window.request_redraw();
+            }
+            Err(SubmitError::Busy(request)) | Err(SubmitError::Disconnected(request)) => {
+                let target = self.mixer.deck_mut(request.deck);
+                if target.generation == request.generation {
+                    target.state = DeckState::Error {
+                        path: request.path,
+                        message: "The media import worker is unavailable.".to_owned(),
+                    };
+                }
+            }
+        }
+    }
+
+    fn poll_imports(&mut self) {
+        while let Ok(result) = self.importer.try_recv() {
+            self.mixer.complete_import(result);
+        }
+    }
+
     fn render(&mut self) {
+        self.poll_imports();
         let time = self.clock.tick(Instant::now());
 
         // --- UI pass: pure CPU, produces geometry for the GPU pass below.
         let ctx = self.egui_state.egui_ctx().clone();
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let output = ctx.run_ui(raw_input, |ui| {
-            ui::draw(ui.ctx(), &mut self.ui, &time, &self.gpu_info);
+            ui::draw(
+                ui.ctx(),
+                &mut self.ui,
+                &mut self.mixer,
+                &time,
+                &self.gpu_info,
+            );
         });
         self.egui_state
             .handle_platform_output(&self.window, output.platform_output);

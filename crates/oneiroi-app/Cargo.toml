@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 oneiroi-core.workspace = true
+oneiroi-media.workspace = true
 oneiroi-render.workspace = true
 
 anyhow.workspace = true

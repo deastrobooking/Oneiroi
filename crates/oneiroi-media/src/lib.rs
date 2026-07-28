@@ -6,11 +6,17 @@
 //! timestamped scheduling will be assembled here.
 
 mod demux;
+mod mixer;
+mod probe;
 mod schedule;
 
 pub use demux::{
     DemuxError, DemuxedHapFrame, EncodedHapPacket, FrameRate, HapDemuxer, HapStreamMetadata,
 };
+pub use mixer::{
+    Deck, DeckId, DeckState, FourDeckMixer, ImportRequest, ImportResult, MediaImporter, SubmitError,
+};
+pub use probe::{AlphaMode, DecodePath, MediaHealth, MovieMetadata, ProbeError, probe_movie};
 pub use schedule::{
     DiscontinuityPolicy, EnqueueError, FrameScheduler, FrameSelection, ScheduledFrame,
     SchedulerError, SchedulerStats,

@@ -1,11 +1,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use ffmpeg_next as ffmpeg;
 use oneiroi_core::MediaTime;
 use oneiroi_hap::{CompressedPlaneFormat, Decoder};
-use oneiroi_media::{DiscontinuityPolicy, FrameScheduler, FrameSelection, HapDemuxer};
+use oneiroi_media::{
+    DeckId, DeckState, DecodePath, DiscontinuityPolicy, FourDeckMixer, FrameScheduler,
+    FrameSelection, HapDemuxer, MediaHealth, MediaImporter, probe_movie,
+};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -129,5 +133,36 @@ fn feeds_generation_safe_timestamp_scheduler() {
         FrameSelection::Advanced(frame)
             if frame.generation == 7
                 && frame.payload.planes[0].format == CompressedPlaneFormat::Bc1Rgb
+    ));
+}
+
+#[test]
+fn general_import_probe_routes_hap_to_optimized_path() {
+    let fixture = Fixture::hap_mov();
+
+    let movie = probe_movie(&fixture.path).unwrap();
+
+    assert_eq!(movie.visible_extent, [16, 16]);
+    assert_eq!(movie.codec, "hap");
+    assert_eq!(movie.decode_path, DecodePath::DirectHap);
+    assert_eq!(movie.health, MediaHealth::StageReady);
+}
+
+#[test]
+fn background_import_populates_one_of_four_decks() {
+    let fixture = Fixture::hap_mov();
+    let importer = MediaImporter::new(4);
+    let mut mixer = FourDeckMixer::default();
+    let request = mixer.begin_import(DeckId::D, fixture.path.clone());
+    importer.submit(request).unwrap();
+
+    let result = importer.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(mixer.complete_import(result));
+
+    assert!(matches!(
+        &mixer.deck(DeckId::D).state,
+        DeckState::Ready(movie)
+            if movie.decode_path == DecodePath::DirectHap
+                && movie.visible_extent == [16, 16]
     ));
 }
