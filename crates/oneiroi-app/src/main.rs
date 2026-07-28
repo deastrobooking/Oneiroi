@@ -8,9 +8,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use oneiroi_core::Clock;
-use oneiroi_media::{DeckState, FourDeckMixer, MediaImporter, SubmitError};
-use oneiroi_render::{Globals, Gpu, TrianglePass};
+use oneiroi_core::{Clock, MediaTime};
+use oneiroi_media::{
+    DeckDecoder, DeckId, DeckState, DecoderEvent, DiscontinuityPolicy, FourDeckMixer,
+    FrameScheduler, FrameSelection, MediaImporter, SubmitError, VideoFramePayload,
+};
+use oneiroi_render::{FourDeckCompositor, Gpu, MixerParams};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -24,7 +27,14 @@ fn main() -> Result<()> {
     // on present, not by incoming input events.
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = App::default();
+    let mut app = App {
+        state: None,
+        initial_files: std::env::args_os()
+            .skip(1)
+            .map(PathBuf::from)
+            .take(4)
+            .collect(),
+    };
     event_loop.run_app(&mut app).context("event loop")?;
     Ok(())
 }
@@ -33,7 +43,7 @@ fn main() -> Result<()> {
 struct State {
     window: Arc<Window>,
     gpu: Gpu,
-    triangle: TrianglePass,
+    compositor: FourDeckCompositor,
     egui_state: egui_winit::State,
     egui_renderer: egui_wgpu::Renderer,
     clock: Clock,
@@ -41,11 +51,16 @@ struct State {
     gpu_info: String,
     mixer: FourDeckMixer,
     importer: MediaImporter,
+    decoders: [DeckDecoder; 4],
+    schedulers: [FrameScheduler<VideoFramePayload>; 4],
+    launch_times: [Instant; 4],
+    media_origins: [Option<MediaTime>; 4],
+    playback_generations: [u64; 4],
 }
 
-#[derive(Default)]
 struct App {
     state: Option<State>,
+    initial_files: Vec<PathBuf>,
 }
 
 impl ApplicationHandler for App {
@@ -56,7 +71,12 @@ impl ApplicationHandler for App {
             return;
         }
         match State::new(event_loop) {
-            Ok(state) => self.state = Some(state),
+            Ok(mut state) => {
+                for path in self.initial_files.drain(..) {
+                    state.import_movie(path);
+                }
+                self.state = Some(state);
+            }
             Err(e) => {
                 log::error!("startup failed: {e:#}");
                 event_loop.exit();
@@ -113,7 +133,7 @@ impl State {
         };
         let gpu_info = format!("{} · {:?} · {bc_support}", info.name, info.backend);
 
-        let triangle = TrianglePass::new(&gpu.device, gpu.content_format());
+        let compositor = FourDeckCompositor::new(&gpu.device, &gpu.queue, gpu.content_format());
 
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
@@ -135,7 +155,7 @@ impl State {
         Ok(Self {
             window,
             gpu,
-            triangle,
+            compositor,
             egui_state,
             egui_renderer,
             clock: Clock::new(Instant::now()),
@@ -143,12 +163,20 @@ impl State {
             gpu_info,
             mixer: FourDeckMixer::default(),
             importer: MediaImporter::new(8),
+            decoders: std::array::from_fn(|_| DeckDecoder::spawn(4)),
+            schedulers: std::array::from_fn(|_| {
+                FrameScheduler::new(4, 0, DiscontinuityPolicy::Blank).expect("non-zero frame queue")
+            }),
+            launch_times: [Instant::now(); 4],
+            media_origins: [None; 4],
+            playback_generations: [0; 4],
         })
     }
 
     fn import_movie(&mut self, path: PathBuf) {
         let deck = self.mixer.selected();
         let request = self.mixer.begin_import(deck, path);
+        self.reset_playback(deck, request.generation);
         match self.importer.submit(request) {
             Ok(()) => {
                 self.mixer.select(deck.next());
@@ -168,13 +196,95 @@ impl State {
 
     fn poll_imports(&mut self) {
         while let Ok(result) = self.importer.try_recv() {
-            self.mixer.complete_import(result);
+            let playback = result.metadata.as_ref().ok().map(|movie| {
+                (
+                    result.deck,
+                    result.generation,
+                    movie.path.clone(),
+                    movie.decode_path,
+                )
+            });
+            if self.mixer.complete_import(result)
+                && let Some((deck, generation, path, decode_path)) = playback
+            {
+                self.reset_playback(deck, generation);
+                self.decoders[deck.index()].load(path, decode_path, generation);
+            }
+        }
+    }
+
+    fn reset_playback(&mut self, deck: DeckId, generation: u64) {
+        let index = deck.index();
+        self.decoders[index].stop();
+        self.compositor.clear_deck(index);
+        self.schedulers[index] = FrameScheduler::new(4, generation, DiscontinuityPolicy::Blank)
+            .expect("non-zero frame queue");
+        self.launch_times[index] = Instant::now();
+        self.media_origins[index] = None;
+        self.playback_generations[index] = generation;
+    }
+
+    fn update_playback(&mut self, now: Instant) {
+        for deck in DeckId::ALL {
+            let index = deck.index();
+            let generation = self.mixer.deck(deck).generation;
+            if generation != self.playback_generations[index] {
+                self.reset_playback(deck, generation);
+            }
+            while let Ok(event) = self.decoders[index].try_event() {
+                if let DecoderEvent::Error {
+                    generation: failed_generation,
+                    message,
+                } = event
+                    && failed_generation == generation
+                {
+                    let path = match &self.mixer.deck(deck).state {
+                        DeckState::Ready(movie) => movie.path.clone(),
+                        DeckState::Loading { path } | DeckState::Error { path, .. } => path.clone(),
+                        DeckState::Empty => PathBuf::new(),
+                    };
+                    self.mixer.deck_mut(deck).state = DeckState::Error { path, message };
+                    self.compositor.clear_deck(index);
+                }
+            }
+
+            while let Ok(frame) = self.decoders[index].try_frame() {
+                if frame.generation != generation {
+                    continue;
+                }
+                self.media_origins[index].get_or_insert(frame.pts);
+                if self.schedulers[index].enqueue(frame).is_err() {
+                    break;
+                }
+            }
+
+            let Some(origin) = self.media_origins[index] else {
+                continue;
+            };
+            let elapsed = now
+                .saturating_duration_since(self.launch_times[index])
+                .as_micros()
+                .min(i64::MAX as u128) as i64;
+            let Ok(target) =
+                origin.checked_add(MediaTime::new(elapsed, 1_000_000).expect("positive timescale"))
+            else {
+                continue;
+            };
+            if let FrameSelection::Advanced(frame) = self.schedulers[index].select(target)
+                && let Err(error) =
+                    self.compositor
+                        .upload(&self.gpu.device, &self.gpu.queue, index, &frame.payload)
+            {
+                log::error!("deck {} upload failed: {error}", deck.label());
+            }
         }
     }
 
     fn render(&mut self) {
         self.poll_imports();
-        let time = self.clock.tick(Instant::now());
+        let now = Instant::now();
+        self.update_playback(now);
+        let time = self.clock.tick(now);
 
         // --- UI pass: pure CPU, produces geometry for the GPU pass below.
         let ctx = self.egui_state.egui_ctx().clone();
@@ -221,11 +331,23 @@ impl State {
                 label: Some("frame"),
             });
 
-        self.triangle.draw(
+        self.compositor.draw(
+            &self.gpu.device,
             &self.gpu.queue,
             &mut encoder,
             &content_view,
-            Globals::new(time.elapsed as f32, self.ui.spin, self.gpu.aspect()),
+            MixerParams {
+                levels: std::array::from_fn(|index| {
+                    let deck = self.mixer.deck(DeckId::ALL[index]);
+                    if matches!(deck.state, DeckState::Ready(_)) {
+                        deck.level
+                    } else {
+                        0.0
+                    }
+                }),
+                master_opacity: self.ui.master_opacity,
+                blackout: self.ui.blackout,
+            },
         );
 
         let (width, height) = self.gpu.size();

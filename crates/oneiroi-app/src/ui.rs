@@ -9,7 +9,6 @@ use oneiroi_media::{DeckId, DeckState, FourDeckMixer, MediaHealth};
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.
 pub struct UiState {
-    pub spin: f32,
     pub master_opacity: f32,
     pub blackout: bool,
     fps: FpsMeter,
@@ -18,7 +17,6 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
-            spin: 0.6,
             master_opacity: 1.0,
             blackout: false,
             fps: FpsMeter::default(),
@@ -108,12 +106,6 @@ pub fn draw(
                 if ui.selectable_label(state.blackout, "BLACKOUT").clicked() {
                     state.blackout = !state.blackout;
                 }
-                ui.separator();
-                ui.add(
-                    egui::Slider::new(&mut state.spin, -4.0..=4.0)
-                        .text("background spin")
-                        .clamping(egui::SliderClamping::Always),
-                );
             });
         });
 }

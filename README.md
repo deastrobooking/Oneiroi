@@ -21,12 +21,17 @@ target OS:
   probing and stale-import rejection.
 - Import health ratings for HAP, ProRes, DNxHD/DNxHR, H.264, H.265 and other
   FFmpeg-decodable movie formats.
+- Bounded per-deck decoder workers, timestamp scheduling and FFmpeg/libswscale
+  fallback conversion to RGBA.
+- Four-source linear-light GPU composition with per-deck levels, master
+  opacity and next-frame blackout.
 
-Pixel decode for non-HAP movies, four-way GPU composition, seeking/loop
-prefetch, effects and MIDI have not landed yet.
+Reusable CPU frame leases, seeking/loop prefetch, crossfader routing, effects
+and MIDI have not landed yet.
 
 ```sh
-cargo run          # the app
+cargo run          # the app; select a deck and drop movies
+cargo run -- a.mp4 b.mov c.mkv d.webm  # preload decks A-D
 cargo test         # includes a headless GPU readback test
 cargo run -p oneiroi-media --example probe_movie -- footage.mp4
 cargo run -p oneiroi-render --example dump_frame > frame.raw \

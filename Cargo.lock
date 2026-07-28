@@ -2043,6 +2043,7 @@ dependencies = [
  "bytemuck",
  "log",
  "oneiroi-hap",
+ "oneiroi-media",
  "pollster",
  "thiserror 2.0.19",
  "wgpu",
