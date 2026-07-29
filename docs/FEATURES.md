@@ -29,7 +29,7 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Missing media | Missing paths remain visible and resavable | File browser and explicit relink workflow |
 | Effects system | Native GPU effect chain and parameter model | Manifest packages, reorderable slots, presets and safe hot reload |
 | Output routing | Shared operator/output presentation, connected-display selection, persisted descriptor, topology polling and surface recovery diagnostics | Stronger identity across display topology changes and show-machine soak testing |
-| Layer composition | Independent bus composites, levels, position, scale, rotation, H/V flip and source-space mirror/fractal effects | Crop, fit/fill/stretch and blend modes |
+| Layer composition | Independent bus composites, eight blend modes, levels, position, scale, rotation, H/V flip, crop, Fit/Fill/Stretch and source-space effects | Solo and bypass |
 | Performance | Bounded workers and GPU texture reuse | Reusable CPU frame leases, keyframe index and soak/failure testing |
 
 ## Not implemented

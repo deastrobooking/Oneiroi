@@ -11,8 +11,9 @@ pub mod upload;
 
 pub use gpu::{Gpu, PresentSurface, SurfaceAcquireStatus, SurfaceAcquisition};
 pub use mixer::{
-    DeckEffects, DeckLfos, DeckTransform, EffectLfo, EffectTarget, FourDeckCompositor, LfoWaveform,
-    MOD_ROUTES_PER_DECK, MixerBus, MixerParams, MixerUploadError, ModulationRoute,
+    DeckEffects, DeckLfos, DeckTransform, EffectLfo, EffectTarget, FourDeckCompositor,
+    LayerBlendMode, LfoWaveform, MOD_ROUTES_PER_DECK, MixerBus, MixerParams, MixerUploadError,
+    ModulationRoute, SourceMode,
 };
 pub use program::{PROGRAM_FORMAT, PresentationOptions, ProgramPresenter, ProgramTarget};
 pub use triangle::{Globals, TrianglePass};

@@ -104,11 +104,21 @@ Bus B accumulator. Only after both accumulators are complete are the selected
 linear or equal-power gains applied. This prevents a layer on one bus from
 changing the internal result of the other bus.
 
+Each incoming layer selects a blend function against the straight-color
+backdrop, then uses the source and backdrop alpha terms to produce a
+premultiplied bus accumulator. Normal, Add, Screen, Multiply, Difference,
+Lighten, Darken and Overlay therefore share correct source-over coverage and
+operate in linear light.
+
 Layer geometry uses an inverse UV transform before source effects: output
 position is translated back into deck-local coordinates, inverse-rotated,
 scaled and optionally flipped. Coordinates outside `[0, 1]` resolve to
 transparent black. Because this happens before source interpretation, RGBA,
 HAP, still images and camera frames share identical transform behavior.
+The cropped source aspect is compared with the composition aspect: Fit
+restricts the visible layer region, Fill restricts the sampled source region,
+and Stretch maps directly. Stretch is the compatibility default for projects
+saved before source modes existed.
 
 The compositor renders once into a fixed-resolution sRGB program texture.
 Presentation passes sample that texture into the operator and output surfaces.

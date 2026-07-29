@@ -2,17 +2,19 @@ use oneiroi_core::{
     ControlTarget, MappingMode, MidiBinding, MidiMapper, MidiMessage, MidiMessageKind, Quantization,
 };
 use oneiroi_io::{
-    CameraProject, ControlTargetProject, CrossfadeBusProject, DeckProject, EffectProject,
-    EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject,
-    MidiMappingProject, MidiMessageProject, ModRouteProject, OutputProject, ProjectFile,
-    ProjectSettings, QuantizationProject, TransformProject, TransportProject,
+    BlendModeProject, CameraProject, ControlTargetProject, CrossfadeBusProject, DeckProject,
+    EffectProject, EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject,
+    MappingModeProject, MidiMappingProject, MidiMessageProject, ModRouteProject, OutputProject,
+    ProjectFile, ProjectSettings, QuantizationProject, SourceModeProject, TransformProject,
+    TransportProject,
 };
 use oneiroi_media::{
     CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipBank, CrossfadeBus, DeckId,
     DeckTransport, EndMode, FourDeckMixer,
 };
 use oneiroi_render::{
-    DeckEffects, DeckLfos, DeckTransform, EffectLfo, EffectTarget, LfoWaveform, ModulationRoute,
+    DeckEffects, DeckLfos, DeckTransform, EffectLfo, EffectTarget, LayerBlendMode, LfoWaveform,
+    ModulationRoute, SourceMode,
 };
 
 use crate::ui::UiState;
@@ -72,6 +74,7 @@ pub fn snapshot(
                         position: transport.position,
                     },
                     transform: transform_to_project(ui.transforms[deck.index()]),
+                    blend_mode: blend_mode_to_project(ui.blend_modes[deck.index()]),
                     effects: effect_to_project(ui.effects[deck.index()]),
                     lfos: ui.lfos[deck.index()]
                         .lanes
@@ -168,6 +171,7 @@ pub fn apply_deck(
     };
     ui.effects[deck.index()] = effect_from_project(&project.effects);
     ui.transforms[deck.index()] = transform_from_project(project.transform);
+    ui.blend_modes[deck.index()] = blend_mode_from_project(project.blend_mode);
     let mut lfos = DeckLfos::default();
     for (destination, source) in lfos.lanes.iter_mut().zip(&project.lfos) {
         *destination = lfo_from_project(source);
@@ -189,6 +193,32 @@ pub fn apply_deck(
     }
 }
 
+fn blend_mode_to_project(mode: LayerBlendMode) -> BlendModeProject {
+    match mode {
+        LayerBlendMode::Normal => BlendModeProject::Normal,
+        LayerBlendMode::Add => BlendModeProject::Add,
+        LayerBlendMode::Screen => BlendModeProject::Screen,
+        LayerBlendMode::Multiply => BlendModeProject::Multiply,
+        LayerBlendMode::Difference => BlendModeProject::Difference,
+        LayerBlendMode::Lighten => BlendModeProject::Lighten,
+        LayerBlendMode::Darken => BlendModeProject::Darken,
+        LayerBlendMode::Overlay => BlendModeProject::Overlay,
+    }
+}
+
+fn blend_mode_from_project(mode: BlendModeProject) -> LayerBlendMode {
+    match mode {
+        BlendModeProject::Normal => LayerBlendMode::Normal,
+        BlendModeProject::Add => LayerBlendMode::Add,
+        BlendModeProject::Screen => LayerBlendMode::Screen,
+        BlendModeProject::Multiply => LayerBlendMode::Multiply,
+        BlendModeProject::Difference => LayerBlendMode::Difference,
+        BlendModeProject::Lighten => LayerBlendMode::Lighten,
+        BlendModeProject::Darken => LayerBlendMode::Darken,
+        BlendModeProject::Overlay => LayerBlendMode::Overlay,
+    }
+}
+
 fn transform_to_project(transform: DeckTransform) -> TransformProject {
     TransformProject {
         position: transform.position,
@@ -196,6 +226,12 @@ fn transform_to_project(transform: DeckTransform) -> TransformProject {
         rotation: transform.rotation,
         flip_horizontal: transform.flip_horizontal,
         flip_vertical: transform.flip_vertical,
+        crop: transform.crop,
+        source_mode: match transform.source_mode {
+            SourceMode::Fit => SourceModeProject::Fit,
+            SourceMode::Fill => SourceModeProject::Fill,
+            SourceMode::Stretch => SourceModeProject::Stretch,
+        },
     }
 }
 
@@ -206,6 +242,12 @@ fn transform_from_project(transform: TransformProject) -> DeckTransform {
         rotation: transform.rotation,
         flip_horizontal: transform.flip_horizontal,
         flip_vertical: transform.flip_vertical,
+        crop: transform.crop,
+        source_mode: match transform.source_mode {
+            SourceModeProject::Fit => SourceMode::Fit,
+            SourceModeProject::Fill => SourceMode::Fill,
+            SourceModeProject::Stretch => SourceMode::Stretch,
+        },
     }
     .sanitized()
 }

@@ -12,7 +12,9 @@ use oneiroi_media::{
     CLIPS_PER_DECK, CameraDevice, ClipAddress, ClipBank, CrossfadeBus, DeckId, DeckState,
     DeckTransport, EndMode, FourDeckMixer, LaunchQueue, MediaHealth,
 };
-use oneiroi_render::{DeckEffects, DeckLfos, DeckTransform, EffectTarget, LfoWaveform};
+use oneiroi_render::{
+    DeckEffects, DeckLfos, DeckTransform, EffectTarget, LayerBlendMode, LfoWaveform, SourceMode,
+};
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.
 pub struct UiState {
@@ -30,6 +32,7 @@ pub struct UiState {
     pub custom_composition_extent: [u32; 2],
     pub effects: [DeckEffects; 4],
     pub transforms: [DeckTransform; 4],
+    pub blend_modes: [LayerBlendMode; 4],
     pub lfos: [DeckLfos; 4],
     pub bpm: f64,
     pub quantization: Quantization,
@@ -60,6 +63,7 @@ impl Default for UiState {
             custom_composition_extent: [1920, 1080],
             effects: [DeckEffects::default(); 4],
             transforms: [DeckTransform::default(); 4],
+            blend_modes: [LayerBlendMode::Normal; 4],
             lfos: [DeckLfos::default(); 4],
             bpm: 120.0,
             quantization: Quantization::Immediate,
@@ -536,6 +540,7 @@ pub fn draw(
                             DeckControls {
                                 transport: &mut transports[deck_id.index()],
                                 transform: &mut state.transforms[deck_id.index()],
+                                blend_mode: &mut state.blend_modes[deck_id.index()],
                                 effects: &mut state.effects[deck_id.index()],
                                 lfos: &mut state.lfos[deck_id.index()],
                             },
@@ -699,6 +704,7 @@ fn draw_clip_grid(
 struct DeckControls<'a> {
     transport: &'a mut DeckTransport,
     transform: &'a mut DeckTransform,
+    blend_mode: &'a mut LayerBlendMode,
     effects: &'a mut DeckEffects,
     lfos: &'a mut DeckLfos,
 }
@@ -713,6 +719,7 @@ fn draw_deck(
     let DeckControls {
         transport,
         transform,
+        blend_mode,
         effects,
         lfos,
     } = controls;
@@ -824,6 +831,22 @@ fn draw_deck(
             );
             ui.selectable_value(&mut deck.bus, CrossfadeBus::Left, "Bus A");
             ui.selectable_value(&mut deck.bus, CrossfadeBus::Right, "Bus B");
+            egui::ComboBox::from_id_salt(format!("blend-mode-{}", id.label()))
+                .selected_text(blend_mode_label(*blend_mode))
+                .show_ui(ui, |ui| {
+                    for mode in [
+                        LayerBlendMode::Normal,
+                        LayerBlendMode::Add,
+                        LayerBlendMode::Screen,
+                        LayerBlendMode::Multiply,
+                        LayerBlendMode::Difference,
+                        LayerBlendMode::Lighten,
+                        LayerBlendMode::Darken,
+                        LayerBlendMode::Overlay,
+                    ] {
+                        ui.selectable_value(blend_mode, mode, blend_mode_label(mode));
+                    }
+                });
         });
         let live = matches!(mixer.deck(id).state, DeckState::Live(_));
         if live {
@@ -873,6 +896,12 @@ fn draw_deck(
             .id_salt(format!("transform-{}", id.label()))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    ui.label("Source mode");
+                    ui.selectable_value(&mut transform.source_mode, SourceMode::Fit, "Fit");
+                    ui.selectable_value(&mut transform.source_mode, SourceMode::Fill, "Fill");
+                    ui.selectable_value(&mut transform.source_mode, SourceMode::Stretch, "Stretch");
+                });
+                ui.horizontal(|ui| {
                     ui.add(
                         egui::Slider::new(&mut transform.position[0], -2.0..=2.0)
                             .text("position X"),
@@ -901,6 +930,18 @@ fn draw_deck(
                         *transform = DeckTransform::default();
                     }
                 });
+                ui.label("Crop");
+                ui.columns(2, |columns| {
+                    columns[0]
+                        .add(egui::Slider::new(&mut transform.crop[0], 0.0..=0.95).text("left"));
+                    columns[0]
+                        .add(egui::Slider::new(&mut transform.crop[1], 0.0..=0.95).text("right"));
+                    columns[1]
+                        .add(egui::Slider::new(&mut transform.crop[2], 0.0..=0.95).text("top"));
+                    columns[1]
+                        .add(egui::Slider::new(&mut transform.crop[3], 0.0..=0.95).text("bottom"));
+                });
+                *transform = transform.sanitized();
             });
         egui::CollapsingHeader::new("GPU effects")
             .id_salt(format!("effects-{}", id.label()))
@@ -1129,6 +1170,19 @@ fn effect_target_label(target: EffectTarget) -> &'static str {
         EffectTarget::FindEdges => "Find edges",
         EffectTarget::BitReduction => "Bit reduction",
         EffectTarget::Blacklight => "Black light",
+    }
+}
+
+fn blend_mode_label(mode: LayerBlendMode) -> &'static str {
+    match mode {
+        LayerBlendMode::Normal => "Normal",
+        LayerBlendMode::Add => "Add",
+        LayerBlendMode::Screen => "Screen",
+        LayerBlendMode::Multiply => "Multiply",
+        LayerBlendMode::Difference => "Difference",
+        LayerBlendMode::Lighten => "Lighten",
+        LayerBlendMode::Darken => "Darken",
+        LayerBlendMode::Overlay => "Overlay",
     }
 }
 

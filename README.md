@@ -34,7 +34,10 @@ target OS:
 - Independent A/B bus composites with assignable decks and linear or
   equal-power crossfading between the completed bus images.
 - Per-deck position, uniform scale, rotation and independent horizontal or
-  vertical flip, with transparent pixels outside transformed layer bounds.
+  vertical flip, four-edge crop, and Fit/Fill/Stretch source modes, with
+  transparent pixels outside transformed layer bounds.
+- Alpha-correct per-deck Normal, Add, Screen, Multiply, Difference, Lighten,
+  Darken and Overlay blend modes inside each bus.
 - Native per-deck mirror, neon glow, fractal fold, scanline jitter, find-edges,
   bit reduction, black-light inversion, pixelate and luma-key effects.
 - Per-deck hue, contrast, saturation, black/white levels and gamma grading,

@@ -71,10 +71,33 @@ Open **Layer transform** on a deck to adjust:
 - Uniform scale from 0.05× through 4×
 - Rotation from -360° through 360°
 - Independent horizontal and vertical flips
+- Left, right, top and bottom normalized crop
+- **Fit** to preserve the full image with transparent bars
+- **Fill** to preserve aspect while centrally cropping to cover the layer
+- **Stretch** to map the cropped source directly to the layer
 
 Pixels moved outside the layer bounds become transparent instead of smearing
 the source edge. **Reset transform** restores centered, unscaled, unrotated
-geometry. Transform settings are stored per deck in the project.
+and uncropped Stretch geometry. Transform settings are stored per deck in the
+project.
+
+## Blend modes
+
+Choose a blend mode beside each deck's Bus A/Bus B assignment:
+
+- Normal
+- Add
+- Screen
+- Multiply
+- Difference
+- Lighten
+- Darken
+- Overlay
+
+The mode controls how that deck combines with layers already accumulated
+inside its assigned bus. Blending is calculated in linear light with
+alpha-correct source-over coverage. The selected mode is stored in the project;
+older projects load as Normal.
 
 ## LFOs and modulation matrix
 

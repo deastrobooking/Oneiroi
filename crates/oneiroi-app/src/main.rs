@@ -1303,6 +1303,9 @@ impl State {
                 }),
                 crossfade_gains: crossfade_gains(self.ui.crossfader, self.ui.equal_power),
                 transforms: self.ui.transforms,
+                blend_modes: self.ui.blend_modes,
+                output_aspect: self.ui.composition_extent[0] as f32
+                    / self.ui.composition_extent[1].max(1) as f32,
                 effects: std::array::from_fn(|index| {
                     self.ui.lfos[index].apply(self.ui.effects[index], effect_time, beat_position)
                 }),

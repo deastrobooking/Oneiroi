@@ -22,14 +22,20 @@ struct MixerGlobals {
     rotation: vec4<f32>,
     flip_horizontal: vec4<u32>,
     flip_vertical: vec4<u32>,
+    crop_left: vec4<f32>,
+    crop_right: vec4<f32>,
+    crop_top: vec4<f32>,
+    crop_bottom: vec4<f32>,
+    source_modes: vec4<u32>,
+    blend_modes: vec4<u32>,
     bus_assignments: vec4<u32>,
     crossfade_gains: vec2<f32>,
     master_opacity: f32,
     time_seconds: f32,
+    output_aspect: f32,
     blackout: u32,
     _padding_a: u32,
     _padding_b: u32,
-    _padding_c: u32,
 }
 
 struct EffectConfig {
@@ -123,10 +129,42 @@ fn sample_source(
     );
 }
 
-fn over(back: vec4<f32>, straight_front: vec4<f32>, level: f32) -> vec4<f32> {
-    let alpha = clamp(straight_front.a * level, 0.0, 1.0);
-    let front = vec4(straight_front.rgb * alpha, alpha);
-    return front + back * (1.0 - alpha);
+fn blend_color(back: vec3<f32>, front: vec3<f32>, mode: u32) -> vec3<f32> {
+    if mode == 1u {
+        return min(back + front, vec3(1.0));
+    }
+    if mode == 2u {
+        return vec3(1.0) - (vec3(1.0) - back) * (vec3(1.0) - front);
+    }
+    if mode == 3u {
+        return back * front;
+    }
+    if mode == 4u {
+        return abs(back - front);
+    }
+    if mode == 5u {
+        return max(back, front);
+    }
+    if mode == 6u {
+        return min(back, front);
+    }
+    if mode == 7u {
+        let low = 2.0 * back * front;
+        let high = vec3(1.0) - 2.0 * (vec3(1.0) - back) * (vec3(1.0) - front);
+        return select(low, high, back >= vec3(0.5));
+    }
+    return front;
+}
+
+fn composite(back: vec4<f32>, straight_front: vec4<f32>, level: f32, mode: u32) -> vec4<f32> {
+    let front_alpha = clamp(straight_front.a * level, 0.0, 1.0);
+    let back_alpha = clamp(back.a, 0.0, 1.0);
+    let back_color = back.rgb / max(back_alpha, 0.00001);
+    let blended = blend_color(back_color, straight_front.rgb, mode);
+    let rgb = (1.0 - front_alpha) * back.rgb
+        + front_alpha * ((1.0 - back_alpha) * straight_front.rgb + back_alpha * blended);
+    let alpha = front_alpha + back_alpha * (1.0 - front_alpha);
+    return vec4(rgb, alpha);
 }
 
 fn layer_uv(
@@ -136,6 +174,9 @@ fn layer_uv(
     rotation: f32,
     flip_horizontal: u32,
     flip_vertical: u32,
+    source_aspect: f32,
+    crop: vec4<f32>,
+    source_mode: u32,
 ) -> vec3<f32> {
     var local = input_uv - vec2(0.5) - position * 0.5;
     let angle = -rotation * 6.2831853;
@@ -151,11 +192,35 @@ fn layer_uv(
     if flip_vertical != 0u {
         local.y = -local.y;
     }
-    let uv = local + vec2(0.5);
+    var uv = local + vec2(0.5);
     if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
         return vec3(uv, 0.0);
     }
-    return vec3(uv, 1.0);
+
+    let crop_min = vec2(crop.x, crop.z);
+    let crop_size = max(vec2(1.0 - crop.x - crop.y, 1.0 - crop.z - crop.w), vec2(0.02));
+    let cropped_aspect = source_aspect * crop_size.x / crop_size.y;
+    if source_mode == 0u {
+        var content_scale = vec2(1.0);
+        if globals.output_aspect > cropped_aspect {
+            content_scale.x = cropped_aspect / globals.output_aspect;
+        } else {
+            content_scale.y = globals.output_aspect / cropped_aspect;
+        }
+        uv = (uv - vec2(0.5)) / content_scale + vec2(0.5);
+        if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
+            return vec3(uv, 0.0);
+        }
+    } else if source_mode == 1u {
+        var sample_scale = vec2(1.0);
+        if globals.output_aspect > cropped_aspect {
+            sample_scale.y = cropped_aspect / globals.output_aspect;
+        } else {
+            sample_scale.x = globals.output_aspect / cropped_aspect;
+        }
+        uv = (uv - vec2(0.5)) * sample_scale + vec2(0.5);
+    }
+    return vec3(crop_min + uv * crop_size, 1.0);
 }
 
 fn effect_uv(input_uv: vec2<f32>, effect: EffectConfig) -> vec2<f32> {
@@ -292,10 +357,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let effect_b = EffectConfig(globals.contrast.y, globals.saturation.y, globals.hue.y, globals.black_level.y, globals.white_level.y, globals.gamma.y, globals.pixelate.y, globals.luma_key.y, globals.neon.y, globals.fractal.y, globals.jitter.y, globals.find_edges.y, globals.bit_reduction.y, globals.blacklight.y, globals.mirror.y);
     let effect_c = EffectConfig(globals.contrast.z, globals.saturation.z, globals.hue.z, globals.black_level.z, globals.white_level.z, globals.gamma.z, globals.pixelate.z, globals.luma_key.z, globals.neon.z, globals.fractal.z, globals.jitter.z, globals.find_edges.z, globals.bit_reduction.z, globals.blacklight.z, globals.mirror.z);
     let effect_d = EffectConfig(globals.contrast.w, globals.saturation.w, globals.hue.w, globals.black_level.w, globals.white_level.w, globals.gamma.w, globals.pixelate.w, globals.luma_key.w, globals.neon.w, globals.fractal.w, globals.jitter.w, globals.find_edges.w, globals.bit_reduction.w, globals.blacklight.w, globals.mirror.w);
-    let uv_a = layer_uv(input.uv, vec2(globals.position_x.x, globals.position_y.x), globals.scale.x, globals.rotation.x, globals.flip_horizontal.x, globals.flip_vertical.x);
-    let uv_b = layer_uv(input.uv, vec2(globals.position_x.y, globals.position_y.y), globals.scale.y, globals.rotation.y, globals.flip_horizontal.y, globals.flip_vertical.y);
-    let uv_c = layer_uv(input.uv, vec2(globals.position_x.z, globals.position_y.z), globals.scale.z, globals.rotation.z, globals.flip_horizontal.z, globals.flip_vertical.z);
-    let uv_d = layer_uv(input.uv, vec2(globals.position_x.w, globals.position_y.w), globals.scale.w, globals.rotation.w, globals.flip_horizontal.w, globals.flip_vertical.w);
+    let aspect_a = f32(textureDimensions(source_a).x) / max(f32(textureDimensions(source_a).y), 1.0);
+    let aspect_b = f32(textureDimensions(source_b).x) / max(f32(textureDimensions(source_b).y), 1.0);
+    let aspect_c = f32(textureDimensions(source_c).x) / max(f32(textureDimensions(source_c).y), 1.0);
+    let aspect_d = f32(textureDimensions(source_d).x) / max(f32(textureDimensions(source_d).y), 1.0);
+    let uv_a = layer_uv(input.uv, vec2(globals.position_x.x, globals.position_y.x), globals.scale.x, globals.rotation.x, globals.flip_horizontal.x, globals.flip_vertical.x, aspect_a, vec4(globals.crop_left.x, globals.crop_right.x, globals.crop_top.x, globals.crop_bottom.x), globals.source_modes.x);
+    let uv_b = layer_uv(input.uv, vec2(globals.position_x.y, globals.position_y.y), globals.scale.y, globals.rotation.y, globals.flip_horizontal.y, globals.flip_vertical.y, aspect_b, vec4(globals.crop_left.y, globals.crop_right.y, globals.crop_top.y, globals.crop_bottom.y), globals.source_modes.y);
+    let uv_c = layer_uv(input.uv, vec2(globals.position_x.z, globals.position_y.z), globals.scale.z, globals.rotation.z, globals.flip_horizontal.z, globals.flip_vertical.z, aspect_c, vec4(globals.crop_left.z, globals.crop_right.z, globals.crop_top.z, globals.crop_bottom.z), globals.source_modes.z);
+    let uv_d = layer_uv(input.uv, vec2(globals.position_x.w, globals.position_y.w), globals.scale.w, globals.rotation.w, globals.flip_horizontal.w, globals.flip_vertical.w, aspect_d, vec4(globals.crop_left.w, globals.crop_right.w, globals.crop_top.w, globals.crop_bottom.w), globals.source_modes.w);
     let a = process_layer(source_a, alpha_a, uv_a, globals.source_kinds.x, effect_a);
     let b = process_layer(source_b, alpha_b, uv_b, globals.source_kinds.y, effect_b);
     let c = process_layer(source_c, alpha_c, uv_c, globals.source_kinds.z, effect_c);
@@ -304,24 +373,24 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     var bus_a = vec4(0.0);
     var bus_b = vec4(0.0);
     if globals.bus_assignments.x == 0u {
-        bus_a = over(bus_a, a, globals.levels.x);
+        bus_a = composite(bus_a, a, globals.levels.x, globals.blend_modes.x);
     } else {
-        bus_b = over(bus_b, a, globals.levels.x);
+        bus_b = composite(bus_b, a, globals.levels.x, globals.blend_modes.x);
     }
     if globals.bus_assignments.y == 0u {
-        bus_a = over(bus_a, b, globals.levels.y);
+        bus_a = composite(bus_a, b, globals.levels.y, globals.blend_modes.y);
     } else {
-        bus_b = over(bus_b, b, globals.levels.y);
+        bus_b = composite(bus_b, b, globals.levels.y, globals.blend_modes.y);
     }
     if globals.bus_assignments.z == 0u {
-        bus_a = over(bus_a, c, globals.levels.z);
+        bus_a = composite(bus_a, c, globals.levels.z, globals.blend_modes.z);
     } else {
-        bus_b = over(bus_b, c, globals.levels.z);
+        bus_b = composite(bus_b, c, globals.levels.z, globals.blend_modes.z);
     }
     if globals.bus_assignments.w == 0u {
-        bus_a = over(bus_a, d, globals.levels.w);
+        bus_a = composite(bus_a, d, globals.levels.w, globals.blend_modes.w);
     } else {
-        bus_b = over(bus_b, d, globals.levels.w);
+        bus_b = composite(bus_b, d, globals.levels.w, globals.blend_modes.w);
     }
     var mixed = bus_a * globals.crossfade_gains.x
         + bus_b * globals.crossfade_gains.y;

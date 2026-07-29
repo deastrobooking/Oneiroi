@@ -89,6 +89,13 @@ impl ProjectFile {
                     .any(|value| !effect_value(*value, -2.0, 2.0))
                 || !effect_value(deck.transform.scale, 0.05, 4.0)
                 || !effect_value(deck.transform.rotation, -1.0, 1.0)
+                || deck
+                    .transform
+                    .crop
+                    .iter()
+                    .any(|value| !effect_value(*value, 0.0, 0.95))
+                || deck.transform.crop[0] + deck.transform.crop[1] > 0.98
+                || deck.transform.crop[2] + deck.transform.crop[3] > 0.98
                 || !effect_value(deck.effects.contrast, 0.0, 4.0)
                 || !effect_value(deck.effects.saturation, 0.0, 4.0)
                 || !effect_value(deck.effects.hue, -1.0, 1.0)
@@ -224,6 +231,8 @@ pub struct DeckProject {
     pub transport: TransportProject,
     #[serde(default)]
     pub transform: TransformProject,
+    #[serde(default)]
+    pub blend_mode: BlendModeProject,
     pub effects: EffectProject,
     #[serde(default = "default_lfos")]
     pub lfos: Vec<LfoProject>,
@@ -243,6 +252,7 @@ impl Default for DeckProject {
             bus: CrossfadeBusProject::Left,
             transport: TransportProject::default(),
             transform: TransformProject::default(),
+            blend_mode: BlendModeProject::Normal,
             effects: EffectProject::default(),
             lfos: default_lfos(),
             mod_routes: default_mod_routes(),
@@ -265,6 +275,10 @@ pub struct TransformProject {
     pub rotation: f32,
     pub flip_horizontal: bool,
     pub flip_vertical: bool,
+    #[serde(default)]
+    pub crop: [f32; 4],
+    #[serde(default)]
+    pub source_mode: SourceModeProject,
 }
 
 impl Default for TransformProject {
@@ -275,8 +289,33 @@ impl Default for TransformProject {
             rotation: 0.0,
             flip_horizontal: false,
             flip_vertical: false,
+            crop: [0.0; 4],
+            source_mode: SourceModeProject::Stretch,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceModeProject {
+    Fit,
+    Fill,
+    #[default]
+    Stretch,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlendModeProject {
+    #[default]
+    Normal,
+    Add,
+    Screen,
+    Multiply,
+    Difference,
+    Lighten,
+    Darken,
+    Overlay,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -677,7 +716,10 @@ mod tests {
             rotation: 0.125,
             flip_horizontal: true,
             flip_vertical: false,
+            crop: [0.1, 0.2, 0.0, 0.15],
+            source_mode: SourceModeProject::Fill,
         };
+        project.decks[0].blend_mode = BlendModeProject::Screen;
         project.settings.output = OutputProject {
             enabled: false,
             fullscreen: true,
@@ -753,6 +795,7 @@ mod tests {
         for deck in value["decks"].as_array_mut().unwrap() {
             let deck = deck.as_object_mut().unwrap();
             deck.remove("transform").unwrap();
+            deck.remove("blend_mode").unwrap();
             deck.remove("lfos").unwrap();
             deck.remove("mod_routes").unwrap();
             let effects = deck["effects"].as_object_mut().unwrap();
@@ -815,6 +858,38 @@ mod tests {
                 .decks
                 .iter()
                 .all(|deck| deck.transform == TransformProject::default())
+        );
+        project.validate().unwrap();
+    }
+
+    #[test]
+    fn early_transform_projects_default_to_uncropped_stretch() {
+        let mut value = serde_json::to_value(ProjectFile::default()).unwrap();
+        for deck in value["decks"].as_array_mut().unwrap() {
+            let transform = deck["transform"].as_object_mut().unwrap();
+            transform.remove("crop").unwrap();
+            transform.remove("source_mode").unwrap();
+        }
+        let project: ProjectFile = serde_json::from_value(value).unwrap();
+        assert!(project.decks.iter().all(|deck| {
+            deck.transform.crop == [0.0; 4]
+                && deck.transform.source_mode == SourceModeProject::Stretch
+        }));
+        project.validate().unwrap();
+    }
+
+    #[test]
+    fn projects_saved_before_blend_modes_default_to_normal() {
+        let mut value = serde_json::to_value(ProjectFile::default()).unwrap();
+        for deck in value["decks"].as_array_mut().unwrap() {
+            deck.as_object_mut().unwrap().remove("blend_mode").unwrap();
+        }
+        let project: ProjectFile = serde_json::from_value(value).unwrap();
+        assert!(
+            project
+                .decks
+                .iter()
+                .all(|deck| deck.blend_mode == BlendModeProject::Normal)
         );
         project.validate().unwrap();
     }

@@ -79,9 +79,9 @@ Implementation sequence:
 2. Crossfade the two completed bus images instead of multiplying each deck's
    level by a bus gain. (implemented)
 3. Add position, scale, rotation and horizontal/vertical flip. (implemented)
-4. Add crop plus fit, fill and stretch source modes.
+4. Add crop plus fit, fill and stretch source modes. (implemented)
 5. Add linear-light Normal, Add, Screen, Multiply, Difference, Lighten, Darken
-   and Overlay blend modes.
+   and Overlay blend modes. (implemented and GPU tested)
 6. Add per-deck solo and bypass.
 7. Persist and validate every composition field.
 

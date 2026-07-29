@@ -1,5 +1,8 @@
 use oneiroi_media::{RgbaFrame, VideoFramePayload};
-use oneiroi_render::{DeckEffects, DeckTransform, FourDeckCompositor, MixerBus, MixerParams};
+use oneiroi_render::{
+    DeckEffects, DeckTransform, FourDeckCompositor, LayerBlendMode, MixerBus, MixerParams,
+    SourceMode,
+};
 
 const SIZE: u32 = 4;
 const ROW_BYTES: u32 = 256;
@@ -37,6 +40,24 @@ fn pattern() -> VideoFramePayload {
     }
     VideoFramePayload::Rgba8(RgbaFrame {
         extent: [SIZE, SIZE],
+        data,
+    })
+}
+
+fn wide_pattern() -> VideoFramePayload {
+    let mut data = Vec::with_capacity((SIZE * 2 * 4) as usize);
+    for y in 0..2 {
+        for x in 0..SIZE {
+            data.extend_from_slice(&[
+                40 + x as u8 * 50,
+                60 + y as u8 * 140,
+                220 - x as u8 * 40,
+                255,
+            ]);
+        }
+    }
+    VideoFramePayload::Rgba8(RgbaFrame {
+        extent: [SIZE, 2],
         data,
     })
 }
@@ -198,6 +219,49 @@ fn composites_buses_independently_before_crossfading() {
         &center[..4]
     );
     assert!(center[2] < 5);
+}
+
+#[test]
+fn blend_modes_match_known_opaque_primary_colors() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer
+        .upload(&device, &queue, 0, &solid([255, 0, 0, 255]))
+        .unwrap();
+    mixer
+        .upload(&device, &queue, 1, &solid([0, 255, 0, 255]))
+        .unwrap();
+    let cases = [
+        (LayerBlendMode::Normal, [0, 255, 0, 255]),
+        (LayerBlendMode::Add, [255, 255, 0, 255]),
+        (LayerBlendMode::Screen, [255, 255, 0, 255]),
+        (LayerBlendMode::Multiply, [0, 0, 0, 255]),
+        (LayerBlendMode::Difference, [255, 255, 0, 255]),
+        (LayerBlendMode::Lighten, [255, 255, 0, 255]),
+        (LayerBlendMode::Darken, [0, 0, 0, 255]),
+        (LayerBlendMode::Overlay, [255, 0, 0, 255]),
+    ];
+    for (mode, expected) in cases {
+        let output = render(
+            &device,
+            &queue,
+            &mut mixer,
+            MixerParams {
+                levels: [1.0, 1.0, 0.0, 0.0],
+                blend_modes: [
+                    LayerBlendMode::Normal,
+                    mode,
+                    LayerBlendMode::Normal,
+                    LayerBlendMode::Normal,
+                ],
+                ..Default::default()
+            },
+        );
+        assert_eq!(&output[..4], &expected, "{mode:?}");
+    }
 }
 
 #[test]
@@ -367,4 +431,65 @@ fn layer_transforms_change_an_asymmetric_source() {
         );
         assert_ne!(changed, base, "{label} did not change the rendered output");
     }
+}
+
+#[test]
+fn crop_and_source_modes_use_the_source_aspect_ratio() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer.upload(&device, &queue, 0, &wide_pattern()).unwrap();
+    let transformed = |transform| MixerParams {
+        transforms: [
+            transform,
+            DeckTransform::default(),
+            DeckTransform::default(),
+            DeckTransform::default(),
+        ],
+        output_aspect: 1.0,
+        ..Default::default()
+    };
+
+    let stretch = render(
+        &device,
+        &queue,
+        &mut mixer,
+        transformed(DeckTransform::default()),
+    );
+    let fit = render(
+        &device,
+        &queue,
+        &mut mixer,
+        transformed(DeckTransform {
+            source_mode: SourceMode::Fit,
+            ..Default::default()
+        }),
+    );
+    assert_eq!(&fit[..4], &[0, 0, 0, 255]);
+    assert_ne!(fit, stretch);
+
+    let fill = render(
+        &device,
+        &queue,
+        &mut mixer,
+        transformed(DeckTransform {
+            source_mode: SourceMode::Fill,
+            ..Default::default()
+        }),
+    );
+    assert_ne!(fill, fit);
+    assert_ne!(fill, stretch);
+
+    let cropped = render(
+        &device,
+        &queue,
+        &mut mixer,
+        transformed(DeckTransform {
+            crop: [0.4, 0.0, 0.0, 0.0],
+            ..Default::default()
+        }),
+    );
+    assert_ne!(cropped, stretch);
 }

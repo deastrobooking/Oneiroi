@@ -33,14 +33,20 @@ struct MixerGlobals {
     rotation: [f32; 4],
     flip_horizontal: [u32; 4],
     flip_vertical: [u32; 4],
+    crop_left: [f32; 4],
+    crop_right: [f32; 4],
+    crop_top: [f32; 4],
+    crop_bottom: [f32; 4],
+    source_modes: [u32; 4],
+    blend_modes: [u32; 4],
     bus_assignments: [u32; 4],
     crossfade_gains: [f32; 2],
     master_opacity: f32,
     time_seconds: f32,
+    output_aspect: f32,
     blackout: u32,
     _padding_a: u32,
     _padding_b: u32,
-    _padding_c: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -280,6 +286,8 @@ pub struct MixerParams {
     pub buses: [MixerBus; 4],
     pub crossfade_gains: [f32; 2],
     pub transforms: [DeckTransform; 4],
+    pub blend_modes: [LayerBlendMode; 4],
+    pub output_aspect: f32,
     pub effects: [DeckEffects; 4],
     pub master_opacity: f32,
     pub time_seconds: f32,
@@ -296,6 +304,9 @@ pub struct DeckTransform {
     pub rotation: f32,
     pub flip_horizontal: bool,
     pub flip_vertical: bool,
+    /// Normalized left, right, top and bottom crop amounts.
+    pub crop: [f32; 4],
+    pub source_mode: SourceMode,
 }
 
 impl Default for DeckTransform {
@@ -306,6 +317,8 @@ impl Default for DeckTransform {
             rotation: 0.0,
             flip_horizontal: false,
             flip_vertical: false,
+            crop: [0.0; 4],
+            source_mode: SourceMode::Stretch,
         }
     }
 }
@@ -329,8 +342,47 @@ impl DeckTransform {
         } else {
             0.0
         };
+        self.crop = self.crop.map(|value| {
+            if value.is_finite() {
+                value.clamp(0.0, 0.95)
+            } else {
+                0.0
+            }
+        });
+        normalize_crop_pair(&mut self.crop, 0, 1);
+        normalize_crop_pair(&mut self.crop, 2, 3);
         self
     }
+}
+
+fn normalize_crop_pair(crop: &mut [f32; 4], first: usize, second: usize) {
+    let sum = crop[first] + crop[second];
+    if sum > 0.98 {
+        let scale = 0.98 / sum;
+        crop[first] *= scale;
+        crop[second] *= scale;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SourceMode {
+    Fit,
+    Fill,
+    #[default]
+    Stretch,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LayerBlendMode {
+    #[default]
+    Normal,
+    Add,
+    Screen,
+    Multiply,
+    Difference,
+    Lighten,
+    Darken,
+    Overlay,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -347,6 +399,8 @@ impl Default for MixerParams {
             buses: [MixerBus::A; 4],
             crossfade_gains: [1.0, 0.0],
             transforms: [DeckTransform::default(); 4],
+            blend_modes: [LayerBlendMode::Normal; 4],
+            output_aspect: 1.0,
             effects: [DeckEffects::default(); 4],
             master_opacity: 1.0,
             time_seconds: 0.0,
@@ -615,6 +669,25 @@ impl FourDeckCompositor {
                 rotation: transforms.map(|transform| transform.rotation),
                 flip_horizontal: transforms.map(|transform| u32::from(transform.flip_horizontal)),
                 flip_vertical: transforms.map(|transform| u32::from(transform.flip_vertical)),
+                crop_left: transforms.map(|transform| transform.crop[0]),
+                crop_right: transforms.map(|transform| transform.crop[1]),
+                crop_top: transforms.map(|transform| transform.crop[2]),
+                crop_bottom: transforms.map(|transform| transform.crop[3]),
+                source_modes: transforms.map(|transform| match transform.source_mode {
+                    SourceMode::Fit => 0,
+                    SourceMode::Fill => 1,
+                    SourceMode::Stretch => 2,
+                }),
+                blend_modes: params.blend_modes.map(|mode| match mode {
+                    LayerBlendMode::Normal => 0,
+                    LayerBlendMode::Add => 1,
+                    LayerBlendMode::Screen => 2,
+                    LayerBlendMode::Multiply => 3,
+                    LayerBlendMode::Difference => 4,
+                    LayerBlendMode::Lighten => 5,
+                    LayerBlendMode::Darken => 6,
+                    LayerBlendMode::Overlay => 7,
+                }),
                 bus_assignments: params.buses.map(|bus| match bus {
                     MixerBus::A => 0,
                     MixerBus::B => 1,
@@ -622,10 +695,14 @@ impl FourDeckCompositor {
                 crossfade_gains: params.crossfade_gains.map(|gain| gain.clamp(0.0, 1.0)),
                 master_opacity: params.master_opacity.clamp(0.0, 1.0),
                 time_seconds: params.time_seconds,
+                output_aspect: if params.output_aspect.is_finite() {
+                    params.output_aspect.clamp(0.01, 100.0)
+                } else {
+                    1.0
+                },
                 blackout: u32::from(params.blackout),
                 _padding_a: 0,
                 _padding_b: 0,
-                _padding_c: 0,
             }),
         );
         if self.bind_group.is_none() {
