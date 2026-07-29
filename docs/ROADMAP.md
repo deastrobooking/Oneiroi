@@ -29,11 +29,12 @@ Acceptance criteria:
 
 ## Phase 1: dedicated program output
 
-Status: in progress. The offscreen program texture, clean second window,
-display targeting, enable/disable control, borderless fullscreen, preset and
-custom resolutions, calibration overlays and project persistence are
-implemented. Presentation preserves composition aspect ratio with automatic
-letterbox or pillarbox bars.
+Status: implementation complete; hardware validation remains. The offscreen
+program texture, clean second window, display targeting, enable/disable
+control, borderless fullscreen, preset and custom resolutions, calibration
+overlays and project persistence are implemented. Presentation preserves
+composition aspect ratio with automatic letterbox or pillarbox bars. Surface
+acquisition and display-topology health are observable in the operator UI.
 
 Delivered:
 
@@ -48,11 +49,13 @@ Delivered:
 9. Custom 320×180 through 7680×4320 composition sizing
 10. GPU-rendered test card and output-identification overlay
 11. Persistence for the selected display and calibration state
+12. Exact surface acquisition status, recovery counters and operator diagnostics
+13. Two-second display-topology polling and reconnect fallback
 
 Remaining:
 
-1. Add output surface/status diagnostics.
-2. Harden display identity and fallback behavior against topology changes.
+1. Harden display identity across topology changes with identical display models.
+2. Complete show-machine display reconnect and long-run soak testing.
 
 Acceptance criteria:
 
@@ -66,16 +69,16 @@ Acceptance criteria:
 
 ## Phase 2: correct layer composition
 
-The current mixer supplies per-deck levels and A/B gains, but decks are still
-composited in fixed order with Normal-style over. Complete the visual mixer
-before adding more sources.
+Status: in progress. Decks are now composited into independent A and B images
+in fixed order within each bus, then the completed bus images are crossfaded.
+Complete the layer-control model before adding more sources.
 
 Implementation sequence:
 
-1. Define explicit Bus A and Bus B intermediate composites.
-2. Crossfade the two completed bus images instead of only multiplying each
-   deck's level by a bus gain.
-3. Add position, scale, rotation and horizontal/vertical flip.
+1. Define explicit Bus A and Bus B intermediate composites. (implemented)
+2. Crossfade the two completed bus images instead of multiplying each deck's
+   level by a bus gain. (implemented)
+3. Add position, scale, rotation and horizontal/vertical flip. (implemented)
 4. Add crop plus fit, fill and stretch source modes.
 5. Add linear-light Normal, Add, Screen, Multiply, Difference, Lighten, Darken
    and Overlay blend modes.
@@ -84,9 +87,9 @@ Implementation sequence:
 
 Acceptance criteria:
 
-- Bus results do not depend on the other bus's deck order.
+- Bus results do not depend on the other bus's deck order. (GPU tested)
 - Transform and crop behavior is consistent for HAP, RGBA, still and camera
-  sources.
+  sources. (transform path implemented and GPU tested)
 - Every blend mode has GPU readback coverage using known input colors.
 - Neutral defaults render identically to the current mixer.
 

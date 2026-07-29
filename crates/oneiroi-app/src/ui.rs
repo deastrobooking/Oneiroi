@@ -12,7 +12,7 @@ use oneiroi_media::{
     CLIPS_PER_DECK, CameraDevice, ClipAddress, ClipBank, CrossfadeBus, DeckId, DeckState,
     DeckTransport, EndMode, FourDeckMixer, LaunchQueue, MediaHealth,
 };
-use oneiroi_render::{DeckEffects, DeckLfos, EffectTarget, LfoWaveform};
+use oneiroi_render::{DeckEffects, DeckLfos, DeckTransform, EffectTarget, LfoWaveform};
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.
 pub struct UiState {
@@ -29,6 +29,7 @@ pub struct UiState {
     pub composition_extent: [u32; 2],
     pub custom_composition_extent: [u32; 2],
     pub effects: [DeckEffects; 4],
+    pub transforms: [DeckTransform; 4],
     pub lfos: [DeckLfos; 4],
     pub bpm: f64,
     pub quantization: Quantization,
@@ -58,6 +59,7 @@ impl Default for UiState {
             composition_extent: [1920, 1080],
             custom_composition_extent: [1920, 1080],
             effects: [DeckEffects::default(); 4],
+            transforms: [DeckTransform::default(); 4],
             lfos: [DeckLfos::default(); 4],
             bpm: 120.0,
             quantization: Quantization::Immediate,
@@ -192,6 +194,20 @@ pub struct OutputDisplay {
     pub label: String,
 }
 
+pub struct OutputHealthMetrics<'a> {
+    pub status: &'a str,
+    pub current_display: &'a str,
+    pub surface_extent: [u32; 2],
+    pub presented: u64,
+    pub skipped: u64,
+    pub reconfigurations: u64,
+    pub recoveries: u64,
+    pub timeouts: u64,
+    pub occlusions: u64,
+    pub validation_errors: u64,
+    pub topology_changes: u64,
+}
+
 pub struct PerformanceMetrics<'a> {
     pub tempo: TempoClock,
     pub now_seconds: f64,
@@ -204,6 +220,7 @@ pub struct PerformanceMetrics<'a> {
     pub cameras: &'a [CameraDevice],
     pub camera_status: &'a str,
     pub output_displays: &'a [OutputDisplay],
+    pub output_health: OutputHealthMetrics<'a>,
 }
 
 pub fn draw(
@@ -316,6 +333,48 @@ pub fn draw(
                 ui.checkbox(&mut state.output_test_card, "Test card");
                 ui.checkbox(&mut state.output_identify, "Identify");
             });
+            egui::CollapsingHeader::new("Output health")
+                .default_open(false)
+                .show(ui, |ui| {
+                    let health = &metrics.output_health;
+                    let (status, color) = if !state.output_enabled {
+                        ("Disabled", egui::Color32::GRAY)
+                    } else if metrics.output_displays.is_empty() {
+                        ("No connected display", egui::Color32::RED)
+                    } else if health.status == "Healthy" {
+                        (health.status, egui::Color32::LIGHT_GREEN)
+                    } else if health.validation_errors > 0 {
+                        (health.status, egui::Color32::RED)
+                    } else {
+                        (health.status, egui::Color32::YELLOW)
+                    };
+                    ui.horizontal_wrapped(|ui| {
+                        ui.colored_label(color, status);
+                        ui.separator();
+                        ui.label(format!(
+                            "surface {} × {} · composition {} × {} · FIFO",
+                            health.surface_extent[0],
+                            health.surface_extent[1],
+                            state.composition_extent[0],
+                            state.composition_extent[1]
+                        ));
+                    });
+                    ui.label(format!("Display: {}", health.current_display));
+                    ui.label(format!(
+                        "presented {} · skipped {} · recovered {} · reconfigured {}",
+                        health.presented,
+                        health.skipped,
+                        health.recoveries,
+                        health.reconfigurations
+                    ));
+                    ui.weak(format!(
+                        "timeouts {} · occluded {} · validation errors {} · display changes {}",
+                        health.timeouts,
+                        health.occlusions,
+                        health.validation_errors,
+                        health.topology_changes
+                    ));
+                });
             ui.horizontal(|ui| {
                 ui.label(if metrics.project_dirty {
                     "● Modified"
@@ -474,9 +533,12 @@ pub fn draw(
                             ui,
                             mixer,
                             deck_id,
-                            &mut transports[deck_id.index()],
-                            &mut state.effects[deck_id.index()],
-                            &mut state.lfos[deck_id.index()],
+                            DeckControls {
+                                transport: &mut transports[deck_id.index()],
+                                transform: &mut state.transforms[deck_id.index()],
+                                effects: &mut state.effects[deck_id.index()],
+                                lfos: &mut state.lfos[deck_id.index()],
+                            },
                             &mut actions,
                         );
                         if index % 2 == 1 {
@@ -634,15 +696,26 @@ fn draw_clip_grid(
         });
 }
 
+struct DeckControls<'a> {
+    transport: &'a mut DeckTransport,
+    transform: &'a mut DeckTransform,
+    effects: &'a mut DeckEffects,
+    lfos: &'a mut DeckLfos,
+}
+
 fn draw_deck(
     ui: &mut egui::Ui,
     mixer: &mut FourDeckMixer,
     id: DeckId,
-    transport: &mut DeckTransport,
-    effects: &mut DeckEffects,
-    lfos: &mut DeckLfos,
+    controls: DeckControls<'_>,
     actions: &mut Vec<UiAction>,
 ) {
+    let DeckControls {
+        transport,
+        transform,
+        effects,
+        lfos,
+    } = controls;
     let selected = mixer.selected() == id;
     let frame = egui::Frame::group(ui.style())
         .fill(if selected {
@@ -796,6 +869,39 @@ fn draw_deck(
                 actions.push(UiAction::Seek(id));
             }
         }
+        egui::CollapsingHeader::new("Layer transform")
+            .id_salt(format!("transform-{}", id.label()))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Slider::new(&mut transform.position[0], -2.0..=2.0)
+                            .text("position X"),
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut transform.position[1], -2.0..=2.0)
+                            .text("position Y"),
+                    );
+                });
+                ui.add(
+                    egui::Slider::new(&mut transform.scale, 0.05..=4.0)
+                        .text("scale")
+                        .logarithmic(true),
+                );
+                let mut degrees = transform.rotation * 360.0;
+                if ui
+                    .add(egui::Slider::new(&mut degrees, -360.0..=360.0).text("rotation°"))
+                    .changed()
+                {
+                    transform.rotation = degrees / 360.0;
+                }
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut transform.flip_horizontal, "Flip horizontal");
+                    ui.checkbox(&mut transform.flip_vertical, "Flip vertical");
+                    if ui.button("Reset transform").clicked() {
+                        *transform = DeckTransform::default();
+                    }
+                });
+            });
         egui::CollapsingHeader::new("GPU effects")
             .id_salt(format!("effects-{}", id.label()))
             .show(ui, |ui| {

@@ -82,6 +82,13 @@ impl ProjectFile {
                 || !(0.25..=4.0).contains(&deck.transport.speed)
                 || !deck.transport.position.is_finite()
                 || deck.transport.position < 0.0
+                || deck
+                    .transform
+                    .position
+                    .iter()
+                    .any(|value| !effect_value(*value, -2.0, 2.0))
+                || !effect_value(deck.transform.scale, 0.05, 4.0)
+                || !effect_value(deck.transform.rotation, -1.0, 1.0)
                 || !effect_value(deck.effects.contrast, 0.0, 4.0)
                 || !effect_value(deck.effects.saturation, 0.0, 4.0)
                 || !effect_value(deck.effects.hue, -1.0, 1.0)
@@ -215,6 +222,8 @@ pub struct DeckProject {
     pub level: f32,
     pub bus: CrossfadeBusProject,
     pub transport: TransportProject,
+    #[serde(default)]
+    pub transform: TransformProject,
     pub effects: EffectProject,
     #[serde(default = "default_lfos")]
     pub lfos: Vec<LfoProject>,
@@ -233,6 +242,7 @@ impl Default for DeckProject {
             level: 1.0,
             bus: CrossfadeBusProject::Left,
             transport: TransportProject::default(),
+            transform: TransformProject::default(),
             effects: EffectProject::default(),
             lfos: default_lfos(),
             mod_routes: default_mod_routes(),
@@ -246,6 +256,27 @@ impl Default for DeckProject {
 pub enum CrossfadeBusProject {
     Left,
     Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TransformProject {
+    pub position: [f32; 2],
+    pub scale: f32,
+    pub rotation: f32,
+    pub flip_horizontal: bool,
+    pub flip_vertical: bool,
+}
+
+impl Default for TransformProject {
+    fn default() -> Self {
+        Self {
+            position: [0.0; 2],
+            scale: 1.0,
+            rotation: 0.0,
+            flip_horizontal: false,
+            flip_vertical: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -640,6 +671,13 @@ mod tests {
             target: EffectTargetProject::Jitter,
             amount: -0.6,
         };
+        project.decks[0].transform = TransformProject {
+            position: [0.25, -0.5],
+            scale: 1.5,
+            rotation: 0.125,
+            flip_horizontal: true,
+            flip_vertical: false,
+        };
         project.settings.output = OutputProject {
             enabled: false,
             fullscreen: true,
@@ -714,6 +752,7 @@ mod tests {
             .unwrap();
         for deck in value["decks"].as_array_mut().unwrap() {
             let deck = deck.as_object_mut().unwrap();
+            deck.remove("transform").unwrap();
             deck.remove("lfos").unwrap();
             deck.remove("mod_routes").unwrap();
             let effects = deck["effects"].as_object_mut().unwrap();
@@ -761,6 +800,22 @@ mod tests {
         assert!(project.settings.output.display_id.is_empty());
         assert!(!project.settings.output.test_card);
         assert!(!project.settings.output.identify);
+        project.validate().unwrap();
+    }
+
+    #[test]
+    fn projects_saved_before_layer_transforms_receive_neutral_geometry() {
+        let mut value = serde_json::to_value(ProjectFile::default()).unwrap();
+        for deck in value["decks"].as_array_mut().unwrap() {
+            deck.as_object_mut().unwrap().remove("transform").unwrap();
+        }
+        let project: ProjectFile = serde_json::from_value(value).unwrap();
+        assert!(
+            project
+                .decks
+                .iter()
+                .all(|deck| deck.transform == TransformProject::default())
+        );
         project.validate().unwrap();
     }
 

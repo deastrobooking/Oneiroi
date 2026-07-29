@@ -63,6 +63,19 @@ Open **GPU effects** on a deck. Available controls include:
 Effects run on each source before deck composition. **Reset effects** restores
 neutral values for that deck.
 
+## Layer transforms
+
+Open **Layer transform** on a deck to adjust:
+
+- Horizontal and vertical position in normalized output coordinates
+- Uniform scale from 0.05× through 4×
+- Rotation from -360° through 360°
+- Independent horizontal and vertical flips
+
+Pixels moved outside the layer bounds become transparent instead of smearing
+the source edge. **Reset transform** restores centered, unscaled, unrotated
+geometry. Transform settings are stored per deck in the project.
+
 ## LFOs and modulation matrix
 
 Open **LFOs + Mod Matrix** on a deck.
@@ -130,6 +143,13 @@ Press `Escape` to leave fullscreen. Display preference, output visibility,
 fullscreen state, composition resolution and calibration-overlay state are
 stored in the project. Press `O` for an immediate output-window disable/enable
 action.
+
+Expand **Output health** to verify the current display, swapchain size,
+composition size and FIFO presentation mode. The counters distinguish
+presented and skipped frames, automatic reconfigurations, successful
+recoveries, timeouts, occlusion, validation errors and display-topology
+changes. Connected displays are polled every two seconds, so reconnecting an
+adapter or projector updates the target list without restarting the app.
 
 ## Projects and recovery
 

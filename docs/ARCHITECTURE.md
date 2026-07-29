@@ -99,11 +99,26 @@ phase.
 
 ## Color and composition
 
+Each deck is processed and composited in deck order into its assigned Bus A or
+Bus B accumulator. Only after both accumulators are complete are the selected
+linear or equal-power gains applied. This prevents a layer on one bus from
+changing the internal result of the other bus.
+
+Layer geometry uses an inverse UV transform before source effects: output
+position is translated back into deck-local coordinates, inverse-rotated,
+scaled and optionally flipped. Coordinates outside `[0, 1]` resolve to
+transparent black. Because this happens before source interpretation, RGBA,
+HAP, still images and camera frames share identical transform behavior.
+
 The compositor renders once into a fixed-resolution sRGB program texture.
 Presentation passes sample that texture into the operator and output surfaces.
 Their small uniform also selects calibration modes: a generated color-bar/grid
 test card and a magenta identification frame/crosshair. Display discovery and
 window placement remain in `oneiroi-app`; the render crate has no winit types.
+Surface acquisition returns an explicit health status alongside the optional
+frame. Lost, outdated and suboptimal surfaces reconfigure automatically; the
+application records skips, timeouts, occlusion, validation failures and the
+next healthy recovery. Display topology is polled on a two-second cadence.
 The content views encode linear shader output to sRGB; the egui overlay then
 uses the operator surface's non-sRGB view, matching egui's output convention.
 Operator-window resizing does not change composition resolution.

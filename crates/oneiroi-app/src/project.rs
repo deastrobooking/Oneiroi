@@ -5,14 +5,14 @@ use oneiroi_io::{
     CameraProject, ControlTargetProject, CrossfadeBusProject, DeckProject, EffectProject,
     EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject,
     MidiMappingProject, MidiMessageProject, ModRouteProject, OutputProject, ProjectFile,
-    ProjectSettings, QuantizationProject, TransportProject,
+    ProjectSettings, QuantizationProject, TransformProject, TransportProject,
 };
 use oneiroi_media::{
     CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipBank, CrossfadeBus, DeckId,
     DeckTransport, EndMode, FourDeckMixer,
 };
 use oneiroi_render::{
-    DeckEffects, DeckLfos, EffectLfo, EffectTarget, LfoWaveform, ModulationRoute,
+    DeckEffects, DeckLfos, DeckTransform, EffectLfo, EffectTarget, LfoWaveform, ModulationRoute,
 };
 
 use crate::ui::UiState;
@@ -71,6 +71,7 @@ pub fn snapshot(
                         speed: transport.speed,
                         position: transport.position,
                     },
+                    transform: transform_to_project(ui.transforms[deck.index()]),
                     effects: effect_to_project(ui.effects[deck.index()]),
                     lfos: ui.lfos[deck.index()]
                         .lanes
@@ -166,6 +167,7 @@ pub fn apply_deck(
         CrossfadeBusProject::Right => CrossfadeBus::Right,
     };
     ui.effects[deck.index()] = effect_from_project(&project.effects);
+    ui.transforms[deck.index()] = transform_from_project(project.transform);
     let mut lfos = DeckLfos::default();
     for (destination, source) in lfos.lanes.iter_mut().zip(&project.lfos) {
         *destination = lfo_from_project(source);
@@ -185,6 +187,27 @@ pub fn apply_deck(
         position: project.transport.position.max(0.0),
         duration: None,
     }
+}
+
+fn transform_to_project(transform: DeckTransform) -> TransformProject {
+    TransformProject {
+        position: transform.position,
+        scale: transform.scale,
+        rotation: transform.rotation,
+        flip_horizontal: transform.flip_horizontal,
+        flip_vertical: transform.flip_vertical,
+    }
+}
+
+fn transform_from_project(transform: TransformProject) -> DeckTransform {
+    DeckTransform {
+        position: transform.position,
+        scale: transform.scale,
+        rotation: transform.rotation,
+        flip_horizontal: transform.flip_horizontal,
+        flip_vertical: transform.flip_vertical,
+    }
+    .sanitized()
 }
 
 fn effect_to_project(effect: DeckEffects) -> EffectProject {

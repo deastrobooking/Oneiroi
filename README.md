@@ -28,10 +28,13 @@ target OS:
 - One offscreen program render shared by the operator preview and a clean
   second output window, with connected-display selection, output
   enable/fullscreen, 720p/1080p/UHD presets, custom composition sizing, test
-  card and identification overlay.
+  card, identification overlay and live surface-health diagnostics.
 - Per-deck play/pause, restart, freeze, loop/one-shot, 0.25–4× playback and
   asynchronous generation-safe seeking.
-- Assignable A/B buses with linear or equal-power crossfading.
+- Independent A/B bus composites with assignable decks and linear or
+  equal-power crossfading between the completed bus images.
+- Per-deck position, uniform scale, rotation and independent horizontal or
+  vertical flip, with transparent pixels outside transformed layer bounds.
 - Native per-deck mirror, neon glow, fractal fold, scanline jitter, find-edges,
   bit reduction, black-light inversion, pixelate and luma-key effects.
 - Per-deck hue, contrast, saturation, black/white levels and gamma grading,
@@ -93,7 +96,9 @@ operator window.
 The **Program output** toolbar control shows or hides the clean output window.
 Choose the connected display, then enable **Fullscreen**. Use **Test card** to
 calibrate the signal path and **Identify** for a magenta frame/crosshair.
-`Escape` returns the output to windowed mode.
+Expand **Output health** to inspect the active display, surface/composition
+sizes, skipped presentations, reconfigurations and recoveries. `Escape` returns
+the output to windowed mode.
 
 In the app, click deck A, B, C or D and drag a movie onto the window. Imports
 are probed on a background worker and the next deck is selected automatically.

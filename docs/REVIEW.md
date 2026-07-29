@@ -13,8 +13,8 @@ instrument.
 It is not yet stage-ready as a standalone mixer. The first output slice now
 separates an offscreen program render from the operator preview and clean second
 window with aspect-preserving presentation. Display selection, custom sizing
-and test patterns are implemented; output diagnostics and show-machine
-validation remain before that milestone is complete.
+test patterns and output diagnostics are implemented; show-machine validation
+remains before the milestone is stage-certified.
 
 ## What is strong
 
@@ -45,11 +45,11 @@ validation remain before that milestone is complete.
 
 - Project values are validated before application.
 - Version-one projects migrate to the current version-two schema.
-- The workspace currently passes 78 tests and strict Clippy.
+- The workspace currently passes 83 tests and strict Clippy.
 
 ## Stage-critical gaps
 
-### 1. Program output is only partially complete
+### 1. Program output requires hardware certification
 
 The shared GPU now owns independent operator/output surfaces, and the compositor
 renders once into an offscreen program texture. The clean window can be hidden
@@ -57,31 +57,24 @@ or made borderless fullscreen at 720p, 1080p or UHD.
 
 Connected displays can now be selected and refreshed, preset or custom
 composition sizes are supported, and GPU test-card/identification overlays are
-available. Remaining work: output-health diagnostics, stronger identity across
-topology changes and show-machine soak testing.
+available. Exact surface errors, recovery and topology changes are now visible
+in the operator UI. Remaining work: stronger identity across topology changes
+and show-machine soak testing.
 
-### 2. A/B routing is gain-based, not a true two-bus composite
+### 2. Layer transforms and blend modes remain incomplete
 
-Each deck receives an A/B crossfade gain and is then composited in fixed deck
-order. This works for the current Normal-style mix but is not the right semantic
-base for per-layer blend modes or predictable bus behavior.
+The compositor now builds Bus A and Bus B independently and supports per-deck
+position, scale, rotation and horizontal/vertical flip. The application still
+lacks crop, fit/fill/stretch and the specified blend modes. Mirror and fractal
+remain source-space effects rather than layer transforms.
 
-Resolution: composite Bus A and Bus B independently, then crossfade the two
-results.
-
-### 3. Layer composition controls are incomplete
-
-The application lacks position, scale, rotation, crop, fit/fill/stretch and the
-specified blend modes. Mirror and fractal operate as effects, not as a complete
-layer-transform model.
-
-### 4. Control and audio models are not connected to hardware
+### 3. Control and audio models are not connected to hardware
 
 MIDI mapping state is device-neutral only. Audio has no capture or analysis
 adapter. The modulation matrix is architecturally ready for more source types,
 but only LFO sources exist.
 
-### 5. Operational diagnostics are too shallow
+### 4. Operational diagnostics are too shallow
 
 FPS and aggregate dropped/repeated/late counts are visible, but there is no GPU
 timing, upload timing, queue occupancy, per-deck decoder health, audio status,

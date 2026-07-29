@@ -22,8 +22,8 @@ use oneiroi_media::{
     discover_cameras,
 };
 use oneiroi_render::{
-    FourDeckCompositor, Gpu, MixerParams, PROGRAM_FORMAT, PresentSurface, PresentationOptions,
-    ProgramPresenter, ProgramTarget,
+    FourDeckCompositor, Gpu, MixerBus, MixerParams, PROGRAM_FORMAT, PresentSurface,
+    PresentationOptions, ProgramPresenter, ProgramTarget, SurfaceAcquireStatus,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
@@ -59,6 +59,9 @@ struct State {
     output_window: Arc<Window>,
     output_monitors: Vec<OutputMonitor>,
     output_displays: Vec<ui::OutputDisplay>,
+    output_current_display: String,
+    output_health: OutputHealth,
+    last_display_refresh: Instant,
     gpu: Gpu,
     output_surface: PresentSurface,
     program: ProgramTarget,
@@ -110,6 +113,87 @@ struct OutputMonitor {
     handle: MonitorHandle,
 }
 
+struct OutputHealth {
+    status: &'static str,
+    presented: u64,
+    skipped: u64,
+    reconfigurations: u64,
+    recoveries: u64,
+    timeouts: u64,
+    occlusions: u64,
+    validation_errors: u64,
+    topology_changes: u64,
+    awaiting_recovery: bool,
+}
+
+impl Default for OutputHealth {
+    fn default() -> Self {
+        Self {
+            status: "Waiting for first frame",
+            presented: 0,
+            skipped: 0,
+            reconfigurations: 0,
+            recoveries: 0,
+            timeouts: 0,
+            occlusions: 0,
+            validation_errors: 0,
+            topology_changes: 0,
+            awaiting_recovery: false,
+        }
+    }
+}
+
+impl OutputHealth {
+    fn observe(&mut self, status: SurfaceAcquireStatus) {
+        match status {
+            SurfaceAcquireStatus::Healthy => {
+                self.presented = self.presented.saturating_add(1);
+                if self.awaiting_recovery {
+                    self.recoveries = self.recoveries.saturating_add(1);
+                    self.awaiting_recovery = false;
+                }
+                self.status = "Healthy";
+            }
+            SurfaceAcquireStatus::Suboptimal => {
+                self.presented = self.presented.saturating_add(1);
+                self.reconfigurations = self.reconfigurations.saturating_add(1);
+                self.awaiting_recovery = true;
+                self.status = "Suboptimal · reconfigured";
+            }
+            SurfaceAcquireStatus::Outdated => {
+                self.skipped = self.skipped.saturating_add(1);
+                self.reconfigurations = self.reconfigurations.saturating_add(1);
+                self.awaiting_recovery = true;
+                self.status = "Outdated · reconfiguring";
+            }
+            SurfaceAcquireStatus::Lost => {
+                self.skipped = self.skipped.saturating_add(1);
+                self.reconfigurations = self.reconfigurations.saturating_add(1);
+                self.awaiting_recovery = true;
+                self.status = "Surface lost · reconfiguring";
+            }
+            SurfaceAcquireStatus::Timeout => {
+                self.skipped = self.skipped.saturating_add(1);
+                self.timeouts = self.timeouts.saturating_add(1);
+                self.awaiting_recovery = true;
+                self.status = "Presentation timeout";
+            }
+            SurfaceAcquireStatus::Occluded => {
+                self.skipped = self.skipped.saturating_add(1);
+                self.occlusions = self.occlusions.saturating_add(1);
+                self.awaiting_recovery = true;
+                self.status = "Output occluded";
+            }
+            SurfaceAcquireStatus::Validation => {
+                self.skipped = self.skipped.saturating_add(1);
+                self.validation_errors = self.validation_errors.saturating_add(1);
+                self.awaiting_recovery = true;
+                self.status = "Surface validation error";
+            }
+        }
+    }
+}
+
 struct App {
     state: Option<State>,
     initial_files: Vec<PathBuf>,
@@ -159,6 +243,7 @@ impl ApplicationHandler for App {
                         .output_surface
                         .resize(&state.gpu.device, size.width, size.height);
                 }
+                WindowEvent::Moved(_) => state.update_current_output_display(),
                 WindowEvent::ModifiersChanged(modifiers) => {
                     state.modifiers = modifiers.state();
                 }
@@ -276,6 +361,11 @@ impl State {
         if let Some(id) = preferred_display_id {
             ui.output_display_id = id;
         }
+        let output_current_display = output_displays
+            .iter()
+            .find(|display| display.id == ui.output_display_id)
+            .map(|display| display.label.clone())
+            .unwrap_or_else(|| "No connected display".to_owned());
         let attrs = Window::default_attributes()
             .with_title("oneiroi")
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
@@ -356,6 +446,9 @@ impl State {
             output_window,
             output_monitors,
             output_displays,
+            output_current_display,
+            output_health: OutputHealth::default(),
+            last_display_refresh: Instant::now(),
             gpu,
             output_surface,
             program,
@@ -778,12 +871,50 @@ impl State {
                 ));
             }
         }
+        self.output_current_display = self
+            .output_displays
+            .iter()
+            .find(|display| display.id == self.ui.output_display_id)
+            .map(|display| display.label.clone())
+            .unwrap_or_else(|| "No connected display".to_owned());
     }
 
     fn refresh_output_displays(&mut self) {
+        let previous_ids: Vec<_> = self
+            .output_monitors
+            .iter()
+            .map(|monitor| monitor.id.clone())
+            .collect();
         let handles: Vec<_> = self.output_window.available_monitors().collect();
         (self.output_monitors, self.output_displays) = describe_monitors(handles);
-        self.apply_output_monitor();
+        let current_ids: Vec<_> = self
+            .output_monitors
+            .iter()
+            .map(|monitor| monitor.id.clone())
+            .collect();
+        if current_ids != previous_ids {
+            self.output_health.topology_changes =
+                self.output_health.topology_changes.saturating_add(1);
+            self.apply_output_monitor();
+        } else {
+            self.update_current_output_display();
+        }
+        self.last_display_refresh = Instant::now();
+    }
+
+    fn update_current_output_display(&mut self) {
+        self.output_current_display = self
+            .output_window
+            .current_monitor()
+            .map(|monitor| {
+                let id = monitor_id(&monitor);
+                self.output_displays
+                    .iter()
+                    .find(|display| display.id == id)
+                    .map(|display| display.label.clone())
+                    .unwrap_or_else(|| monitor_label(&monitor))
+            })
+            .unwrap_or_else(|| "No connected display".to_owned());
     }
 
     fn poll_restores(&mut self) {
@@ -978,6 +1109,9 @@ impl State {
         self.poll_restores();
         self.poll_thumbnails();
         let now = Instant::now();
+        if now.saturating_duration_since(self.last_display_refresh) >= Duration::from_secs(2) {
+            self.refresh_output_displays();
+        }
         self.maybe_autosave(now);
         self.process_launches(now);
         self.update_playback(now);
@@ -1010,6 +1144,22 @@ impl State {
                     cameras: &self.cameras,
                     camera_status: &self.camera_status,
                     output_displays: &self.output_displays,
+                    output_health: ui::OutputHealthMetrics {
+                        status: self.output_health.status,
+                        current_display: &self.output_current_display,
+                        surface_extent: {
+                            let (width, height) = self.output_surface.size();
+                            [width, height]
+                        },
+                        presented: self.output_health.presented,
+                        skipped: self.output_health.skipped,
+                        reconfigurations: self.output_health.reconfigurations,
+                        recoveries: self.output_health.recoveries,
+                        timeouts: self.output_health.timeouts,
+                        occlusions: self.output_health.occlusions,
+                        validation_errors: self.output_health.validation_errors,
+                        topology_changes: self.output_health.topology_changes,
+                    },
                 },
             );
         });
@@ -1142,16 +1292,17 @@ impl State {
                 levels: std::array::from_fn(|index| {
                     let deck = self.mixer.deck(DeckId::ALL[index]);
                     if matches!(deck.state, DeckState::Ready(_) | DeckState::Live(_)) {
-                        let gains = crossfade_gains(self.ui.crossfader, self.ui.equal_power);
-                        let bus_gain = match deck.bus {
-                            CrossfadeBus::Left => gains[0],
-                            CrossfadeBus::Right => gains[1],
-                        };
-                        deck.level * bus_gain
+                        deck.level
                     } else {
                         0.0
                     }
                 }),
+                buses: std::array::from_fn(|index| match self.mixer.deck(DeckId::ALL[index]).bus {
+                    CrossfadeBus::Left => MixerBus::A,
+                    CrossfadeBus::Right => MixerBus::B,
+                }),
+                crossfade_gains: crossfade_gains(self.ui.crossfader, self.ui.equal_power),
+                transforms: self.ui.transforms,
                 effects: std::array::from_fn(|index| {
                     self.ui.lfos[index].apply(self.ui.effects[index], effect_time, beat_position)
                 }),
@@ -1213,7 +1364,9 @@ impl State {
         }
 
         let output_frame = if self.ui.output_enabled {
-            self.output_surface.acquire(&self.gpu.device)
+            let acquisition = self.output_surface.acquire_with_status(&self.gpu.device);
+            self.output_health.observe(acquisition.status);
+            acquisition.frame
         } else {
             None
         };
@@ -1255,23 +1408,29 @@ fn monitor_id(monitor: &MonitorHandle) -> String {
     )
 }
 
+fn monitor_label(monitor: &MonitorHandle) -> String {
+    let name = monitor.name().unwrap_or_else(|| "Display".to_owned());
+    let size = monitor.size();
+    let refresh = monitor
+        .refresh_rate_millihertz()
+        .map(|millihertz| format!(" · {:.1} Hz", millihertz as f64 / 1000.0))
+        .unwrap_or_default();
+    format!("{name} · {} × {}{refresh}", size.width, size.height)
+}
+
 fn describe_monitors(handles: Vec<MonitorHandle>) -> (Vec<OutputMonitor>, Vec<ui::OutputDisplay>) {
     let mut monitors = Vec::with_capacity(handles.len());
     let mut displays = Vec::with_capacity(handles.len());
     for handle in handles {
         let id = monitor_id(&handle);
-        let name = handle.name().unwrap_or_else(|| "Display".to_owned());
-        let size = handle.size();
-        let refresh = handle
-            .refresh_rate_millihertz()
-            .map(|millihertz| format!(" · {:.1} Hz", millihertz as f64 / 1000.0))
-            .unwrap_or_default();
         displays.push(ui::OutputDisplay {
             id: id.clone(),
-            label: format!("{name} · {} × {}{refresh}", size.width, size.height),
+            label: monitor_label(&handle),
         });
         monitors.push(OutputMonitor { id, handle });
     }
+    monitors.sort_by(|left, right| left.id.cmp(&right.id));
+    displays.sort_by(|left, right| left.id.cmp(&right.id));
     (monitors, displays)
 }
 
@@ -1288,5 +1447,39 @@ fn resolve_project_paths(project: &mut ProjectFile, base: &std::path::Path) {
                 *path = base.join(&*path);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod output_health_tests {
+    use super::*;
+
+    #[test]
+    fn counts_surface_failures_and_the_next_healthy_recovery() {
+        let mut health = OutputHealth::default();
+        health.observe(SurfaceAcquireStatus::Lost);
+        health.observe(SurfaceAcquireStatus::Timeout);
+        assert_eq!(health.skipped, 2);
+        assert_eq!(health.reconfigurations, 1);
+        assert_eq!(health.timeouts, 1);
+        assert_eq!(health.recoveries, 0);
+
+        health.observe(SurfaceAcquireStatus::Healthy);
+        assert_eq!(health.presented, 1);
+        assert_eq!(health.recoveries, 1);
+        assert_eq!(health.status, "Healthy");
+
+        health.observe(SurfaceAcquireStatus::Healthy);
+        assert_eq!(health.recoveries, 1);
+    }
+
+    #[test]
+    fn suboptimal_frames_are_presented_and_reconfigured() {
+        let mut health = OutputHealth::default();
+        health.observe(SurfaceAcquireStatus::Suboptimal);
+        assert_eq!(health.presented, 1);
+        assert_eq!(health.skipped, 0);
+        assert_eq!(health.reconfigurations, 1);
+        assert!(health.awaiting_recovery);
     }
 }

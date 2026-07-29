@@ -16,10 +16,20 @@ struct MixerGlobals {
     bit_reduction: vec4<f32>,
     blacklight: vec4<f32>,
     mirror: vec4<u32>,
+    position_x: vec4<f32>,
+    position_y: vec4<f32>,
+    scale: vec4<f32>,
+    rotation: vec4<f32>,
+    flip_horizontal: vec4<u32>,
+    flip_vertical: vec4<u32>,
+    bus_assignments: vec4<u32>,
+    crossfade_gains: vec2<f32>,
     master_opacity: f32,
     time_seconds: f32,
     blackout: u32,
-    _padding: u32,
+    _padding_a: u32,
+    _padding_b: u32,
+    _padding_c: u32,
 }
 
 struct EffectConfig {
@@ -117,6 +127,35 @@ fn over(back: vec4<f32>, straight_front: vec4<f32>, level: f32) -> vec4<f32> {
     let alpha = clamp(straight_front.a * level, 0.0, 1.0);
     let front = vec4(straight_front.rgb * alpha, alpha);
     return front + back * (1.0 - alpha);
+}
+
+fn layer_uv(
+    input_uv: vec2<f32>,
+    position: vec2<f32>,
+    scale: f32,
+    rotation: f32,
+    flip_horizontal: u32,
+    flip_vertical: u32,
+) -> vec3<f32> {
+    var local = input_uv - vec2(0.5) - position * 0.5;
+    let angle = -rotation * 6.2831853;
+    let sine = sin(angle);
+    let cosine = cos(angle);
+    local = vec2(
+        cosine * local.x - sine * local.y,
+        sine * local.x + cosine * local.y,
+    ) / max(scale, 0.05);
+    if flip_horizontal != 0u {
+        local.x = -local.x;
+    }
+    if flip_vertical != 0u {
+        local.y = -local.y;
+    }
+    let uv = local + vec2(0.5);
+    if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
+        return vec3(uv, 0.0);
+    }
+    return vec3(uv, 1.0);
 }
 
 fn effect_uv(input_uv: vec2<f32>, effect: EffectConfig) -> vec2<f32> {
@@ -230,6 +269,19 @@ fn process_source(
     return apply_color_effects(color, edge, effect);
 }
 
+fn process_layer(
+    primary: texture_2d<f32>,
+    alpha_texture: texture_2d<f32>,
+    transformed_uv: vec3<f32>,
+    kind: u32,
+    effect: EffectConfig,
+) -> vec4<f32> {
+    if transformed_uv.z == 0.0 {
+        return vec4(0.0);
+    }
+    return process_source(primary, alpha_texture, transformed_uv.xy, kind, effect);
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if globals.blackout != 0u {
@@ -240,16 +292,39 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let effect_b = EffectConfig(globals.contrast.y, globals.saturation.y, globals.hue.y, globals.black_level.y, globals.white_level.y, globals.gamma.y, globals.pixelate.y, globals.luma_key.y, globals.neon.y, globals.fractal.y, globals.jitter.y, globals.find_edges.y, globals.bit_reduction.y, globals.blacklight.y, globals.mirror.y);
     let effect_c = EffectConfig(globals.contrast.z, globals.saturation.z, globals.hue.z, globals.black_level.z, globals.white_level.z, globals.gamma.z, globals.pixelate.z, globals.luma_key.z, globals.neon.z, globals.fractal.z, globals.jitter.z, globals.find_edges.z, globals.bit_reduction.z, globals.blacklight.z, globals.mirror.z);
     let effect_d = EffectConfig(globals.contrast.w, globals.saturation.w, globals.hue.w, globals.black_level.w, globals.white_level.w, globals.gamma.w, globals.pixelate.w, globals.luma_key.w, globals.neon.w, globals.fractal.w, globals.jitter.w, globals.find_edges.w, globals.bit_reduction.w, globals.blacklight.w, globals.mirror.w);
-    let a = process_source(source_a, alpha_a, input.uv, globals.source_kinds.x, effect_a);
-    let b = process_source(source_b, alpha_b, input.uv, globals.source_kinds.y, effect_b);
-    let c = process_source(source_c, alpha_c, input.uv, globals.source_kinds.z, effect_c);
-    let d = process_source(source_d, alpha_d, input.uv, globals.source_kinds.w, effect_d);
+    let uv_a = layer_uv(input.uv, vec2(globals.position_x.x, globals.position_y.x), globals.scale.x, globals.rotation.x, globals.flip_horizontal.x, globals.flip_vertical.x);
+    let uv_b = layer_uv(input.uv, vec2(globals.position_x.y, globals.position_y.y), globals.scale.y, globals.rotation.y, globals.flip_horizontal.y, globals.flip_vertical.y);
+    let uv_c = layer_uv(input.uv, vec2(globals.position_x.z, globals.position_y.z), globals.scale.z, globals.rotation.z, globals.flip_horizontal.z, globals.flip_vertical.z);
+    let uv_d = layer_uv(input.uv, vec2(globals.position_x.w, globals.position_y.w), globals.scale.w, globals.rotation.w, globals.flip_horizontal.w, globals.flip_vertical.w);
+    let a = process_layer(source_a, alpha_a, uv_a, globals.source_kinds.x, effect_a);
+    let b = process_layer(source_b, alpha_b, uv_b, globals.source_kinds.y, effect_b);
+    let c = process_layer(source_c, alpha_c, uv_c, globals.source_kinds.z, effect_c);
+    let d = process_layer(source_d, alpha_d, uv_d, globals.source_kinds.w, effect_d);
 
-    var mixed = vec4(0.0);
-    mixed = over(mixed, a, globals.levels.x);
-    mixed = over(mixed, b, globals.levels.y);
-    mixed = over(mixed, c, globals.levels.z);
-    mixed = over(mixed, d, globals.levels.w);
+    var bus_a = vec4(0.0);
+    var bus_b = vec4(0.0);
+    if globals.bus_assignments.x == 0u {
+        bus_a = over(bus_a, a, globals.levels.x);
+    } else {
+        bus_b = over(bus_b, a, globals.levels.x);
+    }
+    if globals.bus_assignments.y == 0u {
+        bus_a = over(bus_a, b, globals.levels.y);
+    } else {
+        bus_b = over(bus_b, b, globals.levels.y);
+    }
+    if globals.bus_assignments.z == 0u {
+        bus_a = over(bus_a, c, globals.levels.z);
+    } else {
+        bus_b = over(bus_b, c, globals.levels.z);
+    }
+    if globals.bus_assignments.w == 0u {
+        bus_a = over(bus_a, d, globals.levels.w);
+    } else {
+        bus_b = over(bus_b, d, globals.levels.w);
+    }
+    var mixed = bus_a * globals.crossfade_gains.x
+        + bus_b * globals.crossfade_gains.y;
     mixed *= globals.master_opacity;
     return vec4(mixed.rgb, 1.0);
 }

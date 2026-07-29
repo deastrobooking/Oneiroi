@@ -9,10 +9,10 @@ pub mod program;
 pub mod triangle;
 pub mod upload;
 
-pub use gpu::{Gpu, PresentSurface};
+pub use gpu::{Gpu, PresentSurface, SurfaceAcquireStatus, SurfaceAcquisition};
 pub use mixer::{
-    DeckEffects, DeckLfos, EffectLfo, EffectTarget, FourDeckCompositor, LfoWaveform,
-    MOD_ROUTES_PER_DECK, MixerParams, MixerUploadError, ModulationRoute,
+    DeckEffects, DeckLfos, DeckTransform, EffectLfo, EffectTarget, FourDeckCompositor, LfoWaveform,
+    MOD_ROUTES_PER_DECK, MixerBus, MixerParams, MixerUploadError, ModulationRoute,
 };
 pub use program::{PROGRAM_FORMAT, PresentationOptions, ProgramPresenter, ProgramTarget};
 pub use triangle::{Globals, TrianglePass};

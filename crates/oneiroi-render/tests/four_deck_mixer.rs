@@ -1,5 +1,5 @@
 use oneiroi_media::{RgbaFrame, VideoFramePayload};
-use oneiroi_render::{DeckEffects, FourDeckCompositor, MixerParams};
+use oneiroi_render::{DeckEffects, DeckTransform, FourDeckCompositor, MixerBus, MixerParams};
 
 const SIZE: u32 = 4;
 const ROW_BYTES: u32 = 256;
@@ -167,6 +167,40 @@ fn composites_decks_in_linear_light_and_honors_blackout() {
 }
 
 #[test]
+fn composites_buses_independently_before_crossfading() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer
+        .upload(&device, &queue, 0, &solid([255, 0, 0, 255]))
+        .unwrap();
+    mixer
+        .upload(&device, &queue, 1, &solid([0, 255, 0, 255]))
+        .unwrap();
+    let params = |crossfade_gains| MixerParams {
+        levels: [1.0, 1.0, 0.0, 0.0],
+        buses: [MixerBus::A, MixerBus::B, MixerBus::A, MixerBus::B],
+        crossfade_gains,
+        ..Default::default()
+    };
+
+    let bus_a = render(&device, &queue, &mut mixer, params([1.0, 0.0]));
+    assert_eq!(&bus_a[..4], &[255, 0, 0, 255]);
+    let bus_b = render(&device, &queue, &mut mixer, params([0.0, 1.0]));
+    assert_eq!(&bus_b[..4], &[0, 255, 0, 255]);
+
+    let center = render(&device, &queue, &mut mixer, params([0.5, 0.5]));
+    assert!(
+        (185..=190).contains(&center[0]) && (185..=190).contains(&center[1]),
+        "linear-light center was {:?}",
+        &center[..4]
+    );
+    assert!(center[2] < 5);
+}
+
+#[test]
 fn expanded_effects_each_change_a_patterned_source() {
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter; skipping");
@@ -263,6 +297,71 @@ fn expanded_effects_each_change_a_patterned_source() {
                     DeckEffects::default(),
                 ],
                 time_seconds: 0.37,
+                ..Default::default()
+            },
+        );
+        assert_ne!(changed, base, "{label} did not change the rendered output");
+    }
+}
+
+#[test]
+fn layer_transforms_change_an_asymmetric_source() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer.upload(&device, &queue, 0, &pattern()).unwrap();
+    let base = render(&device, &queue, &mut mixer, MixerParams::default());
+    let transforms = [
+        (
+            "position",
+            DeckTransform {
+                position: [0.5, -0.25],
+                ..Default::default()
+            },
+        ),
+        (
+            "scale",
+            DeckTransform {
+                scale: 0.5,
+                ..Default::default()
+            },
+        ),
+        (
+            "rotation",
+            DeckTransform {
+                rotation: 0.25,
+                ..Default::default()
+            },
+        ),
+        (
+            "horizontal flip",
+            DeckTransform {
+                flip_horizontal: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "vertical flip",
+            DeckTransform {
+                flip_vertical: true,
+                ..Default::default()
+            },
+        ),
+    ];
+    for (label, transform) in transforms {
+        let changed = render(
+            &device,
+            &queue,
+            &mut mixer,
+            MixerParams {
+                transforms: [
+                    transform,
+                    DeckTransform::default(),
+                    DeckTransform::default(),
+                    DeckTransform::default(),
+                ],
                 ..Default::default()
             },
         );

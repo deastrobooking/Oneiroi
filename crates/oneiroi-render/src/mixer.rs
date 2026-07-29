@@ -27,10 +27,20 @@ struct MixerGlobals {
     bit_reduction: [f32; 4],
     blacklight: [f32; 4],
     mirror: [u32; 4],
+    position_x: [f32; 4],
+    position_y: [f32; 4],
+    scale: [f32; 4],
+    rotation: [f32; 4],
+    flip_horizontal: [u32; 4],
+    flip_vertical: [u32; 4],
+    bus_assignments: [u32; 4],
+    crossfade_gains: [f32; 2],
     master_opacity: f32,
     time_seconds: f32,
     blackout: u32,
-    _padding: u32,
+    _padding_a: u32,
+    _padding_b: u32,
+    _padding_c: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -267,16 +277,76 @@ fn modulate(effects: &mut DeckEffects, target: EffectTarget, value: f32) {
 #[derive(Clone, Copy, Debug)]
 pub struct MixerParams {
     pub levels: [f32; 4],
+    pub buses: [MixerBus; 4],
+    pub crossfade_gains: [f32; 2],
+    pub transforms: [DeckTransform; 4],
     pub effects: [DeckEffects; 4],
     pub master_opacity: f32,
     pub time_seconds: f32,
     pub blackout: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DeckTransform {
+    /// Position in normalized output coordinates. `1.0` moves the layer by
+    /// half the output width or height.
+    pub position: [f32; 2],
+    pub scale: f32,
+    /// Clockwise rotation in turns.
+    pub rotation: f32,
+    pub flip_horizontal: bool,
+    pub flip_vertical: bool,
+}
+
+impl Default for DeckTransform {
+    fn default() -> Self {
+        Self {
+            position: [0.0; 2],
+            scale: 1.0,
+            rotation: 0.0,
+            flip_horizontal: false,
+            flip_vertical: false,
+        }
+    }
+}
+
+impl DeckTransform {
+    pub fn sanitized(mut self) -> Self {
+        self.position = self.position.map(|value| {
+            if value.is_finite() {
+                value.clamp(-2.0, 2.0)
+            } else {
+                0.0
+            }
+        });
+        self.scale = if self.scale.is_finite() {
+            self.scale.clamp(0.05, 4.0)
+        } else {
+            1.0
+        };
+        self.rotation = if self.rotation.is_finite() {
+            self.rotation.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MixerBus {
+    #[default]
+    A,
+    B,
+}
+
 impl Default for MixerParams {
     fn default() -> Self {
         Self {
             levels: [1.0; 4],
+            buses: [MixerBus::A; 4],
+            crossfade_gains: [1.0, 0.0],
+            transforms: [DeckTransform::default(); 4],
             effects: [DeckEffects::default(); 4],
             master_opacity: 1.0,
             time_seconds: 0.0,
@@ -516,6 +586,7 @@ impl FourDeckCompositor {
             self.sources[index].as_ref().map_or(0, |source| source.kind)
         });
         let effects = params.effects.map(DeckEffects::sanitized);
+        let transforms = params.transforms.map(DeckTransform::sanitized);
         let float_values = |read: fn(DeckEffects) -> f32| effects.map(read);
         queue.write_buffer(
             &self.globals,
@@ -538,10 +609,23 @@ impl FourDeckCompositor {
                 bit_reduction: float_values(|effect| effect.bit_reduction),
                 blacklight: float_values(|effect| effect.blacklight),
                 mirror: effects.map(|effect| u32::from(effect.mirror)),
+                position_x: transforms.map(|transform| transform.position[0]),
+                position_y: transforms.map(|transform| transform.position[1]),
+                scale: transforms.map(|transform| transform.scale),
+                rotation: transforms.map(|transform| transform.rotation),
+                flip_horizontal: transforms.map(|transform| u32::from(transform.flip_horizontal)),
+                flip_vertical: transforms.map(|transform| u32::from(transform.flip_vertical)),
+                bus_assignments: params.buses.map(|bus| match bus {
+                    MixerBus::A => 0,
+                    MixerBus::B => 1,
+                }),
+                crossfade_gains: params.crossfade_gains.map(|gain| gain.clamp(0.0, 1.0)),
                 master_opacity: params.master_opacity.clamp(0.0, 1.0),
                 time_seconds: params.time_seconds,
                 blackout: u32::from(params.blackout),
-                _padding: 0,
+                _padding_a: 0,
+                _padding_b: 0,
+                _padding_c: 0,
             }),
         );
         if self.bind_group.is_none() {

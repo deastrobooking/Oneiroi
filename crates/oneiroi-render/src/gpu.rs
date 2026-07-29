@@ -18,6 +18,22 @@ pub struct PresentSurface {
     config: wgpu::SurfaceConfiguration,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SurfaceAcquireStatus {
+    Healthy,
+    Suboptimal,
+    Outdated,
+    Lost,
+    Timeout,
+    Occluded,
+    Validation,
+}
+
+pub struct SurfaceAcquisition {
+    pub frame: Option<wgpu::SurfaceTexture>,
+    pub status: SurfaceAcquireStatus,
+}
+
 impl Gpu {
     /// Create a device and configure a surface for `target` at `width`x`height`
     /// physical pixels.
@@ -241,23 +257,55 @@ impl PresentSurface {
     /// — the exact thing that happens when the output window is dragged to the
     /// projector — so reconfigure and let the frame drop rather than panicking.
     pub fn acquire(&mut self, device: &wgpu::Device) -> Option<wgpu::SurfaceTexture> {
+        self.acquire_with_status(device).frame
+    }
+
+    /// Acquire while retaining the exact swapchain health signal for
+    /// operator diagnostics.
+    pub fn acquire_with_status(&mut self, device: &wgpu::Device) -> SurfaceAcquisition {
         use wgpu::CurrentSurfaceTexture as Cst;
 
         match self.surface.get_current_texture() {
-            Cst::Success(frame) => Some(frame),
+            Cst::Success(frame) => SurfaceAcquisition {
+                frame: Some(frame),
+                status: SurfaceAcquireStatus::Healthy,
+            },
             Cst::Suboptimal(frame) => {
                 // Usable this frame; reconfigure so the next one isn't.
                 self.surface.configure(device, &self.config);
-                Some(frame)
+                SurfaceAcquisition {
+                    frame: Some(frame),
+                    status: SurfaceAcquireStatus::Suboptimal,
+                }
             }
-            Cst::Outdated | Cst::Lost => {
+            Cst::Outdated => {
                 self.surface.configure(device, &self.config);
-                None
+                SurfaceAcquisition {
+                    frame: None,
+                    status: SurfaceAcquireStatus::Outdated,
+                }
             }
-            Cst::Timeout | Cst::Occluded => None,
+            Cst::Lost => {
+                self.surface.configure(device, &self.config);
+                SurfaceAcquisition {
+                    frame: None,
+                    status: SurfaceAcquireStatus::Lost,
+                }
+            }
+            Cst::Timeout => SurfaceAcquisition {
+                frame: None,
+                status: SurfaceAcquireStatus::Timeout,
+            },
+            Cst::Occluded => SurfaceAcquisition {
+                frame: None,
+                status: SurfaceAcquireStatus::Occluded,
+            },
             Cst::Validation => {
                 log::error!("surface acquire hit a validation error");
-                None
+                SurfaceAcquisition {
+                    frame: None,
+                    status: SurfaceAcquireStatus::Validation,
+                }
             }
         }
     }
