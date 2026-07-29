@@ -179,6 +179,11 @@ fn classify(
             MediaHealth::Usable,
             "Intra-frame production codec; suitable for responsive playback.".to_owned(),
         ),
+        ffmpeg::codec::Id::PNG | ffmpeg::codec::Id::MJPEG => (
+            DecodePath::FfmpegVideo,
+            MediaHealth::Usable,
+            "Still image is decoded once and held without continuous codec load.".to_owned(),
+        ),
         ffmpeg::codec::Id::H264 | ffmpeg::codec::Id::HEVC => (
             DecodePath::FfmpegVideo,
             MediaHealth::Caution,
@@ -231,6 +236,16 @@ mod tests {
             assert_eq!(path, DecodePath::FfmpegVideo);
             assert_eq!(health, MediaHealth::Caution);
             assert!(reason.contains("Long-GOP"));
+        }
+    }
+
+    #[test]
+    fn classifies_supported_stills_as_single_decode_media() {
+        for codec in [ffmpeg::codec::Id::PNG, ffmpeg::codec::Id::MJPEG] {
+            let (path, health, reason) = classify(codec, true, 1920, 1080);
+            assert_eq!(path, DecodePath::FfmpegVideo);
+            assert_eq!(health, MediaHealth::Usable);
+            assert!(reason.contains("decoded once"));
         }
     }
 

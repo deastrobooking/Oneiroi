@@ -8,7 +8,9 @@ use std::time::Duration;
 use oneiroi_core::MediaTime;
 use oneiroi_hap::Decoder as HapDecoder;
 
-use crate::{DecodePath, FfmpegVideoDecoder, HapDemuxer, ScheduledFrame, VideoFramePayload};
+use crate::{
+    CameraConfig, DecodePath, FfmpegVideoDecoder, HapDemuxer, ScheduledFrame, VideoFramePayload,
+};
 
 #[derive(Debug)]
 enum DecoderCommand {
@@ -17,6 +19,10 @@ enum DecoderCommand {
         decode_path: DecodePath,
         generation: u64,
         start_at: Option<MediaTime>,
+    },
+    Camera {
+        config: CameraConfig,
+        generation: u64,
     },
     Stop,
     Shutdown,
@@ -79,6 +85,12 @@ impl DeckDecoder {
 
     pub fn stop(&self) {
         let _ = self.commands.send(DecoderCommand::Stop);
+    }
+
+    pub fn connect_camera(&self, config: CameraConfig, generation: u64) {
+        let _ = self
+            .commands
+            .send(DecoderCommand::Camera { config, generation });
     }
 
     pub fn try_frame(&self) -> Result<ScheduledFrame<VideoFramePayload>, TryRecvError> {
@@ -183,6 +195,10 @@ impl Session {
             },
         }
     }
+
+    fn is_live(&self) -> bool {
+        matches!(self, Self::Ffmpeg { decoder, .. } if decoder.is_live())
+    }
 }
 
 fn decoder_loop(
@@ -228,6 +244,12 @@ fn decoder_loop(
             match frames.try_send(frame) {
                 Ok(()) => {}
                 Err(TrySendError::Full(frame)) => {
+                    if session.as_ref().is_some_and(Session::is_live) {
+                        // Never let a stalled render loop create seconds of
+                        // camera latency. Drop capture frames until the
+                        // bounded render queue has room again.
+                        continue;
+                    }
                     pending = Some(frame);
                     match commands.recv_timeout(Duration::from_millis(2)) {
                         Ok(command) => {
@@ -295,6 +317,27 @@ fn handle_command(
                     let _ = events.send(DecoderEvent::Error {
                         generation,
                         message,
+                    });
+                }
+            }
+            false
+        }
+        DecoderCommand::Camera { config, generation } => {
+            *pending = None;
+            match FfmpegVideoDecoder::open_camera(&config) {
+                Ok(decoder) => {
+                    *session = Some(Session::Ffmpeg {
+                        decoder,
+                        generation,
+                        skip_before: None,
+                    });
+                    let _ = events.send(DecoderEvent::Loaded { generation });
+                }
+                Err(error) => {
+                    *session = None;
+                    let _ = events.send(DecoderEvent::Error {
+                        generation,
+                        message: error.to_string(),
                     });
                 }
             }

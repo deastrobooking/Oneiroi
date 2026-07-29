@@ -6,7 +6,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::{MovieMetadata, ProbeError, probe_movie};
+use crate::{CameraConfig, MovieMetadata, ProbeError, probe_movie};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DeckId {
@@ -68,6 +68,7 @@ pub enum DeckState {
     Empty,
     Loading { path: PathBuf },
     Ready(MovieMetadata),
+    Live(CameraConfig),
     Error { path: PathBuf, message: String },
 }
 
@@ -151,6 +152,20 @@ impl FourDeckMixer {
             },
         };
         true
+    }
+
+    pub fn activate(&mut self, id: DeckId, movie: MovieMetadata) -> u64 {
+        let deck = self.deck_mut(id);
+        deck.generation = deck.generation.wrapping_add(1);
+        deck.state = DeckState::Ready(movie);
+        deck.generation
+    }
+
+    pub fn connect_camera(&mut self, id: DeckId, config: CameraConfig) -> u64 {
+        let deck = self.deck_mut(id);
+        deck.generation = deck.generation.wrapping_add(1);
+        deck.state = DeckState::Live(config);
+        deck.generation
     }
 
     pub fn eject(&mut self, id: DeckId) {

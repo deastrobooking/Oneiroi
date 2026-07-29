@@ -7,9 +7,10 @@ use ffmpeg_next as ffmpeg;
 use oneiroi_core::MediaTime;
 use oneiroi_hap::{CompressedPlaneFormat, Decoder};
 use oneiroi_media::{
-    DeckDecoder, DeckId, DeckState, DecodePath, DecoderEvent, DiscontinuityPolicy,
-    FfmpegVideoDecoder, FourDeckMixer, FrameScheduler, FrameSelection, HapDemuxer, MediaHealth,
-    MediaImporter, VideoFramePayload, probe_movie,
+    CameraConfig, CameraDevice, ClipAddress, ClipRestoreRequest, ClipRestorer, DeckDecoder, DeckId,
+    DeckState, DecodePath, DecoderEvent, DiscontinuityPolicy, FfmpegVideoDecoder, FourDeckMixer,
+    FrameScheduler, FrameSelection, HapDemuxer, MediaHealth, MediaImporter, ThumbnailRequest,
+    ThumbnailWorker, VideoFramePayload, probe_movie,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -255,6 +256,34 @@ fn bounded_deck_worker_decodes_off_the_calling_thread() {
 }
 
 #[test]
+fn deck_worker_decodes_a_bounded_live_capture_source() {
+    let config = CameraConfig {
+        device: CameraDevice {
+            id: "testsrc=size=16x16:rate=30".to_owned(),
+            label: "Test pattern".to_owned(),
+            backend: "lavfi".to_owned(),
+        },
+        requested_extent: None,
+        requested_fps: None,
+    };
+    let decoder = DeckDecoder::spawn(1);
+    decoder.connect_camera(config, 44);
+
+    assert_eq!(
+        decoder.recv_event_timeout(Duration::from_secs(2)).unwrap(),
+        DecoderEvent::Loaded { generation: 44 }
+    );
+    let frame = decoder.recv_frame_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(frame.generation, 44);
+    assert!(frame.pts >= MediaTime::ZERO);
+    assert!(matches!(
+        frame.payload,
+        VideoFramePayload::Rgba8(ref rgba)
+            if rgba.extent == [16, 16] && rgba.data.len() == 16 * 16 * 4
+    ));
+}
+
+#[test]
 fn deck_worker_seek_discards_pre_target_frames_and_changes_epoch() {
     let fixture = Fixture::raw_rgba_mov();
     let decoder = DeckDecoder::spawn(2);
@@ -276,4 +305,76 @@ fn deck_worker_seek_discards_pre_target_frames_and_changes_epoch() {
         frame.payload,
         VideoFramePayload::Rgba8(ref rgba) if rgba.data[..4] == [0, 255, 0, 255]
     ));
+}
+
+#[test]
+fn project_restorer_probes_slots_independently() {
+    let fixture = Fixture::raw_rgba_mov();
+    let restorer = ClipRestorer::new(2);
+    let address = ClipAddress {
+        deck: DeckId::C,
+        slot: 6,
+    };
+    restorer
+        .submit(ClipRestoreRequest {
+            address,
+            path: fixture.path.clone(),
+            project_epoch: 9,
+        })
+        .unwrap();
+    let result = restorer
+        .recv_timeout(Duration::from_secs(2))
+        .expect("restore result");
+    assert_eq!(result.address, address);
+    assert_eq!(result.project_epoch, 9);
+    assert_eq!(result.metadata.unwrap().visible_extent, [16, 16]);
+}
+
+#[test]
+fn thumbnail_worker_decodes_and_bounds_preview() {
+    let fixture = Fixture::raw_rgba_mov();
+    let worker = ThumbnailWorker::new(2);
+    let address = ClipAddress {
+        deck: DeckId::A,
+        slot: 3,
+    };
+    worker
+        .submit(ThumbnailRequest {
+            address,
+            path: fixture.path.clone(),
+            request_id: 77,
+        })
+        .unwrap();
+    let result = worker
+        .recv_timeout(Duration::from_secs(2))
+        .expect("thumbnail result");
+    let thumbnail = result.thumbnail.expect("decoded thumbnail");
+    assert_eq!(result.address, address);
+    assert_eq!(result.request_id, 77);
+    assert_eq!(thumbnail.extent, [16, 16]);
+    assert_eq!(&thumbnail.rgba[..4], &[255, 0, 0, 255]);
+}
+
+#[test]
+fn thumbnail_worker_uses_offline_ffmpeg_path_for_hap_preview() {
+    let fixture = Fixture::hap_mov();
+    let worker = ThumbnailWorker::new(1);
+    worker
+        .submit(ThumbnailRequest {
+            address: ClipAddress {
+                deck: DeckId::D,
+                slot: 7,
+            },
+            path: fixture.path.clone(),
+            request_id: 78,
+        })
+        .unwrap();
+    let result = worker
+        .recv_timeout(Duration::from_secs(2))
+        .expect("HAP thumbnail result");
+    let thumbnail = result.thumbnail.expect("decoded HAP thumbnail");
+    assert_eq!(thumbnail.extent, [16, 16]);
+    assert!(thumbnail.rgba[0] > 240);
+    assert!(thumbnail.rgba[1] < 10);
+    assert!(thumbnail.rgba[2] < 10);
 }

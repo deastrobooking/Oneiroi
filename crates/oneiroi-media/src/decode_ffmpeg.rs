@@ -6,7 +6,7 @@ use ffmpeg_next as ffmpeg;
 use oneiroi_core::{MediaTime, MediaTimeError};
 use thiserror::Error;
 
-use crate::RgbaFrame;
+use crate::{CameraConfig, RgbaFrame, camera_pts};
 
 #[derive(Debug, Error)]
 pub enum FfmpegDecodeError {
@@ -17,6 +17,13 @@ pub enum FfmpegDecodeError {
         path: PathBuf,
         source: ffmpeg::Error,
     },
+    #[error("open camera {device}: {source}")]
+    OpenCamera {
+        device: String,
+        source: ffmpeg::Error,
+    },
+    #[error("camera backend {0} is unavailable")]
+    CameraBackendUnavailable(String),
     #[error("file contains no video stream")]
     NoVideoStream,
     #[error("HAP must use the direct block-compressed decoder")]
@@ -39,6 +46,8 @@ pub enum FfmpegDecodeError {
     FrameSizeOverflow,
     #[error("decoded frame has no presentation timestamp")]
     MissingTimestamp,
+    #[error("media produced no frame for a thumbnail")]
+    MissingThumbnailFrame,
     #[error("invalid decoded timestamp: {0}")]
     Timestamp(#[from] MediaTimeError),
 }
@@ -62,16 +71,81 @@ pub struct FfmpegVideoDecoder {
     converted: ffmpeg::frame::Video,
     draining: bool,
     sequence: u64,
+    allow_missing_timestamp: bool,
+    fallback_fps: u32,
+    live: bool,
 }
 
 impl FfmpegVideoDecoder {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, FfmpegDecodeError> {
-        let path = path.as_ref();
+        Self::open_internal(path.as_ref(), false)
+    }
+
+    /// Thumbnail generation may use FFmpeg's HAP pixel decoder because it is
+    /// off the playback path and produces only one small cached image.
+    pub fn open_for_thumbnail(path: impl AsRef<Path>) -> Result<Self, FfmpegDecodeError> {
+        Self::open_internal(path.as_ref(), true)
+    }
+
+    fn open_internal(path: &Path, allow_hap: bool) -> Result<Self, FfmpegDecodeError> {
         ffmpeg::init().map_err(FfmpegDecodeError::Initialize)?;
         let input = ffmpeg::format::input(path).map_err(|source| FfmpegDecodeError::Open {
             path: path.to_path_buf(),
             source,
         })?;
+        Self::from_input(input, allow_hap, allow_hap, 30, false)
+    }
+
+    pub fn open_camera(config: &CameraConfig) -> Result<Self, FfmpegDecodeError> {
+        ffmpeg::init().map_err(FfmpegDecodeError::Initialize)?;
+        ffmpeg::device::register_all();
+        let backend = std::ffi::CString::new(config.device.backend.as_str()).map_err(|_| {
+            FfmpegDecodeError::CameraBackendUnavailable(config.device.backend.clone())
+        })?;
+        // SAFETY: backend is a live NUL-terminated string for this call.
+        let format_ptr = unsafe { ffmpeg::ffi::av_find_input_format(backend.as_ptr()) };
+        if format_ptr.is_null() {
+            return Err(FfmpegDecodeError::CameraBackendUnavailable(
+                config.device.backend.clone(),
+            ));
+        }
+        // SAFETY: av_find_input_format returns a process-lifetime descriptor;
+        // the wrapper does not free it.
+        let input_format = unsafe { ffmpeg::format::format::Input::wrap(format_ptr.cast_mut()) };
+        let format = ffmpeg::Format::Input(input_format);
+        let mut options = ffmpeg::Dictionary::new();
+        options.set("fflags", "nobuffer");
+        options.set("flags", "low_delay");
+        options.set("rtbufsize", "16M");
+        if let Some([width, height]) = config.requested_extent {
+            options.set("video_size", &format!("{width}x{height}"));
+        }
+        if let Some(fps) = config.requested_fps {
+            options.set("framerate", &fps.to_string());
+        }
+        let input_name = config.input_name();
+        let context =
+            ffmpeg::format::open_with(&input_name, &format, options).map_err(|source| {
+                FfmpegDecodeError::OpenCamera {
+                    device: config.device.label.clone(),
+                    source,
+                }
+            })?;
+        let ffmpeg::format::Context::Input(input) = context else {
+            return Err(FfmpegDecodeError::CameraBackendUnavailable(
+                config.device.backend.clone(),
+            ));
+        };
+        Self::from_input(input, true, true, config.requested_fps.unwrap_or(30), true)
+    }
+
+    fn from_input(
+        input: ffmpeg::format::context::Input,
+        allow_hap: bool,
+        allow_missing_timestamp: bool,
+        fallback_fps: u32,
+        live: bool,
+    ) -> Result<Self, FfmpegDecodeError> {
         let (stream_index, time_base, average_duration, decoder, scaler) = {
             let stream = input
                 .streams()
@@ -80,7 +154,7 @@ impl FfmpegVideoDecoder {
             let stream_index = stream.index();
             let time_base = stream.time_base();
             let parameters = stream.parameters();
-            if parameters.id() == ffmpeg::codec::Id::HAP {
+            if parameters.id() == ffmpeg::codec::Id::HAP && !allow_hap {
                 return Err(FfmpegDecodeError::HapRequiresDirectDecoder);
             }
             let decoder = ffmpeg::codec::Context::from_parameters(parameters)
@@ -127,7 +201,14 @@ impl FfmpegVideoDecoder {
             converted: ffmpeg::frame::Video::empty(),
             draining: false,
             sequence: 0,
+            allow_missing_timestamp,
+            fallback_fps,
+            live,
         })
+    }
+
+    pub fn is_live(&self) -> bool {
+        self.live
     }
 
     pub fn next_frame(&mut self) -> Result<Option<DecodedRgbaFrame>, FfmpegDecodeError> {
@@ -205,16 +286,18 @@ impl FfmpegVideoDecoder {
                 .copy_from_slice(&source[row * stride..row * stride + row_bytes]);
         }
 
-        let timestamp = self
-            .decoded
-            .timestamp()
-            .or_else(|| self.decoded.pts())
-            .ok_or(FfmpegDecodeError::MissingTimestamp)?;
-        let pts = MediaTime::from_time_base(
-            timestamp,
-            self.time_base.numerator(),
-            self.time_base.denominator(),
-        )?;
+        let timestamp = self.decoded.timestamp().or_else(|| self.decoded.pts());
+        let pts = if let Some(timestamp) = timestamp {
+            MediaTime::from_time_base(
+                timestamp,
+                self.time_base.numerator(),
+                self.time_base.denominator(),
+            )?
+        } else if self.allow_missing_timestamp {
+            camera_pts(self.sequence, self.fallback_fps)
+        } else {
+            return Err(FfmpegDecodeError::MissingTimestamp);
+        };
         let raw_duration = self.decoded.packet().duration;
         let duration = if raw_duration > 0 {
             Some(MediaTime::from_time_base(

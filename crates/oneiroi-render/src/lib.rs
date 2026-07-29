@@ -5,10 +5,15 @@
 
 pub mod gpu;
 pub mod mixer;
+pub mod program;
 pub mod triangle;
 pub mod upload;
 
-pub use gpu::Gpu;
-pub use mixer::{DeckEffects, FourDeckCompositor, MixerParams, MixerUploadError};
+pub use gpu::{Gpu, PresentSurface};
+pub use mixer::{
+    DeckEffects, DeckLfos, EffectLfo, EffectTarget, FourDeckCompositor, LfoWaveform,
+    MOD_ROUTES_PER_DECK, MixerParams, MixerUploadError, ModulationRoute,
+};
+pub use program::{PROGRAM_FORMAT, PresentationOptions, ProgramPresenter, ProgramTarget};
 pub use triangle::{Globals, TrianglePass};
 pub use upload::{CompressedTexture, UploadError};

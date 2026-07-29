@@ -25,21 +25,60 @@ target OS:
   fallback conversion to RGBA.
 - Four-source linear-light GPU composition with per-deck levels, master
   opacity and next-frame blackout.
+- One offscreen program render shared by the operator preview and a clean
+  second output window, with connected-display selection, output
+  enable/fullscreen, 720p/1080p/UHD presets, custom composition sizing, test
+  card and identification overlay.
 - Per-deck play/pause, restart, freeze, loop/one-shot, 0.25–4× playback and
   asynchronous generation-safe seeking.
 - Assignable A/B buses with linear or equal-power crossfading.
-- Native per-deck contrast, saturation, pixelate, luma-key and mirror controls.
+- Native per-deck mirror, neon glow, fractal fold, scanline jitter, find-edges,
+  bit reduction, black-light inversion, pixelate and luma-key effects.
+- Per-deck hue, contrast, saturation, black/white levels and gamma grading,
+  plus three assignable LFO lanes with sine, triangle, saw-up, saw-down and
+  square waves.
+- Eight-route per-deck modulation matrix: route any LFO to multiple FX
+  destinations with bipolar amounts, optional inversion and optional direct
+  assignments.
+- Free-running or tempo-synchronized LFO rates from 1/16 beat through eight
+  beats, plus manual BPM, Tap, half-time and double-time controls.
 - Reused RGBA and HAP GPU texture allocations for stable-resolution clips.
 - Device-neutral MIDI learn/mapping state with toggle, momentary, continuous
   and soft-takeover behavior, ready for a platform MIDI input adapter.
+- Four rows of eight persistent clip slots with per-slot health metadata,
+  playing/queued indicators and right-click clearing.
+- Eight scene launch buttons and `1`–`8` shortcuts that trigger the same slot
+  across all four decks.
+- Internal 20–400 BPM clock with immediate, next-beat and next-bar launch
+  quantization, preserving musical phase across tempo changes.
+- Aggregate dropped, repeated and late-frame monitoring in the operator UI.
+- Versioned `.oneiroi` JSON projects containing all 32 media paths, active and
+  selected clips, mixer/transport/effect state, tempo settings and MIDI maps.
+- Atomic Save/Save As-style path workflow, `Cmd/Ctrl+S`, five-second autosave,
+  close-time recovery snapshots and explicit crash-recovery loading.
+- Asynchronous 32-slot project restoration with project-epoch rejection;
+  missing media remains visible with its original path for later relinking.
+- Playback-independent thumbnail worker with a bounded request queue, fixed
+  160×90 maximum output and at most one cached UI texture per clip slot.
+- Thumbnail previews for HAP and FFmpeg media, with stale-result rejection and
+  diagnostic text-tile fallback when preview decoding fails.
+- PNG and JPEG still-image import through FFmpeg, decoded once and held without
+  continuous decoder load.
+- AVFoundation camera discovery and manual device-ID entry, with any camera
+  connectable to any of the four decks at a requested resolution/frame rate.
+- Bounded low-latency live decoding that drops stale capture frames under
+  render backpressure instead of accumulating camera delay.
+- Camera-aware deck controls and project persistence; saved live inputs
+  reconnect when a project is restored.
 
 Reusable CPU frame leases, keyframe-indexed seeks, a platform MIDI input
-adapter, blur/feedback effects, clip slots, BPM quantization and project
-persistence have not landed yet.
+adapter, blur/feedback effects, audio analysis and project relink browsing
+have not landed yet.
 
 ```sh
 cargo run          # the app; select a deck and drop movies
 cargo run -- a.mp4 b.mov c.mkv d.webm  # preload decks A-D
+cargo run -- show.oneiroi              # open and restore a project
 cargo test         # includes a headless GPU readback test
 cargo run -p oneiroi-media --example probe_movie -- footage.mp4
 cargo run -p oneiroi-render --example dump_frame > frame.raw \
@@ -47,10 +86,33 @@ cargo run -p oneiroi-render --example dump_frame > frame.raw \
 ```
 
 Safety/performance keys: `B` toggles blackout, `Space` toggles master freeze,
-arrow keys move the crossfader, and `Home` centers it.
+`O` toggles program output, arrow keys move the crossfader, `Home` centers it,
+and `1`–`8` launch scenes. `Cmd/Ctrl+S` saves to the project path shown in the
+operator window.
+
+The **Program output** toolbar control shows or hides the clean output window.
+Choose the connected display, then enable **Fullscreen**. Use **Test card** to
+calibrate the signal path and **Identify** for a magenta frame/crosshair.
+`Escape` returns the output to windowed mode.
 
 In the app, click deck A, B, C or D and drag a movie onto the window. Imports
 are probed on a background worker and the next deck is selected automatically.
+
+For a live input, select a deck, choose a camera in the top toolbar, set the
+requested size and frame rate, then click **Connect to Deck**. Use **Refresh**
+after attaching a USB camera or capture card. On first use, macOS may ask for
+camera access; grant it to the app (or Terminal while running with `cargo run`)
+and refresh the list. If discovery is unavailable, an AVFoundation device ID
+such as `0` can be entered manually. Camera feeds are live and non-seekable;
+freeze holds the most recent rendered frame.
+
+## Documentation
+
+- [Operator guide](docs/OPERATOR_GUIDE.md)
+- [Feature status](docs/FEATURES.md)
+- [Application review](docs/REVIEW.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Prioritized roadmap](docs/ROADMAP.md)
 
 ## Layout
 
@@ -61,7 +123,7 @@ are probed on a background worker and the next deck is selected automatically.
 | `oneiroi-hap` | Bounded safe HAP decode to GPU-native BC planes. |
 | `oneiroi-media` | Demux, codec dispatch, frame queues and scheduling. |
 | `oneiroi-render` | wgpu device, surface, render passes. Knows nothing about winit or egui. |
-| `oneiroi-io` | MIDI, OSC, audio capture, Ableton Link. Empty until M7. |
+| `oneiroi-io` | Versioned project persistence now; MIDI, audio and sync adapters next. |
 | `oneiroi-app` | Windowing, UI, wiring. |
 
 ## Decisions already locked in

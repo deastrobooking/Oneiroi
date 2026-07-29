@@ -23,6 +23,24 @@ fn solid(pixel: [u8; 4]) -> VideoFramePayload {
     })
 }
 
+fn pattern() -> VideoFramePayload {
+    let mut data = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            data.extend_from_slice(&[
+                (x * 53 + y * 17) as u8,
+                (x * 19 + y * 61) as u8,
+                (x * 73 + y * 11) as u8,
+                255,
+            ]);
+        }
+    }
+    VideoFramePayload::Rgba8(RgbaFrame {
+        extent: [SIZE, SIZE],
+        data,
+    })
+}
+
 fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -146,4 +164,108 @@ fn composites_decks_in_linear_light_and_honors_blackout() {
     assert!(
         monochrome[0].abs_diff(monochrome[1]) <= 1 && monochrome[1].abs_diff(monochrome[2]) <= 1
     );
+}
+
+#[test]
+fn expanded_effects_each_change_a_patterned_source() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer.upload(&device, &queue, 0, &pattern()).unwrap();
+    let base = render(&device, &queue, &mut mixer, MixerParams::default());
+
+    let effects = [
+        (
+            "mirror",
+            DeckEffects {
+                mirror: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "neon",
+            DeckEffects {
+                neon: 1.0,
+                ..Default::default()
+            },
+        ),
+        (
+            "fractal",
+            DeckEffects {
+                fractal: 0.8,
+                ..Default::default()
+            },
+        ),
+        (
+            "jitter",
+            DeckEffects {
+                jitter: 1.0,
+                ..Default::default()
+            },
+        ),
+        (
+            "find edges",
+            DeckEffects {
+                find_edges: 1.0,
+                ..Default::default()
+            },
+        ),
+        (
+            "bit reduction",
+            DeckEffects {
+                bit_reduction: 1.0,
+                ..Default::default()
+            },
+        ),
+        (
+            "black light",
+            DeckEffects {
+                blacklight: 1.0,
+                ..Default::default()
+            },
+        ),
+        (
+            "hue",
+            DeckEffects {
+                hue: 0.25,
+                ..Default::default()
+            },
+        ),
+        (
+            "contrast",
+            DeckEffects {
+                contrast: 1.8,
+                ..Default::default()
+            },
+        ),
+        (
+            "levels",
+            DeckEffects {
+                black_level: 0.2,
+                white_level: 0.8,
+                gamma: 1.5,
+                ..Default::default()
+            },
+        ),
+    ];
+    for (label, effect) in effects {
+        let changed = render(
+            &device,
+            &queue,
+            &mut mixer,
+            MixerParams {
+                effects: [
+                    effect,
+                    DeckEffects::default(),
+                    DeckEffects::default(),
+                    DeckEffects::default(),
+                ],
+                time_seconds: 0.37,
+                ..Default::default()
+            },
+        );
+        assert_ne!(changed, base, "{label} did not change the rendered output");
+    }
 }

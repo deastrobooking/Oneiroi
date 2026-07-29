@@ -36,9 +36,11 @@ egui-winit = "0.35"
 anyhow = "1"
 bytemuck = { version = "1", features = ["derive"] }
 env_logger = "0.11"
-ffmpeg-next = { version = "8.1.0", default-features = false, features = ["format", "software-scaling"] }
+ffmpeg-next = { version = "8.1.0", default-features = false, features = ["device", "format", "software-scaling"] }
 log = "0.4"
 pollster = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 smallvec = "1"
 snap = "1"
 thiserror = "2"

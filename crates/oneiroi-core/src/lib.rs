@@ -6,6 +6,7 @@
 pub mod clock;
 pub mod control;
 pub mod media_time;
+pub mod tempo;
 
 pub use clock::{Clock, FrameTime};
 pub use control::{
@@ -13,3 +14,4 @@ pub use control::{
     MidiMessageKind,
 };
 pub use media_time::{MediaTime, MediaTimeError};
+pub use tempo::{Quantization, TapTempo, TempoClock};
