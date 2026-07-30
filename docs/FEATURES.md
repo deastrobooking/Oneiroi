@@ -19,7 +19,7 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Modulation | Three LFOs and eight bipolar routes per deck across 14 continuous destinations |
 | Musical control | Manual BPM, Tap, half/double, beat/bar phase and synchronized LFO divisions |
 | Audio modulation | Native input capture, bounded queue, RMS/FFT bands, transient, adaptive normalization, live meters and five audio plus beat/bar matrix sources |
-| Persistence | Atomic save, autosave, recovery, asynchronous restore, automatic v1-to-v2 loading and per-slot missing-media relinking |
+| Persistence | Atomic save, autosave, recovery, asynchronous restore, automatic v1/v2-to-v3 loading and per-slot missing-media relinking |
 | Diagnostics | FPS, decoder drop/repeat/late counters, RGBA allocation/reuse/live/discard telemetry, output surface state, presentation skips/recovery and display-topology changes |
 
 ## Partial foundations
@@ -28,7 +28,7 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 |---|---|---|
 | MIDI | Native device discovery/input, reconnect, learn UI, activity/drop diagnostics, absolute/momentary/toggle/relative modes, editable ranges, soft takeover, broad target routing and persistence | Output feedback, MIDI clock and physical-controller soak validation |
 | Audio analysis | Gain, noise floor, attack/release, normalization, band and transient analysis | Show-device disconnect/soak validation |
-| Effects system | Three persisted deck slots, two persisted master slots, common bypass/dry-wet/reset, four deck presets, bounded ping-pong blur, reset-safe feedback history, and a validated hot-reloadable master shader package with last-known-good fallback | Arbitrary effect registration and schema-generated controls |
+| Effects system | Three persisted deck slots, two persisted master slots, common bypass/dry-wet/reset, four deck presets, bounded ping-pong blur, reset-safe feedback history, and registry-discovered custom master effects with generated controls, named persistence and last-known-good hot reload | Custom-effect modulation/MIDI targets and declarative multipass package graphs |
 | Output routing | Shared operator/output presentation, connected-display selection, persisted descriptor, topology polling and surface recovery diagnostics | Stronger identity across display topology changes and show-machine soak testing |
 | Performance | Bounded workers, reusable CPU RGBA frame leases, 29.5 MB maximum first-frame cache, capped keyframe indexes, deterministic decoder faults and accelerated/extended soak coverage | Physical-media and show-machine soak certification |
 

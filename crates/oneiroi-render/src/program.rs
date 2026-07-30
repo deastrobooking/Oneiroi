@@ -1,5 +1,6 @@
 //! Offscreen program target and presentation pass shared by operator/output windows.
 
+use std::collections::HashMap;
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
@@ -9,10 +10,14 @@ use std::time::Duration;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::{EffectManifest, ValidatedEffectPackage, load_effect_package};
+use crate::{
+    EffectManifest, EffectPackageRole, EffectParameterSchema, ValidatedEffectPackage,
+    load_effect_package,
+};
 
 pub const PROGRAM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 pub const MASTER_EFFECT_SLOTS: usize = 2;
+pub const EFFECT_PARAMETER_CAPACITY: usize = 32;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -105,27 +110,37 @@ pub enum MasterEffectKind {
     None,
     Blur,
     Feedback,
+    Custom,
 }
 
 impl MasterEffectKind {
-    pub const ALL: [Self; 3] = [Self::None, Self::Blur, Self::Feedback];
+    pub const ALL: [Self; 4] = [Self::None, Self::Blur, Self::Feedback, Self::Custom];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::None => "Empty",
             Self::Blur => "Separable blur",
             Self::Feedback => "Feedback / trails",
+            Self::Custom => "Custom package",
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct EffectParameterValue {
+    pub id: String,
+    pub value: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct MasterEffectSlot {
     pub kind: MasterEffectKind,
     pub bypassed: bool,
     pub mix: f32,
     pub amount: f32,
     pub feedback: f32,
+    pub package_id: String,
+    pub parameters: Vec<EffectParameterValue>,
 }
 
 impl Default for MasterEffectSlot {
@@ -136,19 +151,29 @@ impl Default for MasterEffectSlot {
             mix: 1.0,
             amount: 8.0,
             feedback: 0.85,
+            package_id: String::new(),
+            parameters: Vec::new(),
         }
     }
 }
 
 impl MasterEffectSlot {
     pub fn sanitized(mut self) -> Self {
-        self.mix = finite_clamp(self.mix, 0.0, 1.0, 1.0);
-        self.amount = finite_clamp(self.amount, 0.0, 32.0, 8.0);
-        self.feedback = finite_clamp(self.feedback, 0.0, 0.99, 0.85);
+        self.sanitize();
         self
     }
 
-    fn active(self) -> bool {
+    pub fn sanitize(&mut self) {
+        self.mix = finite_clamp(self.mix, 0.0, 1.0, 1.0);
+        self.amount = finite_clamp(self.amount, 0.0, 32.0, 8.0);
+        self.feedback = finite_clamp(self.feedback, 0.0, 0.99, 0.85);
+        self.parameters.retain(|parameter| {
+            !parameter.id.is_empty() && parameter.id.len() <= 64 && parameter.value.is_finite()
+        });
+        self.parameters.truncate(EFFECT_PARAMETER_CAPACITY);
+    }
+
+    fn active(&self) -> bool {
         if self.bypassed || self.mix <= 0.0001 {
             return false;
         }
@@ -156,23 +181,30 @@ impl MasterEffectSlot {
             MasterEffectKind::None => false,
             MasterEffectKind::Blur => self.amount > 0.0001,
             MasterEffectKind::Feedback => self.feedback > 0.0001,
+            MasterEffectKind::Custom => !self.package_id.is_empty(),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct MasterEffectChain {
     pub slots: [MasterEffectSlot; MASTER_EFFECT_SLOTS],
 }
 
 impl MasterEffectChain {
     pub fn sanitized(mut self) -> Self {
-        self.slots = self.slots.map(MasterEffectSlot::sanitized);
+        self.sanitize();
         self
     }
 
-    pub fn active(self) -> bool {
-        self.slots.into_iter().any(MasterEffectSlot::active)
+    pub fn sanitize(&mut self) {
+        for slot in &mut self.slots {
+            slot.sanitize();
+        }
+    }
+
+    pub fn active(&self) -> bool {
+        self.slots.iter().any(MasterEffectSlot::active)
     }
 }
 
@@ -193,6 +225,10 @@ struct MasterEffectGlobals {
     mix: f32,
     mode: u32,
     feedback: f32,
+    time_seconds: f32,
+    parameter_count: u32,
+    _padding: [u32; 2],
+    parameters: [f32; EFFECT_PARAMETER_CAPACITY],
 }
 
 struct MasterEffectPass {
@@ -202,13 +238,17 @@ struct MasterEffectPass {
 
 enum EffectReloadCommand {
     Watch(PathBuf),
+    WatchMany(Vec<PathBuf>),
     Reload,
     Shutdown,
 }
 
 struct CompiledEffectPipeline {
     pipeline: wgpu::RenderPipeline,
+    id: String,
     name: String,
+    role: EffectPackageRole,
+    parameters: Vec<EffectParameterSchema>,
     fingerprint: u64,
 }
 
@@ -250,11 +290,18 @@ impl Drop for EffectReloadWorker {
 
 pub struct MasterEffectProcessor {
     pipeline: wgpu::RenderPipeline,
+    custom_pipelines: HashMap<String, RegisteredEffectPipeline>,
     passes: [MasterEffectPass; 4],
     extent: [u32; 2],
     history_valid: bool,
     reload_worker: EffectReloadWorker,
     reload_status: String,
+    reload_errors: HashMap<PathBuf, String>,
+}
+
+struct RegisteredEffectPipeline {
+    pipeline: wgpu::RenderPipeline,
+    parameters: Vec<EffectParameterSchema>,
 }
 
 impl MasterEffectProcessor {
@@ -357,20 +404,34 @@ impl MasterEffectProcessor {
         ];
         Self {
             pipeline,
+            custom_pipelines: HashMap::new(),
             passes,
             extent: program.extent,
             history_valid: false,
             reload_worker,
             reload_status: "Built-in master effect pipeline".to_owned(),
+            reload_errors: HashMap::new(),
         }
     }
 
     pub fn watch_effect_manifest(&mut self, path: PathBuf) {
+        self.custom_pipelines.clear();
+        self.reload_errors.clear();
         self.reload_status = format!("Watching {}", path.display());
         let _ = self
             .reload_worker
             .commands
             .send(EffectReloadCommand::Watch(path));
+    }
+
+    pub fn watch_effect_manifests(&mut self, paths: Vec<PathBuf>) {
+        self.custom_pipelines.clear();
+        self.reload_errors.clear();
+        self.reload_status = format!("Watching {} effect package(s)", paths.len());
+        let _ = self
+            .reload_worker
+            .commands
+            .send(EffectReloadCommand::WatchMany(paths));
     }
 
     pub fn reload_effect_manifest(&mut self) {
@@ -383,27 +444,54 @@ impl MasterEffectProcessor {
 
     pub fn poll_effect_reload(&mut self) -> bool {
         let mut changed = false;
+        let mut loaded = Vec::new();
         while let Ok(result) = self.reload_worker.results.try_recv() {
             changed = true;
+            let path = result.path;
             match result.result {
                 Ok(compiled) => {
-                    self.pipeline = compiled.pipeline;
-                    self.reload_status =
-                        format!("Loaded {} · {:016x}", compiled.name, compiled.fingerprint);
+                    self.reload_errors.remove(&path);
+                    if compiled.role == EffectPackageRole::MasterProcessor {
+                        self.pipeline = compiled.pipeline;
+                    } else {
+                        self.custom_pipelines.insert(
+                            compiled.id.clone(),
+                            RegisteredEffectPipeline {
+                                pipeline: compiled.pipeline,
+                                parameters: compiled.parameters,
+                            },
+                        );
+                    }
+                    loaded.push(format!("{} · {:016x}", compiled.name, compiled.fingerprint));
                 }
                 Err(error) => {
-                    self.reload_status = format!(
-                        "Reload rejected for {} · {error} · using last known good",
-                        result.path.display()
-                    );
+                    self.reload_errors.insert(path, error);
                 }
             }
+        }
+        if changed && !self.reload_errors.is_empty() {
+            let mut rejected: Vec<_> = self
+                .reload_errors
+                .iter()
+                .map(|(path, error)| format!("{} · {error}", path.display()))
+                .collect();
+            rejected.sort();
+            self.reload_status = format!(
+                "Reload rejected · {} · using last known good",
+                rejected.join(" · ")
+            );
+        } else if changed && !loaded.is_empty() {
+            self.reload_status = format!("Loaded {}", loaded.join(" · "));
         }
         changed
     }
 
     pub fn reload_status(&self) -> &str {
         &self.reload_status
+    }
+
+    pub fn custom_effect_loaded(&self, id: &str) -> bool {
+        self.custom_pipelines.contains_key(id)
     }
 
     pub fn reset_history(&mut self) {
@@ -419,12 +507,22 @@ impl MasterEffectProcessor {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         program: &ProgramTarget,
-        chain: MasterEffectChain,
+        chain: &MasterEffectChain,
     ) {
-        let chain = chain.sanitized();
+        self.draw_at(queue, encoder, program, chain, 0.0);
+    }
+
+    pub fn draw_at(
+        &mut self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        program: &ProgramTarget,
+        chain: &MasterEffectChain,
+        time_seconds: f32,
+    ) {
         let feedback_active = chain
             .slots
-            .into_iter()
+            .iter()
             .any(|slot| slot.active() && slot.kind == MasterEffectKind::Feedback);
         if !feedback_active {
             self.history_valid = false;
@@ -434,7 +532,7 @@ impl MasterEffectProcessor {
             (&program.scratch_a_view, &program.ping_a_view),
             (&program.scratch_a_view, &program.view),
         ];
-        for (index, slot) in chain.slots.into_iter().enumerate() {
+        for (index, slot) in chain.slots.iter().enumerate() {
             let horizontal = index * 2;
             let vertical = horizontal + 1;
             match slot.kind {
@@ -444,14 +542,28 @@ impl MasterEffectProcessor {
                         encoder,
                         horizontal,
                         targets[index].0,
-                        self.globals([1.0, 0.0], slot.amount, 1.0, 0, 0.0),
+                        self.globals(
+                            [1.0, 0.0],
+                            finite_clamp(slot.amount, 0.0, 32.0, 8.0),
+                            1.0,
+                            0,
+                            0.0,
+                            time_seconds,
+                        ),
                     );
                     self.draw_pass(
                         queue,
                         encoder,
                         vertical,
                         targets[index].1,
-                        self.globals([0.0, 1.0], slot.amount, slot.mix, 0, 0.0),
+                        self.globals(
+                            [0.0, 1.0],
+                            finite_clamp(slot.amount, 0.0, 32.0, 8.0),
+                            finite_clamp(slot.mix, 0.0, 1.0, 1.0),
+                            0,
+                            0.0,
+                            time_seconds,
+                        ),
                     );
                 }
                 MasterEffectKind::Feedback if slot.active() && use_history => {
@@ -460,16 +572,47 @@ impl MasterEffectProcessor {
                         encoder,
                         vertical,
                         targets[index].1,
-                        self.globals([0.0, 0.0], 0.0, slot.mix, 1, slot.feedback),
+                        self.globals(
+                            [0.0, 0.0],
+                            0.0,
+                            finite_clamp(slot.mix, 0.0, 1.0, 1.0),
+                            1,
+                            finite_clamp(slot.feedback, 0.0, 0.99, 0.85),
+                            time_seconds,
+                        ),
                     );
                 }
-                MasterEffectKind::None | MasterEffectKind::Blur | MasterEffectKind::Feedback => {
+                MasterEffectKind::Custom if slot.active() => {
+                    if let Some(effect) = self.custom_pipelines.get(&slot.package_id) {
+                        let globals = self.custom_globals(slot, &effect.parameters, time_seconds);
+                        self.draw_pass_with_pipeline(
+                            queue,
+                            encoder,
+                            vertical,
+                            targets[index].1,
+                            globals,
+                            &effect.pipeline,
+                        );
+                    } else {
+                        self.draw_pass(
+                            queue,
+                            encoder,
+                            vertical,
+                            targets[index].1,
+                            self.globals([0.0, 0.0], 0.0, 0.0, 0, 0.0, time_seconds),
+                        );
+                    }
+                }
+                MasterEffectKind::None
+                | MasterEffectKind::Blur
+                | MasterEffectKind::Feedback
+                | MasterEffectKind::Custom => {
                     self.draw_pass(
                         queue,
                         encoder,
                         vertical,
                         targets[index].1,
-                        self.globals([0.0, 0.0], 0.0, 0.0, 0, 0.0),
+                        self.globals([0.0, 0.0], 0.0, 0.0, 0, 0.0, time_seconds),
                     );
                 }
             }
@@ -505,6 +648,7 @@ impl MasterEffectProcessor {
         mix: f32,
         mode: u32,
         feedback: f32,
+        time_seconds: f32,
     ) -> MasterEffectGlobals {
         MasterEffectGlobals {
             direction,
@@ -516,7 +660,42 @@ impl MasterEffectProcessor {
             mix,
             mode,
             feedback,
+            time_seconds,
+            parameter_count: 0,
+            _padding: [0; 2],
+            parameters: [0.0; EFFECT_PARAMETER_CAPACITY],
         }
+    }
+
+    fn custom_globals(
+        &self,
+        slot: &MasterEffectSlot,
+        schema: &[EffectParameterSchema],
+        time_seconds: f32,
+    ) -> MasterEffectGlobals {
+        let mut globals = self.globals(
+            [0.0, 0.0],
+            0.0,
+            finite_clamp(slot.mix, 0.0, 1.0, 1.0),
+            2,
+            0.0,
+            time_seconds,
+        );
+        for (index, parameter) in schema.iter().take(EFFECT_PARAMETER_CAPACITY).enumerate() {
+            let value = slot
+                .parameters
+                .iter()
+                .find(|value| value.id == parameter.id)
+                .map_or(parameter.default, |value| value.value);
+            globals.parameters[index] = finite_clamp(
+                value,
+                parameter.minimum,
+                parameter.maximum,
+                parameter.default,
+            );
+            globals.parameter_count += 1;
+        }
+        globals
     }
 
     fn draw_pass(
@@ -526,6 +705,18 @@ impl MasterEffectProcessor {
         pass_index: usize,
         target: &wgpu::TextureView,
         globals: MasterEffectGlobals,
+    ) {
+        self.draw_pass_with_pipeline(queue, encoder, pass_index, target, globals, &self.pipeline);
+    }
+
+    fn draw_pass_with_pipeline(
+        &self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        pass_index: usize,
+        target: &wgpu::TextureView,
+        globals: MasterEffectGlobals,
+        pipeline: &wgpu::RenderPipeline,
     ) {
         let pass_state = &self.passes[pass_index];
         queue.write_buffer(&pass_state.globals, 0, bytemuck::bytes_of(&globals));
@@ -545,7 +736,7 @@ impl MasterEffectProcessor {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &pass_state.bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
@@ -557,34 +748,36 @@ fn effect_reload_loop(
     commands: Receiver<EffectReloadCommand>,
     results: Sender<EffectReloadResult>,
 ) {
-    let mut watched = None;
-    let mut last_fingerprint = None;
-    let mut force_reload = false;
+    let mut watched = Vec::new();
+    let mut last_fingerprints = HashMap::new();
     loop {
         match commands.recv_timeout(Duration::from_millis(500)) {
             Ok(EffectReloadCommand::Watch(path)) => {
-                watched = Some(path);
-                last_fingerprint = None;
-                force_reload = true;
+                watched = vec![path];
+                last_fingerprints.clear();
             }
-            Ok(EffectReloadCommand::Reload) => force_reload = true,
+            Ok(EffectReloadCommand::WatchMany(paths)) => {
+                watched = paths;
+                watched.sort();
+                watched.dedup();
+                last_fingerprints.clear();
+            }
+            Ok(EffectReloadCommand::Reload) => last_fingerprints.clear(),
             Ok(EffectReloadCommand::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        let Some(path) = watched.as_deref() else {
-            continue;
-        };
-        let fingerprint = unchecked_package_fingerprint(path);
-        if !force_reload && last_fingerprint == Some(fingerprint) {
-            continue;
+        for path in &watched {
+            let fingerprint = unchecked_package_fingerprint(path);
+            if last_fingerprints.get(path) == Some(&fingerprint) {
+                continue;
+            }
+            last_fingerprints.insert(path.clone(), fingerprint);
+            let result = compile_effect_package(&device, &layout, path);
+            let _ = results.send(EffectReloadResult {
+                path: path.clone(),
+                result,
+            });
         }
-        force_reload = false;
-        last_fingerprint = Some(fingerprint);
-        let result = compile_effect_package(&device, &layout, path);
-        let _ = results.send(EffectReloadResult {
-            path: path.to_path_buf(),
-            result,
-        });
     }
 }
 
@@ -620,7 +813,10 @@ fn compile_validated_effect_package(
     }
     Ok(CompiledEffectPipeline {
         pipeline,
+        id: package.manifest.id,
         name: package.manifest.name,
+        role: package.manifest.role,
+        parameters: package.manifest.parameters,
         fingerprint: package.fingerprint,
     })
 }
@@ -905,6 +1101,7 @@ mod tests {
             mix: 0.75,
             amount: 12.0,
             feedback: 0.85,
+            ..MasterEffectSlot::default()
         };
         assert!(chain.active());
         chain.slots[0].bypassed = true;
@@ -920,6 +1117,14 @@ mod tests {
 
         sanitized.slots[0].kind = MasterEffectKind::Feedback;
         sanitized.slots[0].bypassed = false;
+        assert!(sanitized.active());
+
+        sanitized.slots[0].kind = MasterEffectKind::Custom;
+        sanitized.slots[0].package_id = "chromatic-split".to_owned();
+        sanitized.slots[0].parameters = vec![EffectParameterValue {
+            id: "amount".to_owned(),
+            value: 0.02,
+        }];
         assert!(sanitized.active());
     }
 }

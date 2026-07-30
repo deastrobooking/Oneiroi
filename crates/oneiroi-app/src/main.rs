@@ -28,7 +28,7 @@ use oneiroi_media::{
 use oneiroi_render::{
     DeckEffects, FourDeckCompositor, Gpu, MasterEffectProcessor, MixerBus, MixerParams,
     PROGRAM_FORMAT, PresentSurface, PresentationOptions, ProgramPresenter, ProgramTarget,
-    SurfaceAcquireStatus,
+    SurfaceAcquireStatus, discover_effect_packages,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
@@ -386,6 +386,17 @@ impl State {
             .join("effects/master-effects/effect.json")
             .to_string_lossy()
             .into_owned();
+        let effect_registry = discover_effect_packages(workspace.join("effects"));
+        ui.effect_registry_status = if effect_registry.errors.is_empty() {
+            format!("{} custom effect package(s)", effect_registry.effects.len())
+        } else {
+            format!(
+                "{} custom effect package(s), {} rejected",
+                effect_registry.effects.len(),
+                effect_registry.errors.len()
+            )
+        };
+        ui.effect_packages = effect_registry.effects;
         if let Some(id) = preferred_display_id {
             ui.output_display_id = id;
         }
@@ -425,7 +436,13 @@ impl State {
             gpu.create_surface(output_window.clone(), output_size.width, output_size.height)?;
         let program = ProgramTarget::new(&gpu.device, [1920, 1080]);
         let mut master_effect_processor = MasterEffectProcessor::new(&gpu.device, &program);
-        master_effect_processor.watch_effect_manifest(PathBuf::from(&ui.effect_manifest_path));
+        let mut effect_manifest_paths = vec![PathBuf::from(&ui.effect_manifest_path)];
+        effect_manifest_paths.extend(
+            ui.effect_packages
+                .iter()
+                .map(|effect| effect.manifest_path.clone()),
+        );
+        master_effect_processor.watch_effect_manifests(effect_manifest_paths);
         ui.effect_reload_status = master_effect_processor.reload_status().to_owned();
         let operator_presenter = ProgramPresenter::new(&gpu.device, &program, gpu.content_format());
         let output_presenter =
@@ -1385,9 +1402,9 @@ impl State {
             self.program = ProgramTarget::new(&self.gpu.device, self.ui.composition_extent);
             self.master_effect_processor =
                 MasterEffectProcessor::new(&self.gpu.device, &self.program);
-            let manifest_path = self.resolved_effect_manifest_path();
+            let manifest_paths = self.effect_manifest_paths();
             self.master_effect_processor
-                .watch_effect_manifest(manifest_path);
+                .watch_effect_manifests(manifest_paths);
             self.ui.effect_reload_status = self.master_effect_processor.reload_status().to_owned();
             self.operator_presenter =
                 ProgramPresenter::new(&self.gpu.device, &self.program, self.gpu.content_format());
@@ -1411,9 +1428,38 @@ impl State {
     }
 
     fn watch_effect_manifest(&mut self) {
-        let path = self.resolved_effect_manifest_path();
-        self.master_effect_processor.watch_effect_manifest(path);
+        let paths = self.effect_manifest_paths();
+        self.master_effect_processor.watch_effect_manifests(paths);
         self.ui.effect_reload_status = self.master_effect_processor.reload_status().to_owned();
+    }
+
+    fn effect_manifest_paths(&self) -> Vec<PathBuf> {
+        let mut paths = vec![self.resolved_effect_manifest_path()];
+        paths.extend(
+            self.ui
+                .effect_packages
+                .iter()
+                .map(|effect| effect.manifest_path.clone()),
+        );
+        paths.sort();
+        paths.dedup();
+        paths
+    }
+
+    fn refresh_effect_registry(&mut self) {
+        let registry = discover_effect_packages(self.workspace.join("effects"));
+        self.ui.effect_registry_status = if registry.errors.is_empty() {
+            format!("{} custom effect package(s)", registry.effects.len())
+        } else {
+            format!(
+                "{} custom effect package(s), {} rejected · {}",
+                registry.effects.len(),
+                registry.errors.len(),
+                registry.errors.join(" · ")
+            )
+        };
+        self.ui.effect_packages = registry.effects;
+        self.watch_effect_manifest();
     }
 
     fn apply_output_monitor(&mut self) {
@@ -1921,6 +1967,7 @@ impl State {
                     self.ui.effect_reload_status =
                         self.master_effect_processor.reload_status().to_owned();
                 }
+                ui::UiAction::RefreshEffectRegistry => self.refresh_effect_registry(),
                 ui::UiAction::RefreshDisplays => self.refresh_output_displays(),
                 ui::UiAction::RecoverProject => {
                     if let Some(path) = self.recovery_path.clone() {
@@ -2044,11 +2091,12 @@ impl State {
                 },
             );
             if master_effects_active {
-                self.master_effect_processor.draw(
+                self.master_effect_processor.draw_at(
                     &self.gpu.queue,
                     &mut encoder,
                     &self.program,
-                    self.ui.master_effects,
+                    &self.ui.master_effects,
+                    effect_time,
                 );
             }
         }

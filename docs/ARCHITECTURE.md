@@ -276,9 +276,18 @@ update operator diagnostics while the existing pipeline remains active. Thus
 editing or breaking a watched package cannot replace the last-known-good
 program path.
 
-The bundled package is `effects/master-effects/effect.json`. This boundary
-currently reloads the existing master processor contract; it does not yet
-register arbitrary effect kinds or generate controls dynamically from schemas.
+The bundled processor package is `effects/master-effects/effect.json`.
+Immediate child packages under `effects/` with role `master_effect` are
+registered by ID and appear as Custom package choices in either master slot.
+Their sliders are generated from the validated schema. Values are stored by
+parameter ID, then packed into the fixed 32-float uniform array in declaration
+order, so schema reordering does not silently exchange saved controls.
+
+Each registered effect is a single bounded pass in the existing two-slot graph.
+Missing or GPU-incompatible packages execute the built-in neutral copy path.
+No texture, bind group or pipeline is allocated during a frame. The reference
+Chromatic Split package demonstrates the ABI; declarative multipass package
+graphs remain a future extension. See `EFFECT_PACKAGES.md`.
 
 Free-running LFOs derive phase from elapsed seconds. Synchronized LFOs derive
 phase from the internal clock's beat position, so BPM changes retain musical
@@ -327,11 +336,12 @@ Operator-window resizing does not change composition resolution.
 
 ## Persistence
 
-`.oneiroi` files are versioned JSON. The current schema is version 2 and
-version-one files are migrated on load. Saves write a temporary sibling and rename
-it atomically. Newly introduced fields use explicit Serde defaults so existing
-projects remain readable. Autosave/recovery state is intentionally
-separate from the user's saved project.
+`.oneiroi` files are versioned JSON. The current schema is version 3 and
+version-one/version-two files are migrated on load. Version 3 adds stable
+custom-effect package IDs and named parameter values. Saves write a temporary
+sibling and rename it atomically. Newly introduced fields use explicit Serde
+defaults so existing projects remain readable. Autosave/recovery state is
+intentionally separate from the user's saved project.
 
 ## Audio analysis
 

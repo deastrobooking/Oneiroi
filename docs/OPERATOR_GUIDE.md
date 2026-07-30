@@ -171,9 +171,15 @@ schema, WGSL or GPU pipeline changes are shown in amber and the last working
 pipeline remains on program output.
 
 Package shader paths must be relative to the manifest and cannot traverse out
-of their directory. The current package must retain the existing master shader
-bindings, `radius`, `mix` and `feedback` schemas, and declared vertex/fragment
-entry points.
+of their directory. A replacement `master_processor` package must retain the
+documented master-v1 bindings and declared vertex/fragment entry points.
+
+Packages with role `master_effect` in an immediate subdirectory of `effects/`
+appear when a master slot is set to **Custom package**. Select the package and
+its manifest controls are created automatically. **Refresh registry** rescans
+after adding or removing a package. Parameter values and package IDs are saved
+in project version 3. If a saved package is missing or rejected, that slot
+passes its input through unchanged.
 
 ## Layer transforms
 
@@ -353,7 +359,7 @@ that automatic reconnect intent.
 
 ## Projects and recovery
 
-The project toolbar can open and save `.oneiroi` files. Version-two projects store all 32
+The project toolbar can open and save `.oneiroi` files. Version-three projects store all 32
 clip paths, per-slot trim/launch/beat settings, deck state, camera reconnect
 settings, mixer values, transport, effects, LFOs, modulation routes, tempo,
 output settings and MIDI mapping data.

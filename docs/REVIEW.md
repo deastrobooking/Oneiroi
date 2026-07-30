@@ -66,6 +66,10 @@ remains before the milestone is stage-certified.
   on a watcher worker and replace the render pipeline only after validation;
   failures preserve the last-known-good output and remain visible to the
   operator.
+- Custom one-pass master effects are registry-discovered by stable ID, receive
+  schema-generated controls and persist named parameter values in project v3.
+  Missing packages fall back to a neutral copy. Chromatic Split is bundled as
+  an executable package/ABI example.
 - Scene launch, quantization, tempo, transport, effects, LFOs and modulation
   routes form a coherent playable instrument.
 - Save, autosave, recovery and asynchronous restoration are already integrated.
@@ -73,8 +77,8 @@ remains before the milestone is stage-certified.
 ### Compatibility and validation
 
 - Project values are validated before application.
-- Version-one projects migrate to the current version-two schema.
-- The workspace currently passes 142 tests and strict Clippy, with one extended
+- Version-one and version-two projects migrate to the current version-three schema.
+- The workspace currently passes 147 tests and strict Clippy, with one extended
   decoder soak available as an opt-in ignored test.
 
 ## Stage-critical gaps
@@ -124,24 +128,24 @@ Recommended boundaries:
 - `actions.rs`: UI and keyboard action dispatch
 - UI panels split by toolbar, clips, deck/effects and diagnostics
 
-### Arbitrary effect registration is not yet implemented
+### Package graphs and modulation are not yet implemented
 
 Deck and master chains now provide ordered slots, common controls, bounded blur
-and deterministic feedback history. The master shader package now has a
-validated external manifest and safe last-known-good hot reload. Effect kinds
-and their UI remain compiled into the application, however; manifests cannot
-yet register a new kind or generate controls from arbitrary schemas.
+and deterministic feedback history. Custom master shaders now register through
+validated manifests and generate their controls dynamically. The current ABI
+deliberately grants each custom slot one pass and 32 scalar parameters; packages
+cannot request extra textures, multiple passes or direct LFO/MIDI destinations.
 
-Resolution: introduce an effect registry and map validated schema controls onto
-parameter storage, project migration and operator widgets without weakening
-the existing bounded render graph.
+Resolution: extend the manifest with a bounded declarative pass graph and stable
+modulation target metadata without allowing runtime allocation or unbounded
+shader resources.
 
 ### Project schema discipline
 
-The output milestone established project version 2 and upgrades version-one
-files on load. The next persistence work should extract explicit migration
-steps and add golden fixture files for every supported version before a third
-schema is introduced.
+Custom effect instances established project version 3 and upgrade version-one
+and version-two files on load. The next persistence work should extract
+explicit migration steps and add golden fixture files for every supported
+version before a fourth schema is introduced.
 
 ### Uncommitted integration surface
 

@@ -3,6 +3,7 @@
   "version": 1,
   "id": "master-effects",
   "name": "Oneiroi master effects",
+  "role": "master_processor",
   "shader": "master_effects.wgsl",
   "vertex_entry": "vs_main",
   "fragment_entry": "fs_main",

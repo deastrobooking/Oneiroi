@@ -3,8 +3,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use oneiroi_render::{
-    MasterEffectChain, MasterEffectKind, MasterEffectProcessor, MasterEffectSlot, PROGRAM_FORMAT,
-    PresentationOptions, ProgramPresenter, ProgramTarget,
+    EffectParameterValue, MasterEffectChain, MasterEffectKind, MasterEffectProcessor,
+    MasterEffectSlot, PROGRAM_FORMAT, PresentationOptions, ProgramPresenter, ProgramTarget,
 };
 
 const SIZE: u32 = 64;
@@ -213,7 +213,7 @@ fn separable_master_blur_runs_through_bounded_ping_pong_targets() {
         &queue,
         &mut encoder,
         &program,
-        MasterEffectChain {
+        &MasterEffectChain {
             slots: [
                 MasterEffectSlot {
                     kind: MasterEffectKind::Blur,
@@ -221,6 +221,7 @@ fn separable_master_blur_runs_through_bounded_ping_pong_targets() {
                     mix: 1.0,
                     amount: 16.0,
                     feedback: 0.85,
+                    ..MasterEffectSlot::default()
                 },
                 MasterEffectSlot::default(),
             ],
@@ -285,6 +286,7 @@ fn feedback_uses_previous_final_frame_and_reset_discards_history() {
                 mix: 1.0,
                 amount: 8.0,
                 feedback: 0.5,
+                ..MasterEffectSlot::default()
             },
             MasterEffectSlot::default(),
         ],
@@ -297,7 +299,7 @@ fn feedback_uses_previous_final_frame_and_reset_discards_history() {
         &mut processor,
         &presenter,
         wgpu::Color::RED,
-        feedback,
+        &feedback,
     );
     assert_eq!(red, [255, 0, 0, 255]);
     assert!(processor.history_is_valid());
@@ -314,7 +316,7 @@ fn feedback_uses_previous_final_frame_and_reset_discards_history() {
             b: 1.0,
             a: 1.0,
         },
-        feedback,
+        &feedback,
     );
     assert!(trailed[0] > 100 && trailed[2] > 100, "{trailed:?}");
 
@@ -331,7 +333,7 @@ fn feedback_uses_previous_final_frame_and_reset_discards_history() {
             b: 0.0,
             a: 1.0,
         },
-        feedback,
+        &feedback,
     );
     assert_eq!(green, [0, 255, 0, 255]);
 }
@@ -362,6 +364,16 @@ fn rejected_effect_reload_preserves_the_last_good_pipeline() {
         processor.reload_status()
     );
 
+    let missing_custom = MasterEffectChain {
+        slots: [
+            MasterEffectSlot {
+                kind: MasterEffectKind::Custom,
+                package_id: "missing-package".to_owned(),
+                ..MasterEffectSlot::default()
+            },
+            MasterEffectSlot::default(),
+        ],
+    };
     let color = render_master_color(
         &device,
         &queue,
@@ -369,10 +381,69 @@ fn rejected_effect_reload_preserves_the_last_good_pipeline() {
         &mut processor,
         &presenter,
         wgpu::Color::GREEN,
-        MasterEffectChain::default(),
+        &missing_custom,
     );
     assert_eq!(color, [0, 255, 0, 255]);
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn registered_custom_effect_compiles_and_runs_through_the_master_slot() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../effects/chromatic-split/effect.json");
+    let program = ProgramTarget::new(&device, [SIZE, SIZE]);
+    let presenter = ProgramPresenter::new(&device, &program, PROGRAM_FORMAT);
+    let mut processor = MasterEffectProcessor::new(&device, &program);
+    processor.watch_effect_manifest(manifest_path);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !processor.custom_effect_loaded("chromatic-split") && Instant::now() < deadline {
+        processor.poll_effect_reload();
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        processor.custom_effect_loaded("chromatic-split"),
+        "{}",
+        processor.reload_status()
+    );
+
+    let chain = MasterEffectChain {
+        slots: [
+            MasterEffectSlot {
+                kind: MasterEffectKind::Custom,
+                package_id: "chromatic-split".to_owned(),
+                parameters: vec![
+                    EffectParameterValue {
+                        id: "amount".to_owned(),
+                        value: 0.02,
+                    },
+                    EffectParameterValue {
+                        id: "angle".to_owned(),
+                        value: 0.0,
+                    },
+                    EffectParameterValue {
+                        id: "pulse".to_owned(),
+                        value: 0.0,
+                    },
+                ],
+                ..MasterEffectSlot::default()
+            },
+            MasterEffectSlot::default(),
+        ],
+    };
+    let color = render_master_color(
+        &device,
+        &queue,
+        &program,
+        &mut processor,
+        &presenter,
+        wgpu::Color::GREEN,
+        &chain,
+    );
+    assert_eq!(color, [0, 255, 0, 255]);
 }
 
 fn render_master_color(
@@ -382,7 +453,7 @@ fn render_master_color(
     processor: &mut MasterEffectProcessor,
     presenter: &ProgramPresenter,
     color: wgpu::Color,
-    chain: MasterEffectChain,
+    chain: &MasterEffectChain,
 ) -> [u8; 4] {
     let output = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("feedback-test-output"),

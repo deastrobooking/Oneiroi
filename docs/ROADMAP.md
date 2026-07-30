@@ -17,8 +17,8 @@ last commit. Before another large subsystem lands:
    persistence modules; keep `main.rs` as event-loop wiring.
 5. Split the large operator UI into toolbar, clip-grid, deck, effects and
    diagnostics panels.
-6. Extend the new version-two migration boundary with golden v1/v2 fixture
-   files before adding audio settings.
+6. Add golden v1/v2/v3 fixtures at the current version-three migration
+   boundary before another schema change.
 
 Acceptance criteria:
 
@@ -194,6 +194,9 @@ Acceptance criteria:
 6. Compile changed WGSL away from presentation and retain the last valid
    pipeline after errors. (implemented with background polling/compilation,
    GPU error scopes and an atomic render-thread pipeline swap)
+7. Register custom master effects, generate controls from their schemas and
+   persist named values. (implemented with a 32-parameter `master-v1` ABI,
+   neutral missing-package fallback and bundled Chromatic Split example)
 
 Acceptance criteria:
 

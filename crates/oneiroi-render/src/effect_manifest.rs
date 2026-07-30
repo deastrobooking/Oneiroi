@@ -11,6 +11,7 @@ use thiserror::Error;
 pub const EFFECT_MANIFEST_FORMAT: &str = "oneiroi-effect";
 pub const EFFECT_MANIFEST_VERSION: u32 = 1;
 const MAX_PARAMETERS: usize = 32;
+const MAX_PACKAGES: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EffectManifest {
@@ -18,12 +19,22 @@ pub struct EffectManifest {
     pub version: u32,
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub role: EffectPackageRole,
     pub shader: PathBuf,
     #[serde(default = "default_vertex_entry")]
     pub vertex_entry: String,
     #[serde(default = "default_fragment_entry")]
     pub fragment_entry: String,
     pub parameters: Vec<EffectParameterSchema>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectPackageRole {
+    #[default]
+    MasterEffect,
+    MasterProcessor,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -42,6 +53,20 @@ pub struct ValidatedEffectPackage {
     pub shader_path: PathBuf,
     pub shader_source: String,
     pub fingerprint: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EffectDescriptor {
+    pub id: String,
+    pub name: String,
+    pub manifest_path: PathBuf,
+    pub parameters: Vec<EffectParameterSchema>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EffectRegistry {
+    pub effects: Vec<EffectDescriptor>,
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Error)]
@@ -103,6 +128,63 @@ pub fn load_effect_package(
         shader_source,
         fingerprint: hasher.finish(),
     })
+}
+
+pub fn discover_effect_packages(root: impl AsRef<Path>) -> EffectRegistry {
+    let root = root.as_ref();
+    let mut manifest_paths = Vec::new();
+    if root.join("effect.json").is_file() {
+        manifest_paths.push(root.join("effect.json"));
+    }
+    match fs::read_dir(root) {
+        Ok(entries) => {
+            for entry in entries.flatten().take(MAX_PACKAGES) {
+                let path = entry.path().join("effect.json");
+                if path.is_file() {
+                    manifest_paths.push(path);
+                }
+            }
+        }
+        Err(error) => {
+            return EffectRegistry {
+                effects: Vec::new(),
+                errors: vec![format!("scan effect directory {}: {error}", root.display())],
+            };
+        }
+    }
+    manifest_paths.sort();
+    manifest_paths.dedup();
+
+    let mut registry = EffectRegistry::default();
+    let mut ids = HashSet::new();
+    for path in manifest_paths {
+        match load_effect_package(&path) {
+            Ok(package) => {
+                if package.manifest.role != EffectPackageRole::MasterEffect {
+                    continue;
+                }
+                if !ids.insert(package.manifest.id.clone()) {
+                    registry.errors.push(format!(
+                        "duplicate effect id {:?} at {}",
+                        package.manifest.id,
+                        path.display()
+                    ));
+                    continue;
+                }
+                registry.effects.push(EffectDescriptor {
+                    id: package.manifest.id,
+                    name: package.manifest.name,
+                    manifest_path: path,
+                    parameters: package.manifest.parameters,
+                });
+            }
+            Err(error) => registry.errors.push(format!("{}: {error}", path.display())),
+        }
+    }
+    registry
+        .effects
+        .sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+    registry
 }
 
 fn validate_manifest(manifest: &EffectManifest) -> Result<(), EffectManifestError> {
@@ -167,26 +249,6 @@ fn validate_manifest(manifest: &EffectManifest) -> Result<(), EffectManifestErro
             return Err(EffectManifestError::Invalid(format!(
                 "parameter {:?} has an invalid label or range",
                 parameter.id
-            )));
-        }
-    }
-    for (id, required_minimum, required_maximum) in [
-        ("radius", 0.0, 32.0),
-        ("mix", 0.0, 1.0),
-        ("feedback", 0.0, 0.99),
-    ] {
-        let Some(parameter) = manifest
-            .parameters
-            .iter()
-            .find(|parameter| parameter.id == id)
-        else {
-            return Err(EffectManifestError::Invalid(format!(
-                "required parameter {id:?} is missing"
-            )));
-        };
-        if parameter.minimum > required_minimum || parameter.maximum < required_maximum {
-            return Err(EffectManifestError::Invalid(format!(
-                "parameter {id:?} must cover {required_minimum}–{required_maximum}"
             )));
         }
     }
@@ -313,6 +375,15 @@ mod tests {
     }
 
     #[test]
+    fn bundled_registry_discovers_chromatic_split() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects");
+        let registry = discover_effect_packages(root);
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        assert_eq!(registry.effects.len(), 1);
+        assert_eq!(registry.effects[0].id, "chromatic-split");
+    }
+
+    #[test]
     fn rejects_duplicate_parameters_and_malformed_wgsl() {
         let duplicated = format!("{},{}", parameters(), parameters());
         let path = fixture(&manifest(&duplicated), "not wgsl");
@@ -331,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_shader_path_traversal_and_missing_required_schema() {
+    fn rejects_shader_path_traversal() {
         let mut value: serde_json::Value = serde_json::from_str(&manifest(parameters())).unwrap();
         value["shader"] = serde_json::json!("../effect.wgsl");
         let path = fixture(&serde_json::to_string(&value).unwrap(), "not used");
@@ -340,15 +411,48 @@ mod tests {
             Err(EffectManifestError::Invalid(_))
         ));
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
 
-        let path = fixture(
-            &manifest(r#"{"id":"mix","label":"Mix","minimum":0.0,"maximum":1.0,"default":1.0}"#),
-            "not used",
-        );
-        assert!(matches!(
-            load_effect_package(&path),
-            Err(EffectManifestError::Invalid(_))
+    #[test]
+    fn discovers_only_custom_master_effects() {
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "oneiroi-effect-registry-{}-{id}",
+            std::process::id()
         ));
-        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+        for (name, role) in [
+            ("custom", "master_effect"),
+            ("processor", "master_processor"),
+        ] {
+            let directory = root.join(name);
+            fs::create_dir_all(&directory).unwrap();
+            let mut value: serde_json::Value =
+                serde_json::from_str(&manifest(parameters())).unwrap();
+            value["id"] = serde_json::json!(name);
+            value["name"] = serde_json::json!(name);
+            value["role"] = serde_json::json!(role);
+            fs::write(
+                directory.join("effect.json"),
+                serde_json::to_vec(&value).unwrap(),
+            )
+            .unwrap();
+            fs::write(
+                directory.join("effect.wgsl"),
+                r#"
+@vertex fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    return vec4(f32(index), 0.0, 0.0, 1.0);
+}
+@fragment fn fs_main() -> @location(0) vec4<f32> {
+    return vec4(1.0);
+}
+"#,
+            )
+            .unwrap();
+        }
+        let registry = discover_effect_packages(&root);
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        assert_eq!(registry.effects.len(), 1);
+        assert_eq!(registry.effects[0].id, "custom");
+        fs::remove_dir_all(root).unwrap();
     }
 }

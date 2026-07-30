@@ -5,20 +5,20 @@ use oneiroi_core::{
 use oneiroi_io::{
     AudioAnalysisProject, BlendModeProject, CameraProject, ClipLaunchModeProject,
     ClipPlaybackProject, ControlTargetProject, CrossfadeBusProject, DeckProject,
-    EffectGroupProject, EffectProject, EffectSlotProject, EffectTargetProject, EndModeProject,
-    LfoProject, LfoWaveformProject, MappingModeProject, MasterEffectKindProject,
-    MasterEffectSlotProject, MasterEffectsProject, MidiMappingProject, MidiMessageProject,
-    ModRouteProject, OutputProject, ProjectFile, ProjectSettings, QuantizationProject,
-    SourceModeProject, TransformProject, TransportProject,
+    EffectGroupProject, EffectParameterValueProject, EffectProject, EffectSlotProject,
+    EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject,
+    MasterEffectKindProject, MasterEffectSlotProject, MasterEffectsProject, MidiMappingProject,
+    MidiMessageProject, ModRouteProject, OutputProject, ProjectFile, ProjectSettings,
+    QuantizationProject, SourceModeProject, TransformProject, TransportProject,
 };
 use oneiroi_media::{
     CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipLaunchMode,
     ClipPlayback, CrossfadeBus, DeckId, DeckTransport, EndMode, FourDeckMixer,
 };
 use oneiroi_render::{
-    DeckEffects, DeckLfos, DeckTransform, EffectGroup, EffectLfo, EffectSlot, EffectTarget,
-    LayerBlendMode, LfoWaveform, MasterEffectChain, MasterEffectKind, MasterEffectSlot,
-    ModulationRoute, SourceMode,
+    DeckEffects, DeckLfos, DeckTransform, EffectGroup, EffectLfo, EffectParameterValue, EffectSlot,
+    EffectTarget, LayerBlendMode, LfoWaveform, MasterEffectChain, MasterEffectKind,
+    MasterEffectSlot, ModulationRoute, SourceMode,
 };
 
 use crate::ui::UiState;
@@ -47,7 +47,7 @@ pub fn snapshot(
                 composition_extent: ui.composition_extent,
             },
             audio_analysis: audio_analysis_to_project(ui.audio_analysis),
-            master_effects: master_effects_to_project(ui.master_effects),
+            master_effects: master_effects_to_project(&ui.master_effects),
         },
         decks: DeckId::ALL
             .into_iter()
@@ -200,21 +200,31 @@ pub fn apply_master(project: &ProjectFile, ui: &mut UiState) {
     ui.master_freeze = false;
 }
 
-fn master_effects_to_project(effects: MasterEffectChain) -> MasterEffectsProject {
+fn master_effects_to_project(effects: &MasterEffectChain) -> MasterEffectsProject {
     MasterEffectsProject {
         slots: effects
             .slots
-            .into_iter()
+            .iter()
             .map(|slot| MasterEffectSlotProject {
                 kind: match slot.kind {
                     MasterEffectKind::None => MasterEffectKindProject::None,
                     MasterEffectKind::Blur => MasterEffectKindProject::Blur,
                     MasterEffectKind::Feedback => MasterEffectKindProject::Feedback,
+                    MasterEffectKind::Custom => MasterEffectKindProject::Custom,
                 },
                 bypassed: slot.bypassed,
                 mix: slot.mix,
                 amount: slot.amount,
                 feedback: slot.feedback,
+                package_id: slot.package_id.clone(),
+                parameters: slot
+                    .parameters
+                    .iter()
+                    .map(|parameter| EffectParameterValueProject {
+                        id: parameter.id.clone(),
+                        value: parameter.value,
+                    })
+                    .collect(),
             })
             .collect(),
     }
@@ -228,11 +238,21 @@ fn master_effects_from_project(effects: &MasterEffectsProject) -> MasterEffectCh
                 MasterEffectKindProject::None => MasterEffectKind::None,
                 MasterEffectKindProject::Blur => MasterEffectKind::Blur,
                 MasterEffectKindProject::Feedback => MasterEffectKind::Feedback,
+                MasterEffectKindProject::Custom => MasterEffectKind::Custom,
             },
             bypassed: source.bypassed,
             mix: source.mix,
             amount: source.amount,
             feedback: source.feedback,
+            package_id: source.package_id.clone(),
+            parameters: source
+                .parameters
+                .iter()
+                .map(|parameter| EffectParameterValue {
+                    id: parameter.id.clone(),
+                    value: parameter.value,
+                })
+                .collect(),
         };
     }
     result.sanitized()
@@ -741,6 +761,28 @@ mod tests {
         assert_eq!(
             clip_playback_from_project(clip_playback_to_project(playback)),
             playback
+        );
+    }
+
+    #[test]
+    fn custom_master_effect_conversion_preserves_named_parameters() {
+        let chain = MasterEffectChain {
+            slots: [
+                MasterEffectSlot {
+                    kind: MasterEffectKind::Custom,
+                    package_id: "chromatic-split".to_owned(),
+                    parameters: vec![EffectParameterValue {
+                        id: "amount".to_owned(),
+                        value: 0.025,
+                    }],
+                    ..MasterEffectSlot::default()
+                },
+                MasterEffectSlot::default(),
+            ],
+        };
+        assert_eq!(
+            master_effects_from_project(&master_effects_to_project(&chain)),
+            chain
         );
     }
 }

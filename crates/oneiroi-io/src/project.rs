@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const PROJECT_FORMAT: &str = "oneiroi-project";
-pub const PROJECT_VERSION: u32 = 2;
+pub const PROJECT_VERSION: u32 = 3;
 const MINIMUM_PROJECT_VERSION: u32 = 1;
 pub const DECK_COUNT: usize = 4;
 pub const CLIPS_PER_DECK: usize = 8;
@@ -211,7 +211,28 @@ fn valid_master_effects(effects: &MasterEffectsProject) -> bool {
             unit(slot.mix)
                 && effect_value(slot.amount, 0.0, 32.0)
                 && effect_value(slot.feedback, 0.0, 0.99)
+                && slot.parameters.len() <= 32
+                && slot
+                    .parameters
+                    .iter()
+                    .all(|parameter| valid_effect_id(&parameter.id) && parameter.value.is_finite())
+                && {
+                    let mut ids = std::collections::HashSet::new();
+                    slot.parameters
+                        .iter()
+                        .all(|parameter| ids.insert(parameter.id.as_str()))
+                }
+                && (slot.kind != MasterEffectKindProject::Custom
+                    || valid_effect_id(&slot.package_id))
         })
+}
+
+fn valid_effect_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 fn valid_control_target(target: ControlTargetProject) -> bool {
@@ -284,9 +305,10 @@ pub enum MasterEffectKindProject {
     None,
     Blur,
     Feedback,
+    Custom,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MasterEffectSlotProject {
     pub kind: MasterEffectKindProject,
     #[serde(default)]
@@ -297,6 +319,16 @@ pub struct MasterEffectSlotProject {
     pub amount: f32,
     #[serde(default = "default_feedback_amount")]
     pub feedback: f32,
+    #[serde(default)]
+    pub package_id: String,
+    #[serde(default)]
+    pub parameters: Vec<EffectParameterValueProject>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EffectParameterValueProject {
+    pub id: String,
+    pub value: f32,
 }
 
 impl Default for MasterEffectSlotProject {
@@ -307,6 +339,8 @@ impl Default for MasterEffectSlotProject {
             mix: 1.0,
             amount: default_blur_amount(),
             feedback: default_feedback_amount(),
+            package_id: String::new(),
+            parameters: Vec::new(),
         }
     }
 }
@@ -1023,6 +1057,7 @@ mod tests {
             mix: 0.65,
             amount: 14.0,
             feedback: 0.85,
+            ..MasterEffectSlotProject::default()
         };
         project.settings.master_effects.slots[1] = MasterEffectSlotProject {
             kind: MasterEffectKindProject::Feedback,
@@ -1030,6 +1065,7 @@ mod tests {
             mix: 0.8,
             amount: 8.0,
             feedback: 0.92,
+            ..MasterEffectSlotProject::default()
         };
         project.settings.master_effects.slots.swap(0, 1);
         project.settings.bpm = 128.0;
@@ -1136,6 +1172,36 @@ mod tests {
 
         project = ProjectFile::default();
         project.settings.master_effects.slots[0].feedback = 1.0;
+        assert!(matches!(
+            project.validate(),
+            Err(ProjectError::InvalidValue(_))
+        ));
+    }
+
+    #[test]
+    fn custom_master_effect_values_round_trip_and_validate() {
+        let mut project = ProjectFile::default();
+        project.settings.master_effects.slots[0] = MasterEffectSlotProject {
+            kind: MasterEffectKindProject::Custom,
+            package_id: "chromatic-split".to_owned(),
+            parameters: vec![
+                EffectParameterValueProject {
+                    id: "amount".to_owned(),
+                    value: 0.02,
+                },
+                EffectParameterValueProject {
+                    id: "angle".to_owned(),
+                    value: 1.0,
+                },
+            ],
+            ..MasterEffectSlotProject::default()
+        };
+        project.validate().unwrap();
+        let encoded = serde_json::to_vec(&project).unwrap();
+        let decoded: ProjectFile = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, project);
+
+        project.settings.master_effects.slots[0].parameters[1].id = "amount".to_owned();
         assert!(matches!(
             project.validate(),
             Err(ProjectError::InvalidValue(_))

@@ -1,0 +1,33 @@
+{
+  "format": "oneiroi-effect",
+  "version": 1,
+  "id": "chromatic-split",
+  "name": "Chromatic split",
+  "role": "master_effect",
+  "shader": "chromatic_split.wgsl",
+  "vertex_entry": "vs_main",
+  "fragment_entry": "fs_main",
+  "parameters": [
+    {
+      "id": "amount",
+      "label": "Amount",
+      "minimum": 0.0,
+      "maximum": 0.08,
+      "default": 0.012
+    },
+    {
+      "id": "angle",
+      "label": "Angle",
+      "minimum": -3.14159,
+      "maximum": 3.14159,
+      "default": 0.0
+    },
+    {
+      "id": "pulse",
+      "label": "Pulse",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.0
+    }
+  ]
+}

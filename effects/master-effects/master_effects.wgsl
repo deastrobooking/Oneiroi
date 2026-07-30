@@ -5,6 +5,10 @@ struct MasterEffectGlobals {
     mix_amount: f32,
     mode: u32,
     feedback: f32,
+    time_seconds: f32,
+    parameter_count: u32,
+    _padding: vec2<u32>,
+    parameters: array<vec4<f32>, 8>,
 }
 
 @group(0) @binding(0) var effect_sampler: sampler;

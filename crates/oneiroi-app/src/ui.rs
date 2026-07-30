@@ -17,8 +17,9 @@ use oneiroi_media::{
     DeckState, DeckTransport, EndMode, FourDeckMixer, LaunchQueue, MediaHealth,
 };
 use oneiroi_render::{
-    DeckEffects, DeckLfos, DeckTransform, EffectPreset, EffectTarget, LayerBlendMode, LfoWaveform,
-    MasterEffectChain, MasterEffectKind, SourceMode,
+    DeckEffects, DeckLfos, DeckTransform, EffectDescriptor, EffectParameterValue, EffectPreset,
+    EffectTarget, LayerBlendMode, LfoWaveform, MasterEffectChain, MasterEffectKind,
+    MasterEffectSlot, SourceMode,
 };
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.
@@ -38,6 +39,8 @@ pub struct UiState {
     pub master_effects: MasterEffectChain,
     pub effect_manifest_path: String,
     pub effect_reload_status: String,
+    pub effect_packages: Vec<EffectDescriptor>,
+    pub effect_registry_status: String,
     pub effects: [DeckEffects; 4],
     pub transforms: [DeckTransform; 4],
     pub blend_modes: [LayerBlendMode; 4],
@@ -78,6 +81,8 @@ impl Default for UiState {
             master_effects: MasterEffectChain::default(),
             effect_manifest_path: "effects/master-effects/effect.json".to_owned(),
             effect_reload_status: "Built-in master effect pipeline".to_owned(),
+            effect_packages: Vec::new(),
+            effect_registry_status: "Effect registry not scanned".to_owned(),
             effects: [DeckEffects::default(); 4],
             transforms: [DeckTransform::default(); 4],
             blend_modes: [LayerBlendMode::Normal; 4],
@@ -227,6 +232,7 @@ pub enum UiAction {
     SetCompositionExtent([u32; 2]),
     WatchEffectManifest,
     ReloadEffectManifest,
+    RefreshEffectRegistry,
     RefreshDisplays,
     RefreshCameras,
     RefreshAudioInputs,
@@ -808,11 +814,13 @@ pub fn draw(
             egui::CollapsingHeader::new("Master effects")
                 .default_open(false)
                 .show(ui, |ui| {
-                    let slot_count = state.master_effects.slots.len();
+                    let effect_packages = &state.effect_packages;
+                    let master_effects = &mut state.master_effects;
+                    let slot_count = master_effects.slots.len();
                     let mut reorder = None;
                     for index in 0..slot_count {
                         ui.group(|ui| {
-                            let slot = &mut state.master_effects.slots[index];
+                            let slot = &mut master_effects.slots[index];
                             ui.horizontal(|ui| {
                                 ui.monospace(format!("{}", index + 1));
                                 egui::ComboBox::from_id_salt(format!("master-fx-kind-{index}"))
@@ -856,16 +864,18 @@ pub fn draw(
                                     egui::Slider::new(&mut slot.feedback, 0.0..=0.99)
                                         .text("persistence"),
                                 );
+                            } else if slot.kind == MasterEffectKind::Custom {
+                                draw_custom_effect(ui, index, slot, effect_packages);
                             }
                         });
                     }
                     if let Some((from, to)) = reorder {
-                        state.master_effects.slots.swap(from, to);
+                        master_effects.slots.swap(from, to);
                     }
                     if ui.button("Reset master effects").clicked() {
-                        state.master_effects = MasterEffectChain::default();
+                        *master_effects = MasterEffectChain::default();
                     }
-                    state.master_effects = state.master_effects.sanitized();
+                    master_effects.sanitize();
                     ui.weak(
                         "Blur uses fixed ping-pong textures allocated with the composition target.",
                     );
@@ -873,6 +883,9 @@ pub fn draw(
                     ui.label("Effect package");
                     ui.text_edit_singleline(&mut state.effect_manifest_path);
                     ui.horizontal(|ui| {
+                        if ui.button("Refresh registry").clicked() {
+                            actions.push(UiAction::RefreshEffectRegistry);
+                        }
                         if ui.button("Watch").clicked() {
                             actions.push(UiAction::WatchEffectManifest);
                         }
@@ -880,6 +893,7 @@ pub fn draw(
                             actions.push(UiAction::ReloadEffectManifest);
                         }
                     });
+                    ui.weak(&state.effect_registry_status);
                     if state.effect_reload_status.contains("rejected") {
                         ui.colored_label(
                             egui::Color32::from_rgb(255, 190, 80),
@@ -891,6 +905,78 @@ pub fn draw(
                 });
         });
     actions
+}
+
+fn draw_custom_effect(
+    ui: &mut egui::Ui,
+    slot_index: usize,
+    slot: &mut MasterEffectSlot,
+    packages: &[EffectDescriptor],
+) {
+    let selected = packages
+        .iter()
+        .find(|package| package.id == slot.package_id)
+        .map_or("Missing package", |package| package.name.as_str());
+    let previous_id = slot.package_id.clone();
+    egui::ComboBox::from_id_salt(format!("master-custom-package-{slot_index}"))
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for package in packages {
+                if ui
+                    .selectable_label(slot.package_id == package.id, &package.name)
+                    .clicked()
+                {
+                    slot.package_id.clone_from(&package.id);
+                }
+            }
+        });
+    if slot.package_id != previous_id
+        && let Some(package) = packages
+            .iter()
+            .find(|package| package.id == slot.package_id)
+    {
+        slot.parameters = package
+            .parameters
+            .iter()
+            .map(|parameter| EffectParameterValue {
+                id: parameter.id.clone(),
+                value: parameter.default,
+            })
+            .collect();
+    }
+    let Some(package) = packages
+        .iter()
+        .find(|package| package.id == slot.package_id)
+    else {
+        ui.colored_label(
+            egui::Color32::from_rgb(255, 190, 80),
+            format!(
+                "Package {:?} is unavailable; this slot passes through.",
+                slot.package_id
+            ),
+        );
+        return;
+    };
+    for parameter in &package.parameters {
+        let value_index = slot
+            .parameters
+            .iter()
+            .position(|value| value.id == parameter.id);
+        let index = value_index.unwrap_or_else(|| {
+            slot.parameters.push(EffectParameterValue {
+                id: parameter.id.clone(),
+                value: parameter.default,
+            });
+            slot.parameters.len() - 1
+        });
+        ui.add(
+            egui::Slider::new(
+                &mut slot.parameters[index].value,
+                parameter.minimum..=parameter.maximum,
+            )
+            .text(&parameter.label),
+        );
+    }
 }
 
 fn draw_midi(

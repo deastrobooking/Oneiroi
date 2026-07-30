@@ -11,8 +11,9 @@ pub mod triangle;
 pub mod upload;
 
 pub use effect_manifest::{
-    EFFECT_MANIFEST_FORMAT, EFFECT_MANIFEST_VERSION, EffectManifest, EffectManifestError,
-    EffectParameterSchema, ValidatedEffectPackage, load_effect_package,
+    EFFECT_MANIFEST_FORMAT, EFFECT_MANIFEST_VERSION, EffectDescriptor, EffectManifest,
+    EffectManifestError, EffectPackageRole, EffectParameterSchema, EffectRegistry,
+    ValidatedEffectPackage, discover_effect_packages, load_effect_package,
 };
 pub use gpu::{Gpu, PresentSurface, SurfaceAcquireStatus, SurfaceAcquisition};
 pub use mixer::{
@@ -21,8 +22,9 @@ pub use mixer::{
     MOD_ROUTES_PER_DECK, MixerBus, MixerParams, MixerUploadError, ModulationRoute, SourceMode,
 };
 pub use program::{
-    MASTER_EFFECT_SLOTS, MasterEffectChain, MasterEffectKind, MasterEffectProcessor,
-    MasterEffectSlot, PROGRAM_FORMAT, PresentationOptions, ProgramPresenter, ProgramTarget,
+    EFFECT_PARAMETER_CAPACITY, EffectParameterValue, MASTER_EFFECT_SLOTS, MasterEffectChain,
+    MasterEffectKind, MasterEffectProcessor, MasterEffectSlot, PROGRAM_FORMAT, PresentationOptions,
+    ProgramPresenter, ProgramTarget,
 };
 pub use triangle::{Globals, TrianglePass};
 pub use upload::{CompressedTexture, UploadError};
