@@ -8,9 +8,9 @@ use oneiroi_core::MediaTime;
 use oneiroi_hap::{CompressedPlaneFormat, Decoder};
 use oneiroi_media::{
     CameraConfig, CameraDevice, ClipAddress, ClipRestoreRequest, ClipRestorer, DeckDecoder, DeckId,
-    DeckState, DecodePath, DecoderEvent, DiscontinuityPolicy, FfmpegVideoDecoder, FourDeckMixer,
-    FrameScheduler, FrameSelection, HapDemuxer, MediaHealth, MediaImporter, ThumbnailRequest,
-    ThumbnailWorker, VideoFramePayload, probe_movie,
+    DeckState, DecodePath, DecoderEvent, DecoderFailureInjection, DiscontinuityPolicy,
+    FfmpegVideoDecoder, FourDeckMixer, FrameBufferPool, FrameScheduler, FrameSelection, HapDemuxer,
+    MediaHealth, MediaImporter, ThumbnailRequest, ThumbnailWorker, VideoFramePayload, probe_movie,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -221,18 +221,30 @@ fn background_import_populates_one_of_four_decks() {
 #[test]
 fn ffmpeg_fallback_decodes_tightly_packed_rgba_frames() {
     let fixture = Fixture::raw_rgba_mov();
-    let mut decoder = FfmpegVideoDecoder::open(&fixture.path).unwrap();
+    let pool = FrameBufferPool::new(2);
+    let mut decoder = FfmpegVideoDecoder::open_with_pool(&fixture.path, pool.clone()).unwrap();
 
     let red = decoder.next_frame().unwrap().unwrap();
-    let green = decoder.next_frame().unwrap().unwrap();
 
     assert_eq!(red.pts, MediaTime::ZERO);
     assert_eq!(red.duration, Some(MediaTime::new(1, 30).unwrap()));
     assert_eq!(red.pixels.extent, [16, 16]);
     assert_eq!(&red.pixels.data[..4], &[255, 0, 0, 255]);
+    drop(red);
+    let green = decoder.next_frame().unwrap().unwrap();
     assert_eq!(green.pts, MediaTime::new(1, 30).unwrap());
     assert_eq!(&green.pixels.data[..4], &[0, 255, 0, 255]);
+    let stats = pool.stats();
+    assert_eq!(stats.allocations, 1);
+    assert_eq!(stats.reuses, 1);
     assert!(decoder.next_frame().unwrap().is_none());
+    drop(green);
+    drop(decoder);
+    let mut reopened = FfmpegVideoDecoder::open_with_pool(&fixture.path, pool.clone()).unwrap();
+    let reopened_frame = reopened.next_frame().unwrap().unwrap();
+    assert_eq!(&reopened_frame.pixels.data[..4], &[255, 0, 0, 255]);
+    assert_eq!(pool.stats().allocations, 1);
+    assert_eq!(pool.stats().reuses, 2);
 }
 
 #[test]
@@ -253,6 +265,85 @@ fn bounded_deck_worker_decodes_off_the_calling_thread() {
         frame.payload,
         VideoFramePayload::Rgba8(ref rgba) if rgba.data[..4] == [255, 0, 0, 255]
     ));
+}
+
+#[test]
+fn injected_midstream_failure_is_reported_and_the_worker_recovers() {
+    let fixture = Fixture::raw_rgba_mov();
+    let decoder = DeckDecoder::spawn_with_failure(
+        2,
+        DecoderFailureInjection::after_frames(1, "injected decoder failure"),
+    );
+    decoder.load(fixture.path.clone(), DecodePath::FfmpegVideo, 50);
+
+    assert_eq!(
+        decoder.recv_event_timeout(Duration::from_secs(2)).unwrap(),
+        DecoderEvent::Loaded { generation: 50 }
+    );
+    assert_eq!(
+        decoder
+            .recv_frame_timeout(Duration::from_secs(2))
+            .unwrap()
+            .generation,
+        50
+    );
+    assert_eq!(
+        decoder.recv_event_timeout(Duration::from_secs(2)).unwrap(),
+        DecoderEvent::Error {
+            generation: 50,
+            message: "injected decoder failure".to_owned(),
+        }
+    );
+
+    decoder.load(fixture.path.clone(), DecodePath::FfmpegVideo, 51);
+    assert_eq!(
+        decoder.recv_event_timeout(Duration::from_secs(2)).unwrap(),
+        DecoderEvent::Loaded { generation: 51 }
+    );
+    assert_eq!(
+        decoder
+            .recv_frame_timeout(Duration::from_secs(2))
+            .unwrap()
+            .generation,
+        51
+    );
+}
+
+#[test]
+fn repeated_decoder_reopen_soak_keeps_rgba_allocations_bounded() {
+    decoder_reopen_soak(64);
+}
+
+#[test]
+#[ignore = "extended manual soak; run explicitly before a show build"]
+fn extended_decoder_reopen_soak() {
+    decoder_reopen_soak(10_000);
+}
+
+fn decoder_reopen_soak(reopens: u64) {
+    let fixture = Fixture::raw_rgba_mov();
+    let decoder = DeckDecoder::spawn(2);
+
+    for generation in 1..=reopens {
+        decoder.load(fixture.path.clone(), DecodePath::FfmpegVideo, generation);
+        assert_eq!(
+            decoder.recv_event_timeout(Duration::from_secs(2)).unwrap(),
+            DecoderEvent::Loaded { generation }
+        );
+        for _ in 0..2 {
+            let frame = decoder.recv_frame_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(frame.generation, generation);
+        }
+        assert_eq!(
+            decoder.recv_event_timeout(Duration::from_secs(2)).unwrap(),
+            DecoderEvent::Ended { generation }
+        );
+    }
+
+    let stats = decoder.frame_pool_stats();
+    assert!(stats.allocations <= 2, "{stats:?}");
+    assert!(stats.reuses >= (reopens - 1) * 2, "{stats:?}");
+    assert_eq!(stats.in_flight, 0);
 }
 
 #[test]
@@ -286,12 +377,19 @@ fn deck_worker_decodes_a_bounded_live_capture_source() {
 #[test]
 fn deck_worker_seek_discards_pre_target_frames_and_changes_epoch() {
     let fixture = Fixture::raw_rgba_mov();
+    let movie = probe_movie(&fixture.path).unwrap();
+    assert_eq!(movie.keyframes.len(), 2);
+    assert!(movie.keyframes.is_complete());
+    let target = MediaTime::new(1, 30).unwrap();
+    let anchor = movie.keyframes.nearest_preceding(target);
+    assert_eq!(anchor, Some(target));
     let decoder = DeckDecoder::spawn(2);
-    decoder.load_at(
+    decoder.load_indexed(
         fixture.path.clone(),
         DecodePath::FfmpegVideo,
         43,
-        Some(MediaTime::new(1, 30).unwrap()),
+        Some(target),
+        anchor,
     );
 
     assert_eq!(
@@ -300,7 +398,7 @@ fn deck_worker_seek_discards_pre_target_frames_and_changes_epoch() {
     );
     let frame = decoder.recv_frame_timeout(Duration::from_secs(2)).unwrap();
     assert_eq!(frame.generation, 43);
-    assert_eq!(frame.pts, MediaTime::new(1, 30).unwrap());
+    assert_eq!(frame.pts, target);
     assert!(matches!(
         frame.payload,
         VideoFramePayload::Rgba8(ref rgba) if rgba.data[..4] == [0, 255, 0, 255]
@@ -353,6 +451,12 @@ fn thumbnail_worker_decodes_and_bounds_preview() {
     assert_eq!(result.request_id, 77);
     assert_eq!(thumbnail.extent, [16, 16]);
     assert_eq!(&thumbnail.rgba[..4], &[255, 0, 0, 255]);
+    assert!(thumbnail.preload.extent[0] <= 640);
+    assert!(thumbnail.preload.extent[1] <= 360);
+    assert_eq!(
+        thumbnail.preload.data.len(),
+        thumbnail.preload.extent[0] as usize * thumbnail.preload.extent[1] as usize * 4
+    );
 }
 
 #[test]

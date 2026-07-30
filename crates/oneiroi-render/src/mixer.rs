@@ -222,13 +222,21 @@ pub struct DeckLfos {
 }
 
 impl DeckLfos {
-    pub fn apply(
+    pub fn apply(self, effects: DeckEffects, time_seconds: f32, beat_position: f32) -> DeckEffects {
+        self.apply_with_audio(effects, time_seconds, beat_position, [0.0; 5])
+    }
+
+    pub fn apply_with_audio(
         self,
         mut effects: DeckEffects,
         time_seconds: f32,
         beat_position: f32,
+        audio_sources: [f32; 5],
     ) -> DeckEffects {
-        let mut source_values = [0.0; 3];
+        let mut source_values = [0.0; 10];
+        source_values[3..8].copy_from_slice(&audio_sources.map(|value| value.clamp(0.0, 1.0)));
+        source_values[8] = beat_position.rem_euclid(1.0);
+        source_values[9] = (beat_position / 4.0).rem_euclid(1.0);
         for (index, lfo) in self.lanes.into_iter().enumerate() {
             if !lfo.enabled {
                 continue;
@@ -862,7 +870,7 @@ fn solid_texture(
         queue,
         &RgbaFrame {
             extent: [1, 1],
-            data: pixel.to_vec(),
+            data: pixel.to_vec().into(),
         },
     )
     .unwrap_or_else(|_| panic!("create {label}"))
@@ -1022,6 +1030,47 @@ mod tests {
         assert_eq!(resolved.hue, 0.0);
         assert_eq!(resolved.contrast, 2.0);
         assert_eq!(resolved.saturation, 0.5);
+    }
+
+    #[test]
+    fn audio_sources_use_the_same_bipolar_route_amounts() {
+        let mut lfos = DeckLfos::default();
+        lfos.routes[0] = ModulationRoute {
+            enabled: true,
+            source: 4,
+            target: EffectTarget::Neon,
+            amount: 0.75,
+        };
+        lfos.routes[1] = ModulationRoute {
+            enabled: true,
+            source: 7,
+            target: EffectTarget::Hue,
+            amount: -0.5,
+        };
+        let resolved =
+            lfos.apply_with_audio(DeckEffects::default(), 0.0, 0.0, [0.2, 0.8, 0.0, 0.0, 1.0]);
+        assert!((resolved.neon - 0.6).abs() < 0.0001);
+        assert!((resolved.hue + 0.25).abs() < 0.0001);
+    }
+
+    #[test]
+    fn beat_and_bar_phase_are_matrix_sources() {
+        let mut lfos = DeckLfos::default();
+        lfos.routes[0] = ModulationRoute {
+            enabled: true,
+            source: 8,
+            target: EffectTarget::Contrast,
+            amount: 1.0,
+        };
+        lfos.routes[1] = ModulationRoute {
+            enabled: true,
+            source: 9,
+            target: EffectTarget::Saturation,
+            amount: 1.0,
+        };
+        let resolved = lfos.apply_with_audio(DeckEffects::default(), 0.0, 5.25, [0.0; 5]);
+        assert!((resolved.contrast - 1.5).abs() < 0.0001);
+        assert!((resolved.saturation - 1.625).abs() < 0.0001);
     }
 
     #[test]

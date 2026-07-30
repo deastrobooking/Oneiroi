@@ -22,5 +22,6 @@ egui-winit.workspace = true
 env_logger.workspace = true
 log.workspace = true
 pollster.workspace = true
+rfd.workspace = true
 wgpu.workspace = true
 winit.workspace = true

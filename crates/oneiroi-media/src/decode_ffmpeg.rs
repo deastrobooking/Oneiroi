@@ -6,7 +6,7 @@ use ffmpeg_next as ffmpeg;
 use oneiroi_core::{MediaTime, MediaTimeError};
 use thiserror::Error;
 
-use crate::{CameraConfig, RgbaFrame, camera_pts};
+use crate::{CameraConfig, FrameBufferPool, RgbaFrame, camera_pts};
 
 #[derive(Debug, Error)]
 pub enum FfmpegDecodeError {
@@ -34,6 +34,10 @@ pub enum FfmpegDecodeError {
     CreateScaler(ffmpeg::Error),
     #[error("read encoded packet: {0}")]
     Read(ffmpeg::Error),
+    #[error("seek media input: {0}")]
+    Seek(ffmpeg::Error),
+    #[error("seek timestamp is outside the supported range")]
+    SeekTimestampOverflow,
     #[error("submit encoded packet: {0}")]
     Submit(ffmpeg::Error),
     #[error("receive decoded frame: {0}")]
@@ -74,29 +78,67 @@ pub struct FfmpegVideoDecoder {
     allow_missing_timestamp: bool,
     fallback_fps: u32,
     live: bool,
+    frame_pool: FrameBufferPool,
 }
 
 impl FfmpegVideoDecoder {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, FfmpegDecodeError> {
-        Self::open_internal(path.as_ref(), false)
+        Self::open_with_pool(path, FrameBufferPool::new(8))
+    }
+
+    pub fn open_with_pool(
+        path: impl AsRef<Path>,
+        frame_pool: FrameBufferPool,
+    ) -> Result<Self, FfmpegDecodeError> {
+        Self::open_internal(path.as_ref(), false, frame_pool)
+    }
+
+    pub fn open_at(
+        path: impl AsRef<Path>,
+        seek_to: Option<MediaTime>,
+    ) -> Result<Self, FfmpegDecodeError> {
+        Self::open_at_with_pool(path, seek_to, FrameBufferPool::new(8))
+    }
+
+    pub fn open_at_with_pool(
+        path: impl AsRef<Path>,
+        seek_to: Option<MediaTime>,
+        frame_pool: FrameBufferPool,
+    ) -> Result<Self, FfmpegDecodeError> {
+        let mut decoder = Self::open_with_pool(path, frame_pool)?;
+        if let Some(seek_to) = seek_to {
+            decoder.seek(seek_to)?;
+        }
+        Ok(decoder)
     }
 
     /// Thumbnail generation may use FFmpeg's HAP pixel decoder because it is
     /// off the playback path and produces only one small cached image.
     pub fn open_for_thumbnail(path: impl AsRef<Path>) -> Result<Self, FfmpegDecodeError> {
-        Self::open_internal(path.as_ref(), true)
+        Self::open_internal(path.as_ref(), true, FrameBufferPool::new(2))
     }
 
-    fn open_internal(path: &Path, allow_hap: bool) -> Result<Self, FfmpegDecodeError> {
+    fn open_internal(
+        path: &Path,
+        allow_hap: bool,
+        frame_pool: FrameBufferPool,
+    ) -> Result<Self, FfmpegDecodeError> {
         ffmpeg::init().map_err(FfmpegDecodeError::Initialize)?;
         let input = ffmpeg::format::input(path).map_err(|source| FfmpegDecodeError::Open {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::from_input(input, allow_hap, allow_hap, 30, false)
+        Self::from_input(input, allow_hap, allow_hap, 30, false, frame_pool)
     }
 
     pub fn open_camera(config: &CameraConfig) -> Result<Self, FfmpegDecodeError> {
+        Self::open_camera_with_pool(config, FrameBufferPool::new(8))
+    }
+
+    pub fn open_camera_with_pool(
+        config: &CameraConfig,
+        frame_pool: FrameBufferPool,
+    ) -> Result<Self, FfmpegDecodeError> {
         ffmpeg::init().map_err(FfmpegDecodeError::Initialize)?;
         ffmpeg::device::register_all();
         let backend = std::ffi::CString::new(config.device.backend.as_str()).map_err(|_| {
@@ -136,7 +178,14 @@ impl FfmpegVideoDecoder {
                 config.device.backend.clone(),
             ));
         };
-        Self::from_input(input, true, true, config.requested_fps.unwrap_or(30), true)
+        Self::from_input(
+            input,
+            true,
+            true,
+            config.requested_fps.unwrap_or(30),
+            true,
+            frame_pool,
+        )
     }
 
     fn from_input(
@@ -145,6 +194,7 @@ impl FfmpegVideoDecoder {
         allow_missing_timestamp: bool,
         fallback_fps: u32,
         live: bool,
+        frame_pool: FrameBufferPool,
     ) -> Result<Self, FfmpegDecodeError> {
         let (stream_index, time_base, average_duration, decoder, scaler) = {
             let stream = input
@@ -204,11 +254,26 @@ impl FfmpegVideoDecoder {
             allow_missing_timestamp,
             fallback_fps,
             live,
+            frame_pool,
         })
     }
 
     pub fn is_live(&self) -> bool {
         self.live
+    }
+
+    fn seek(&mut self, target: MediaTime) -> Result<(), FfmpegDecodeError> {
+        let timestamp = i128::from(target.ticks())
+            .checked_mul(i128::from(ffmpeg::ffi::AV_TIME_BASE))
+            .and_then(|value| value.checked_div(i128::from(target.timescale())))
+            .and_then(|value| i64::try_from(value).ok())
+            .ok_or(FfmpegDecodeError::SeekTimestampOverflow)?;
+        self.input
+            .seek(timestamp, ..timestamp.saturating_add(1))
+            .map_err(FfmpegDecodeError::Seek)?;
+        self.decoder.flush();
+        self.draining = false;
+        Ok(())
     }
 
     pub fn next_frame(&mut self) -> Result<Option<DecodedRgbaFrame>, FfmpegDecodeError> {
@@ -280,7 +345,7 @@ impl FfmpegVideoDecoder {
             .ok_or(FfmpegDecodeError::FrameSizeOverflow)?;
         let stride = self.converted.stride(0);
         let source = self.converted.data(0);
-        let mut data = vec![0_u8; total_bytes];
+        let mut data = self.frame_pool.acquire(total_bytes);
         for row in 0..height as usize {
             data[row * row_bytes..(row + 1) * row_bytes]
                 .copy_from_slice(&source[row * stride..row * stride + row_bytes]);

@@ -9,7 +9,9 @@ mod capture;
 mod clips;
 mod decode_ffmpeg;
 mod demux;
+mod folder;
 mod frame;
+mod keyframe;
 mod mixer;
 mod probe;
 mod schedule;
@@ -21,14 +23,18 @@ pub use capture::{
     CAMERA_SCHEME, CameraConfig, CameraDevice, CameraDiscoveryError, camera_pts, discover_cameras,
 };
 pub use clips::{
-    CLIPS_PER_DECK, ClipAddress, ClipBank, ClipRestoreRequest, ClipRestoreResult, ClipRestorer,
-    ClipSlot, LaunchQueue,
+    CLIPS_PER_DECK, ClipAddress, ClipBank, ClipLaunchMode, ClipPlayback, ClipRestoreRequest,
+    ClipRestoreResult, ClipRestorer, ClipSlot, LaunchQueue,
 };
 pub use decode_ffmpeg::{DecodedRgbaFrame, FfmpegDecodeError, FfmpegVideoDecoder};
 pub use demux::{
     DemuxError, DemuxedHapFrame, EncodedHapPacket, FrameRate, HapDemuxer, HapStreamMetadata,
 };
-pub use frame::{RgbaFrame, VideoFrame, VideoFramePayload};
+pub use folder::{FolderScanRequest, FolderScanResult, FolderScanner, is_supported_media_path};
+pub use frame::{
+    FrameBufferPool, FrameData, FramePoolStats, RgbaFrame, VideoFrame, VideoFramePayload,
+};
+pub use keyframe::{KeyframeIndex, MAX_KEYFRAME_ENTRIES};
 pub use mixer::{
     CrossfadeBus, Deck, DeckId, DeckState, FourDeckMixer, ImportRequest, ImportResult,
     MediaImporter, SubmitError, crossfade_gains,
@@ -39,7 +45,8 @@ pub use schedule::{
     SchedulerError, SchedulerStats,
 };
 pub use thumbnail::{
-    THUMBNAIL_MAX_EXTENT, Thumbnail, ThumbnailRequest, ThumbnailResult, ThumbnailWorker,
+    PRELOAD_MAX_BYTES_PER_FRAME, PRELOAD_MAX_EXTENT, THUMBNAIL_MAX_EXTENT, Thumbnail,
+    ThumbnailRequest, ThumbnailResult, ThumbnailWorker,
 };
 pub use transport::{DeckTransport, EndMode, TransportEvent};
-pub use worker::{DeckDecoder, DecoderEvent};
+pub use worker::{DeckDecoder, DecoderEvent, DecoderFailureInjection};

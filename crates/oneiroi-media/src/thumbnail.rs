@@ -8,11 +8,16 @@ use std::time::Duration;
 use crate::{ClipAddress, FfmpegVideoDecoder, RgbaFrame};
 
 pub const THUMBNAIL_MAX_EXTENT: [u32; 2] = [160, 90];
+pub const PRELOAD_MAX_EXTENT: [u32; 2] = [640, 360];
+pub const PRELOAD_MAX_BYTES_PER_FRAME: usize =
+    PRELOAD_MAX_EXTENT[0] as usize * PRELOAD_MAX_EXTENT[1] as usize * 4;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Thumbnail {
     pub extent: [u32; 2],
     pub rgba: Vec<u8>,
+    /// Bounded first-frame preview retained for immediate clip launches.
+    pub preload: RgbaFrame,
 }
 
 #[derive(Debug)]
@@ -112,10 +117,20 @@ fn generate(path: &std::path::Path) -> Result<Thumbnail, crate::FfmpegDecodeErro
     let frame = decoder
         .next_frame()?
         .ok_or(crate::FfmpegDecodeError::MissingThumbnailFrame)?;
-    Ok(scale_to_fit(&frame.pixels, THUMBNAIL_MAX_EXTENT))
+    let thumbnail = scale_to_fit(&frame.pixels, THUMBNAIL_MAX_EXTENT);
+    let preload = scale_rgba_to_fit(&frame.pixels, PRELOAD_MAX_EXTENT);
+    Ok(Thumbnail {
+        extent: thumbnail.extent,
+        rgba: thumbnail.data.to_vec(),
+        preload,
+    })
 }
 
-fn scale_to_fit(source: &RgbaFrame, maximum: [u32; 2]) -> Thumbnail {
+fn scale_to_fit(source: &RgbaFrame, maximum: [u32; 2]) -> RgbaFrame {
+    scale_rgba_to_fit(source, maximum)
+}
+
+fn scale_rgba_to_fit(source: &RgbaFrame, maximum: [u32; 2]) -> RgbaFrame {
     let [source_width, source_height] = source.extent;
     let scale = (maximum[0] as f64 / source_width as f64)
         .min(maximum[1] as f64 / source_height as f64)
@@ -133,9 +148,9 @@ fn scale_to_fit(source: &RgbaFrame, maximum: [u32; 2]) -> Thumbnail {
                 .copy_from_slice(&source.data[source_offset..source_offset + 4]);
         }
     }
-    Thumbnail {
+    RgbaFrame {
         extent: [width, height],
-        rgba,
+        data: rgba.into(),
     }
 }
 
@@ -147,20 +162,32 @@ mod tests {
     fn scales_wide_frame_to_bounded_aspect_ratio() {
         let source = RgbaFrame {
             extent: [320, 180],
-            data: [10, 20, 30, 255].repeat(320 * 180),
+            data: [10, 20, 30, 255].repeat(320 * 180).into(),
         };
         let thumbnail = scale_to_fit(&source, [160, 90]);
         assert_eq!(thumbnail.extent, [160, 90]);
-        assert_eq!(thumbnail.rgba.len(), 160 * 90 * 4);
-        assert_eq!(&thumbnail.rgba[..4], &[10, 20, 30, 255]);
+        assert_eq!(thumbnail.data.len(), 160 * 90 * 4);
+        assert_eq!(&thumbnail.data[..4], &[10, 20, 30, 255]);
     }
 
     #[test]
     fn does_not_upscale_small_images() {
         let source = RgbaFrame {
             extent: [2, 1],
-            data: vec![255; 8],
+            data: vec![255; 8].into(),
         };
         assert_eq!(scale_to_fit(&source, [160, 90]).extent, [2, 1]);
+    }
+
+    #[test]
+    fn launch_preload_is_bounded_to_640_by_360() {
+        let source = RgbaFrame {
+            extent: [1920, 1080],
+            data: [10, 20, 30, 255].repeat(1920 * 1080).into(),
+        };
+        let preload = scale_rgba_to_fit(&source, PRELOAD_MAX_EXTENT);
+        assert_eq!(preload.extent, PRELOAD_MAX_EXTENT);
+        assert_eq!(preload.data.len(), PRELOAD_MAX_BYTES_PER_FRAME);
+        assert_eq!(PRELOAD_MAX_BYTES_PER_FRAME * 32, 29_491_200);
     }
 }

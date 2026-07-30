@@ -40,6 +40,13 @@ target OS:
   Darken and Overlay blend modes inside each bus.
 - Per-deck Solo isolation and non-destructive layer Bypass, including
   multi-solo operation across both buses.
+- Native audio-input discovery and capture through a bounded allocation-free
+  callback queue, with worker-thread FFT analysis for RMS, bass, mid, high and
+  transient signals.
+- Audio RMS/bands/transient sources in every deck's modulation matrix, with
+  live meters, gain/noise-floor/envelope controls and project persistence.
+- Optional adaptive RMS normalization plus beat-phase and four-beat bar-phase
+  modulation sources.
 - Native per-deck mirror, neon glow, fractal fold, scanline jitter, find-edges,
   bit reduction, black-light inversion, pixelate and luma-key effects.
 - Per-deck hue, contrast, saturation, black/white levels and gamma grading,
@@ -51,23 +58,43 @@ target OS:
 - Free-running or tempo-synchronized LFO rates from 1/16 beat through eight
   beats, plus manual BPM, Tap, half-time and double-time controls.
 - Reused RGBA and HAP GPU texture allocations for stable-resolution clips.
-- Device-neutral MIDI learn/mapping state with toggle, momentary, continuous
-  and soft-takeover behavior, ready for a platform MIDI input adapter.
+- Per-deck reusable CPU RGBA frame leases with bounded non-blocking returns;
+  allocation, reuse, live-lease and discarded-return telemetry is visible
+  during performance.
+- Bounded per-clip conventional-codec keyframe indexes; trims, resume,
+  restarts, loops and playhead seeks reopen at the nearest preceding keyframe
+  and decode forward to the exact generation-tagged target.
+- Native MIDI input discovery/capture with bounded callback delivery,
+  controller reconnection, live activity diagnostics and in-app learn,
+  cancel, clear and mapping removal.
+- Absolute, momentary, toggle, binary-offset and two's-complement mappings,
+  editable ranges, inversion and soft takeover for mixer, transport, clip,
+  scene, effect, LFO, matrix and emergency targets.
 - Four rows of eight persistent clip slots with per-slot health metadata,
   playing/queued indicators and right-click clearing.
+- Recursive folder drop/import with supported-media filtering, deterministic
+  lexical ordering, selected-slot wraparound, occupied-slot skipping and a
+  hard 32-slot assignment bound.
+- Per-slot In/Out trim, restart-or-resume launch policy and optional
+  BPM-relative beat duration, shared by seek, loop and one-shot boundaries.
 - Eight scene launch buttons and `1`–`8` shortcuts that trigger the same slot
   across all four decks.
 - Internal 20–400 BPM clock with immediate, next-beat and next-bar launch
   quantization, preserving musical phase across tempo changes.
 - Aggregate dropped, repeated and late-frame monitoring in the operator UI.
 - Versioned `.oneiroi` JSON projects containing all 32 media paths, active and
-  selected clips, mixer/transport/effect state, tempo settings and MIDI maps.
+  selected clips, per-clip playback settings, mixer/transport/effect state,
+  tempo settings and MIDI maps.
 - Atomic Save/Save As-style path workflow, `Cmd/Ctrl+S`, five-second autosave,
   close-time recovery snapshots and explicit crash-recovery loading.
 - Asynchronous 32-slot project restoration with project-epoch rejection;
-  missing media remains visible with its original path for later relinking.
+  missing media remains visible with its original path and can be relinked
+  through a native per-slot file browser without losing clip settings.
 - Playback-independent thumbnail worker with a bounded request queue, fixed
-  160×90 maximum output and at most one cached UI texture per clip slot.
+  160×90 maximum UI output and at most one cached texture per clip slot.
+- A retained 640×360 first-frame launch preview for every successfully probed
+  slot; immediate GPU upload prevents blank output while the full decoder
+  starts, with a fixed 29.5 MB worst-case cache across all 32 slots.
 - Thumbnail previews for HAP and FFmpeg media, with stale-result rejection and
   diagnostic text-tile fallback when preview decoding fails.
 - PNG and JPEG still-image import through FFmpeg, decoded once and held without
@@ -79,9 +106,7 @@ target OS:
 - Camera-aware deck controls and project persistence; saved live inputs
   reconnect when a project is restored.
 
-Reusable CPU frame leases, keyframe-indexed seeks, a platform MIDI input
-adapter, blur/feedback effects, audio analysis and project relink browsing
-have not landed yet.
+MIDI feedback/clock and blur/feedback effects have not landed yet.
 
 ```sh
 cargo run          # the app; select a deck and drop movies
@@ -133,7 +158,7 @@ freeze holds the most recent rendered frame.
 | `oneiroi-hap` | Bounded safe HAP decode to GPU-native BC planes. |
 | `oneiroi-media` | Demux, codec dispatch, frame queues and scheduling. |
 | `oneiroi-render` | wgpu device, surface, render passes. Knows nothing about winit or egui. |
-| `oneiroi-io` | Versioned project persistence now; MIDI, audio and sync adapters next. |
+| `oneiroi-io` | Versioned project persistence plus bounded native MIDI and audio input adapters. |
 | `oneiroi-app` | Windowing, UI, wiring. |
 
 ## Decisions already locked in

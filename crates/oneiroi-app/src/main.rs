@@ -4,25 +4,29 @@
 mod project;
 mod ui;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use oneiroi_core::{Clock, MediaTime, MidiMapper, TapTempo, TempoClock};
+use oneiroi_core::{
+    Clock, ControlTarget, ControlUpdate, MediaTime, MidiMapper, TapTempo, TempoClock,
+};
 use oneiroi_io::{
-    ProjectFile, autosave_path, load_project, recovery_is_newer, save_project_atomic,
+    AudioInput, AudioInputDevice, AudioInputSnapshot, MidiInputConnection, MidiInputDevice,
+    MidiInputStats, ProjectFile, autosave_path, discover_audio_inputs, discover_midi_inputs,
+    load_project, recovery_is_newer, save_project_atomic,
 };
 use oneiroi_media::{
-    CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipRestoreRequest, ClipRestorer,
-    CrossfadeBus, DeckDecoder, DeckId, DeckState, DeckTransport, DecoderEvent, DiscontinuityPolicy,
-    FourDeckMixer, FrameScheduler, FrameSelection, LaunchQueue, MediaImporter, SubmitError,
-    ThumbnailRequest, ThumbnailWorker, TransportEvent, VideoFramePayload, crossfade_gains,
-    discover_cameras,
+    CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipRestoreRequest,
+    ClipRestorer, CrossfadeBus, DeckDecoder, DeckId, DeckState, DeckTransport, DecoderEvent,
+    DiscontinuityPolicy, FolderScanRequest, FolderScanner, FourDeckMixer, FrameScheduler,
+    FrameSelection, LaunchQueue, MediaImporter, SubmitError, ThumbnailRequest, ThumbnailWorker,
+    TransportEvent, VideoFramePayload, crossfade_gains, discover_cameras,
 };
 use oneiroi_render::{
-    FourDeckCompositor, Gpu, MixerBus, MixerParams, PROGRAM_FORMAT, PresentSurface,
+    DeckEffects, FourDeckCompositor, Gpu, MixerBus, MixerParams, PROGRAM_FORMAT, PresentSurface,
     PresentationOptions, ProgramPresenter, ProgramTarget, SurfaceAcquireStatus,
 };
 use winit::application::ApplicationHandler;
@@ -81,6 +85,13 @@ struct State {
     performance_started: Instant,
     import_slots: [Option<(u64, usize)>; 4],
     importer: MediaImporter,
+    folder_scanner: FolderScanner,
+    folder_request_id: u64,
+    folder_scan_start: ClipAddress,
+    folder_pending: HashSet<ClipAddress>,
+    relink_pending: HashSet<ClipAddress>,
+    relink_active: HashSet<ClipAddress>,
+    folder_status: String,
     decoders: [DeckDecoder; 4],
     schedulers: [FrameScheduler<VideoFramePayload>; 4],
     transports: [DeckTransport; 4],
@@ -100,12 +111,22 @@ struct State {
     restore_selected: [usize; 4],
     restore_transport: [Option<DeckTransport>; 4],
     midi: MidiMapper,
+    midi_inputs: Vec<MidiInputDevice>,
+    midi_input: Option<MidiInputConnection>,
+    midi_stats: MidiInputStats,
+    midi_status: String,
+    midi_reconnect: bool,
+    last_midi_refresh: Instant,
     thumbnails: ThumbnailWorker,
     thumbnail_request_id: u64,
     thumbnail_requests: HashMap<ClipAddress, (u64, PathBuf)>,
     cameras: Vec<CameraDevice>,
     camera_status: String,
     live_configs: [Option<CameraConfig>; 4],
+    audio_inputs: Vec<AudioInputDevice>,
+    audio_input: Option<AudioInput>,
+    audio_snapshot: AudioInputSnapshot,
+    audio_status: String,
 }
 
 struct OutputMonitor {
@@ -216,7 +237,7 @@ impl ApplicationHandler for App {
                     state.open_project(self.initial_files.remove(0), false);
                 } else {
                     for path in self.initial_files.drain(..) {
-                        state.import_movie(path);
+                        state.import_path(path);
                     }
                 }
                 self.state = Some(state);
@@ -272,7 +293,7 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => state.gpu.resize(size.width, size.height),
-            WindowEvent::DroppedFile(path) => state.import_movie(path),
+            WindowEvent::DroppedFile(path) => state.import_path(path),
             WindowEvent::ModifiersChanged(modifiers) => state.modifiers = modifiers.state(),
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed && !event.repeat =>
@@ -440,6 +461,37 @@ impl State {
             }
             Err(error) => (Vec::new(), format!("Camera discovery: {error}")),
         };
+        let (audio_inputs, audio_status) = match discover_audio_inputs() {
+            Ok(inputs) if inputs.is_empty() => {
+                (inputs, "No audio input devices discovered".to_owned())
+            }
+            Ok(inputs) => {
+                let count = inputs.len();
+                (inputs, format!("{count} audio input(s) available"))
+            }
+            Err(error) => (Vec::new(), format!("Audio discovery: {error}")),
+        };
+        if ui.audio_device_id.is_empty()
+            && let Some(device) = audio_inputs
+                .iter()
+                .find(|device| device.is_default)
+                .or_else(|| audio_inputs.first())
+        {
+            ui.audio_device_id = device.id.clone();
+        }
+        let (midi_inputs, midi_status) = match discover_midi_inputs() {
+            Ok(inputs) if inputs.is_empty() => {
+                (inputs, "No MIDI input devices discovered".to_owned())
+            }
+            Ok(inputs) => {
+                let count = inputs.len();
+                (inputs, format!("{count} MIDI input(s) available"))
+            }
+            Err(error) => (Vec::new(), format!("MIDI discovery: {error}")),
+        };
+        if let Some(device) = midi_inputs.first() {
+            ui.midi_device_id = device.id.clone();
+        }
 
         Ok(Self {
             window,
@@ -468,6 +520,16 @@ impl State {
             performance_started: Instant::now(),
             import_slots: [None; 4],
             importer: MediaImporter::new(8),
+            folder_scanner: FolderScanner::new(),
+            folder_request_id: 0,
+            folder_scan_start: ClipAddress {
+                deck: DeckId::A,
+                slot: 0,
+            },
+            folder_pending: HashSet::new(),
+            relink_pending: HashSet::new(),
+            relink_active: HashSet::new(),
+            folder_status: String::new(),
             decoders: std::array::from_fn(|_| DeckDecoder::spawn(4)),
             schedulers: std::array::from_fn(|_| {
                 FrameScheduler::new(4, 0, DiscontinuityPolicy::Blank).expect("non-zero frame queue")
@@ -489,13 +551,180 @@ impl State {
             restore_selected: [0; 4],
             restore_transport: [None; 4],
             midi: MidiMapper::default(),
+            midi_inputs,
+            midi_input: None,
+            midi_stats: MidiInputStats::default(),
+            midi_status,
+            midi_reconnect: false,
+            last_midi_refresh: Instant::now(),
             thumbnails: ThumbnailWorker::new(32),
             thumbnail_request_id: 0,
             thumbnail_requests: HashMap::new(),
             cameras,
             camera_status,
             live_configs: std::array::from_fn(|_| None),
+            audio_inputs,
+            audio_input: None,
+            audio_snapshot: AudioInputSnapshot::default(),
+            audio_status,
         })
+    }
+
+    fn import_path(&mut self, path: PathBuf) {
+        if path.is_dir() {
+            self.import_folder(path);
+        } else {
+            self.import_movie(path);
+        }
+    }
+
+    fn browse_relink(&mut self, address: ClipAddress) {
+        let current = self.clips.path(address).map(PathBuf::from);
+        let mut dialog = rfd::FileDialog::new().add_filter(
+            "Video and still media",
+            &[
+                "mov", "mp4", "m4v", "mkv", "avi", "webm", "mxf", "png", "jpg", "jpeg",
+            ],
+        );
+        if let Some(parent) = current.as_deref().and_then(std::path::Path::parent)
+            && parent.exists()
+        {
+            dialog = dialog.set_directory(parent);
+        }
+        if let Some(name) = current
+            .as_deref()
+            .and_then(std::path::Path::file_name)
+            .and_then(|name| name.to_str())
+        {
+            dialog = dialog.set_file_name(name);
+        }
+        if let Some(path) = dialog.pick_file() {
+            self.relink_slot(address, path);
+        } else {
+            self.project_status = "Relink cancelled".to_owned();
+        }
+    }
+
+    fn relink_slot(&mut self, address: ClipAddress, path: PathBuf) {
+        let path = path.canonicalize().unwrap_or(path);
+        if path.is_dir() {
+            self.project_status = "Relink requires a media file, not a folder".to_owned();
+            return;
+        }
+        if self.clips.active(address.deck) == Some(address.slot) {
+            self.relink_active.insert(address);
+        }
+        self.relink_pending.insert(address);
+        self.ui.clear_thumbnail(address);
+        self.thumbnail_requests.remove(&address);
+        self.clips.begin_relink(address, path.clone());
+        match self.restorer.submit(ClipRestoreRequest {
+            address,
+            path: path.clone(),
+            project_epoch: self.project_epoch,
+        }) {
+            Ok(()) => {
+                self.project_status = format!(
+                    "Relinking Deck {} slot {} to {}…",
+                    address.deck.label(),
+                    address.slot + 1,
+                    display_path(&path)
+                );
+            }
+            Err(request) => {
+                self.relink_pending.remove(&address);
+                self.relink_active.remove(&address);
+                self.clips.fail_restore(
+                    request.address,
+                    request.path,
+                    "Relink probe queue is full.".to_owned(),
+                );
+                self.project_status = "Relink queue is full".to_owned();
+            }
+        }
+    }
+
+    fn import_folder(&mut self, path: PathBuf) {
+        let start = ClipAddress {
+            deck: self.mixer.selected(),
+            slot: self.clips.selected(self.mixer.selected()),
+        };
+        let available = self.clips.available_slots_from(start, CLIPS_PER_DECK * 4);
+        if available.is_empty() {
+            self.folder_status = "Folder import skipped · all 32 slots are occupied".to_owned();
+            return;
+        }
+        let request_id = self.folder_request_id.wrapping_add(1);
+        let request = FolderScanRequest {
+            root: path.clone(),
+            request_id,
+            project_epoch: self.project_epoch,
+            max_files: available.len(),
+        };
+        match self.folder_scanner.submit(request) {
+            Ok(()) => {
+                self.folder_request_id = request_id;
+                self.folder_scan_start = start;
+                self.folder_status = format!("Scanning {}…", display_path(&path));
+            }
+            Err(_) => {
+                self.folder_status = "Folder scan is busy · wait for the current folder".to_owned();
+            }
+        }
+    }
+
+    fn poll_folder_scans(&mut self) {
+        while let Ok(result) = self.folder_scanner.try_recv() {
+            if result.project_epoch != self.project_epoch
+                || result.request_id != self.folder_request_id
+            {
+                continue;
+            }
+            let paths = match result.paths {
+                Ok(paths) => paths,
+                Err(error) => {
+                    self.folder_status = format!("Folder scan failed: {error}");
+                    continue;
+                }
+            };
+            let slots = self
+                .clips
+                .available_slots_from(self.folder_scan_start, paths.len());
+            let mut submitted = 0;
+            for (address, path) in slots.into_iter().zip(paths) {
+                self.clips.begin_restore(address, path.clone());
+                match self.restorer.submit(ClipRestoreRequest {
+                    address,
+                    path,
+                    project_epoch: self.project_epoch,
+                }) {
+                    Ok(()) => {
+                        self.folder_pending.insert(address);
+                        submitted += 1;
+                    }
+                    Err(request) => {
+                        self.clips.fail_restore(
+                            request.address,
+                            request.path,
+                            "Folder probe queue is full.".to_owned(),
+                        );
+                    }
+                }
+            }
+            self.folder_status = if submitted == 0 {
+                format!("No supported media found in {}", display_path(&result.root))
+            } else {
+                format!(
+                    "Importing {submitted} file(s) from {}{}",
+                    display_path(&result.root),
+                    if result.truncated {
+                        " · limited by available slots"
+                    } else {
+                        ""
+                    }
+                )
+            };
+        }
     }
 
     fn import_movie(&mut self, path: PathBuf) {
@@ -560,13 +789,53 @@ impl State {
         let Some(movie) = self.clips.movie(address).cloned() else {
             return;
         };
+        self.clips
+            .remember_position(address.deck, self.transports[address.deck.index()].position);
+        let media_duration = movie.duration.map(MediaTime::as_seconds);
+        let playback = self.clips.playback(address).unwrap_or_default();
+        let launch_position = self
+            .clips
+            .launch_position(address, media_duration, self.ui.bpm)
+            .unwrap_or(playback.in_point);
+        let (in_point, out_point) = playback.range(media_duration, self.ui.bpm);
         let path = movie.path.clone();
+        let preload = self
+            .ui
+            .preloaded_frame(address, Some(path.as_path()))
+            .cloned();
         let decode_path = movie.decode_path;
+        let start_at = media_time_from_seconds(launch_position);
+        let seek_to = if decode_path == oneiroi_media::DecodePath::FfmpegVideo {
+            start_at.and_then(|target| movie.keyframes.nearest_preceding(target))
+        } else {
+            None
+        };
         let generation = self.mixer.activate(address.deck, movie);
         self.live_configs[address.deck.index()] = None;
         self.clips.activate(address);
         self.reset_playback(address.deck, generation);
-        self.decoders[address.deck.index()].load(path, decode_path, generation);
+        self.transports[address.deck.index()].reset_range(in_point, out_point);
+        self.transports[address.deck.index()].position = launch_position;
+        if let Some(preload) = preload
+            && let Err(error) = self.compositor.upload(
+                &self.gpu.device,
+                &self.gpu.queue,
+                address.deck.index(),
+                &VideoFramePayload::Rgba8(preload),
+            )
+        {
+            log::error!(
+                "deck {} first-frame preload upload failed: {error}",
+                address.deck.label()
+            );
+        }
+        self.decoders[address.deck.index()].load_indexed(
+            path,
+            decode_path,
+            generation,
+            start_at,
+            seek_to,
+        );
     }
 
     fn queue_clip(&mut self, address: ClipAddress, now: Instant) {
@@ -616,6 +885,8 @@ impl State {
         extent: [u32; 2],
         fps: u32,
     ) {
+        self.clips
+            .remember_position(deck, self.transports[deck.index()].position);
         let config = CameraConfig {
             device: CameraDevice {
                 id: device_id,
@@ -633,6 +904,272 @@ impl State {
         self.transports[deck.index()].end_mode = oneiroi_media::EndMode::OneShot;
         self.decoders[deck.index()].connect_camera(config, generation);
         self.camera_status = format!("Connecting Deck {}…", deck.label());
+    }
+
+    fn refresh_audio_inputs(&mut self) {
+        match discover_audio_inputs() {
+            Ok(inputs) => {
+                self.audio_inputs = inputs;
+                if !self
+                    .audio_inputs
+                    .iter()
+                    .any(|device| device.id == self.ui.audio_device_id)
+                {
+                    self.ui.audio_device_id = self
+                        .audio_inputs
+                        .iter()
+                        .find(|device| device.is_default)
+                        .or_else(|| self.audio_inputs.first())
+                        .map(|device| device.id.clone())
+                        .unwrap_or_default();
+                }
+                self.audio_status = format!("{} audio input(s) available", self.audio_inputs.len());
+            }
+            Err(error) => self.audio_status = format!("Audio discovery failed: {error}"),
+        }
+    }
+
+    fn connect_audio_input(&mut self, device_id: String) {
+        self.audio_input = None;
+        match AudioInput::connect(&device_id, self.ui.audio_analysis) {
+            Ok(input) => {
+                self.ui.audio_device_id = device_id;
+                self.audio_snapshot = input.snapshot();
+                self.audio_input = Some(input);
+                self.audio_status = "Audio input connected".to_owned();
+            }
+            Err(error) => self.audio_status = format!("Audio connection failed: {error}"),
+        }
+    }
+
+    fn disconnect_audio_input(&mut self) {
+        self.audio_input = None;
+        self.audio_snapshot = AudioInputSnapshot::default();
+        self.audio_status = "Audio input disconnected".to_owned();
+    }
+
+    fn refresh_midi_inputs(&mut self) {
+        match discover_midi_inputs() {
+            Ok(inputs) => {
+                let connected_id = self
+                    .midi_input
+                    .as_ref()
+                    .map(|input| input.device_id().to_owned());
+                self.midi_inputs = inputs;
+                if let Some(connected_id) = connected_id
+                    && !self
+                        .midi_inputs
+                        .iter()
+                        .any(|device| device.id == connected_id)
+                {
+                    self.midi_input = None;
+                    self.midi_status =
+                        format!("{connected_id} disconnected · waiting to reconnect");
+                }
+                if self.ui.midi_device_id.is_empty() {
+                    self.ui.midi_device_id = self
+                        .midi_inputs
+                        .first()
+                        .map(|device| device.id.clone())
+                        .unwrap_or_default();
+                }
+                if self.midi_input.is_none()
+                    && self.midi_reconnect
+                    && self
+                        .midi_inputs
+                        .iter()
+                        .any(|device| device.id == self.ui.midi_device_id)
+                {
+                    self.connect_midi_input(self.ui.midi_device_id.clone());
+                } else if self.midi_input.is_none() && !self.midi_reconnect {
+                    self.midi_status =
+                        format!("{} MIDI input(s) available", self.midi_inputs.len());
+                }
+            }
+            Err(error) => self.midi_status = format!("MIDI discovery failed: {error}"),
+        }
+        self.last_midi_refresh = Instant::now();
+    }
+
+    fn connect_midi_input(&mut self, device_id: String) {
+        self.midi_input = None;
+        match MidiInputConnection::connect(&device_id) {
+            Ok(input) => {
+                self.ui.midi_device_id = device_id.clone();
+                self.midi_stats = input.stats();
+                self.midi_input = Some(input);
+                self.midi_reconnect = true;
+                self.midi_status = format!("{device_id} connected");
+            }
+            Err(error) => {
+                self.midi_reconnect = true;
+                self.midi_status = format!("MIDI connection failed: {error}");
+            }
+        }
+    }
+
+    fn disconnect_midi_input(&mut self) {
+        self.midi_input = None;
+        self.midi_reconnect = false;
+        self.midi.cancel_learn();
+        self.midi_status = "MIDI input disconnected".to_owned();
+    }
+
+    fn poll_midi(&mut self, now: Instant) {
+        if now.saturating_duration_since(self.last_midi_refresh) >= Duration::from_secs(2) {
+            self.refresh_midi_inputs();
+        }
+        let Some(input) = &self.midi_input else {
+            return;
+        };
+        let device = input.device_id().to_owned();
+        let events: Vec<_> = input.try_iter().collect();
+        self.midi_stats = input.stats();
+        for event in events {
+            let updates = {
+                let ui = &self.ui;
+                let mixer = &self.mixer;
+                let transports = &self.transports;
+                self.midi.ingest(&device, event.message, |target| {
+                    current_control_value(ui, mixer, transports, target)
+                })
+            };
+            for update in updates {
+                self.apply_control_update(update, now);
+            }
+            self.midi_status = format!(
+                "{device} · {:?} · {} µs",
+                event.message, event.timestamp_micros
+            );
+        }
+    }
+
+    fn apply_control_update(&mut self, update: ControlUpdate, now: Instant) {
+        match update.target {
+            ControlTarget::Crossfader => self.ui.crossfader = update.value.clamp(0.0, 1.0),
+            ControlTarget::MasterOpacity => {
+                self.ui.master_opacity = update.value.clamp(0.0, 1.0);
+            }
+            ControlTarget::MasterBlackout => self.ui.blackout = update.value >= 0.5,
+            ControlTarget::MasterFreeze => self.ui.master_freeze = update.value >= 0.5,
+            ControlTarget::TapTempo => {
+                if update.value >= 0.5 {
+                    let elapsed = now
+                        .saturating_duration_since(self.performance_started)
+                        .as_secs_f64();
+                    if let Some(bpm) = self.tap_tempo.tap(elapsed) {
+                        self.ui.bpm = bpm;
+                        self.tempo.set_bpm(bpm, elapsed);
+                    }
+                }
+            }
+            ControlTarget::DeckLevel(deck) => {
+                if let Some(deck) = deck_id(deck) {
+                    self.mixer.deck_mut(deck).level = update.value.clamp(0.0, 1.0);
+                }
+            }
+            ControlTarget::DeckPlay(deck) => {
+                if let Some(deck) = deck_id(deck) {
+                    self.transports[deck.index()].playing = update.value >= 0.5;
+                    self.last_transport_updates[deck.index()] = now;
+                }
+            }
+            ControlTarget::DeckFreeze(deck) => {
+                if let Some(deck) = deck_id(deck) {
+                    self.transports[deck.index()].frozen = update.value >= 0.5;
+                }
+            }
+            ControlTarget::DeckSpeed(deck) => {
+                if let Some(deck) = deck_id(deck) {
+                    self.transports[deck.index()].speed = update.value.clamp(0.25, 4.0);
+                }
+            }
+            ControlTarget::DeckSelect(deck) => {
+                if update.value >= 0.5
+                    && let Some(deck) = deck_id(deck)
+                {
+                    self.mixer.select(deck);
+                }
+            }
+            ControlTarget::DeckRestart(deck) => {
+                if update.value >= 0.5
+                    && let Some(deck) = deck_id(deck)
+                {
+                    self.transports[deck.index()].restart();
+                    self.seek_deck(deck);
+                }
+            }
+            ControlTarget::ClipLaunch { deck, slot } => {
+                if update.value >= 0.5
+                    && let Some(deck) = deck_id(deck)
+                    && usize::from(slot) < oneiroi_media::CLIPS_PER_DECK
+                {
+                    self.queue_clip(
+                        ClipAddress {
+                            deck,
+                            slot: usize::from(slot),
+                        },
+                        now,
+                    );
+                }
+            }
+            ControlTarget::SceneLaunch(slot) => {
+                if update.value >= 0.5 && usize::from(slot) < oneiroi_media::CLIPS_PER_DECK {
+                    for deck in DeckId::ALL {
+                        self.queue_clip(
+                            ClipAddress {
+                                deck,
+                                slot: usize::from(slot),
+                            },
+                            now,
+                        );
+                    }
+                }
+            }
+            ControlTarget::EffectParameter {
+                deck,
+                effect,
+                parameter: _,
+            } => {
+                if let Some(deck) = deck_id(deck) {
+                    set_effect_parameter(&mut self.ui.effects[deck.index()], effect, update.value);
+                }
+            }
+            ControlTarget::LfoParameter {
+                deck,
+                lfo,
+                parameter,
+            } => {
+                if let Some(deck) = deck_id(deck)
+                    && let Some(lfo) = self.ui.lfos[deck.index()].lanes.get_mut(usize::from(lfo))
+                {
+                    match parameter {
+                        0 => lfo.enabled = update.value >= 0.5,
+                        1 => lfo.rate_hz = update.value.clamp(0.01, 20.0),
+                        2 => lfo.depth = update.value.clamp(0.0, 1.0),
+                        3 => lfo.phase = update.value.rem_euclid(1.0),
+                        _ => {}
+                    }
+                }
+            }
+            ControlTarget::ModRouteParameter {
+                deck,
+                route,
+                parameter,
+            } => {
+                if let Some(deck) = deck_id(deck)
+                    && let Some(route) = self.ui.lfos[deck.index()]
+                        .routes
+                        .get_mut(usize::from(route))
+                {
+                    match parameter {
+                        0 => route.enabled = update.value >= 0.5,
+                        1 => route.amount = update.value.clamp(-1.0, 1.0),
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
     fn request_thumbnail(&mut self, address: ClipAddress, path: PathBuf) {
@@ -759,6 +1296,10 @@ impl State {
         self.clips = ClipBank::default();
         self.ui.clear_thumbnails();
         self.thumbnail_requests.clear();
+        self.folder_pending.clear();
+        self.relink_pending.clear();
+        self.relink_active.clear();
+        self.folder_status.clear();
         self.live_configs = std::array::from_fn(|_| None);
         self.launches = LaunchQueue::default();
         self.restore_active = [None; 4];
@@ -786,11 +1327,18 @@ impl State {
             self.restore_transport[index] = deck_project.active_slot.map(|_| transport);
 
             for (slot, path) in deck_project.clips.iter().enumerate() {
-                let Some(path) = path.clone() else {
+                let address = ClipAddress { deck, slot };
+                let path = path.clone();
+                if let Some(path) = &path {
+                    self.clips.begin_restore(address, path.clone());
+                }
+                if let Some(playback) = deck_project.clip_playback.get(slot) {
+                    self.clips
+                        .set_playback(address, project::clip_playback_from_project(*playback));
+                }
+                let Some(path) = path else {
                     continue;
                 };
-                let address = ClipAddress { deck, slot };
-                self.clips.begin_restore(address, path.clone());
                 if let Err(request) = self.restorer.submit(ClipRestoreRequest {
                     address,
                     path,
@@ -922,13 +1470,24 @@ impl State {
             if result.project_epoch != self.project_epoch {
                 continue;
             }
+            let folder_result = self.folder_pending.remove(&result.address);
+            if self.clips.path(result.address) != Some(result.path.as_path()) {
+                if folder_result && self.folder_pending.is_empty() {
+                    self.folder_status = "Folder import complete".to_owned();
+                }
+                continue;
+            }
+            let relink_result = self.relink_pending.remove(&result.address);
+            let relink_active = self.relink_active.remove(&result.address);
             match result.metadata {
                 Ok(movie) => {
                     let address = result.address;
                     let duration = movie.duration.map(MediaTime::as_seconds);
                     self.clips.restore(address, movie);
                     self.request_thumbnail(address, result.path.clone());
-                    if self.restore_active[address.deck.index()] == Some(address.slot) {
+                    if relink_active
+                        || self.restore_active[address.deck.index()] == Some(address.slot)
+                    {
                         let desired = self.restore_transport[address.deck.index()].take();
                         self.launch_clip(address);
                         self.clips.select(ClipAddress {
@@ -943,11 +1502,30 @@ impl State {
                             }
                         }
                     }
+                    if relink_result {
+                        self.project_status = format!(
+                            "Relinked Deck {} slot {}",
+                            address.deck.label(),
+                            address.slot + 1
+                        );
+                    }
                 }
                 Err(error) => {
+                    let message = error.to_string();
                     self.clips
-                        .fail_restore(result.address, result.path, error.to_string());
+                        .fail_restore(result.address, result.path, message.clone());
+                    if relink_result {
+                        self.project_status = format!("Relink failed: {message}");
+                    }
                 }
+            }
+            if folder_result && self.folder_pending.is_empty() {
+                self.folder_status = "Folder import complete".to_owned();
+            } else if folder_result {
+                self.folder_status = format!(
+                    "Folder import · {} file(s) remaining",
+                    self.folder_pending.len()
+                );
             }
         }
     }
@@ -1011,7 +1589,12 @@ impl State {
                 .checked_add(MediaTime::new(micros, 1_000_000).ok()?)
                 .ok()
         });
-        self.decoders[index].load_at(path, decode_path, epoch, target);
+        let seek_to = if decode_path == oneiroi_media::DecodePath::FfmpegVideo {
+            target.and_then(|target| movie.keyframes.nearest_preceding(target))
+        } else {
+            None
+        };
+        self.decoders[index].load_indexed(path, decode_path, epoch, target, seek_to);
         self.last_transport_updates[index] = Instant::now();
     }
 
@@ -1024,6 +1607,7 @@ impl State {
             {
                 self.reset_playback(deck, media_generation);
             }
+            self.sync_clip_range(deck);
             let delta = now
                 .saturating_duration_since(self.last_transport_updates[index])
                 .as_secs_f64();
@@ -1104,17 +1688,49 @@ impl State {
         }
     }
 
+    fn sync_clip_range(&mut self, deck: DeckId) {
+        let Some(slot) = self.clips.active(deck) else {
+            return;
+        };
+        let address = ClipAddress { deck, slot };
+        let Some(movie) = self.clips.movie(address) else {
+            return;
+        };
+        let playback = self.clips.playback(address).unwrap_or_default();
+        let media_duration = movie.duration.map(MediaTime::as_seconds);
+        let (in_point, out_point) = playback.range(media_duration, self.ui.bpm);
+        let transport = &mut self.transports[deck.index()];
+        transport.in_point = in_point;
+        transport.duration = out_point;
+        if transport.position < in_point {
+            transport.position = in_point;
+            self.seek_deck(deck);
+        }
+    }
+
     fn render(&mut self) {
         self.poll_imports();
+        self.poll_folder_scans();
         self.poll_restores();
         self.poll_thumbnails();
         let now = Instant::now();
+        self.poll_midi(now);
         if now.saturating_duration_since(self.last_display_refresh) >= Duration::from_secs(2) {
             self.refresh_output_displays();
         }
         self.maybe_autosave(now);
         self.process_launches(now);
         self.update_playback(now);
+        if let Some(input) = &self.audio_input {
+            input.set_settings(self.ui.audio_analysis);
+            self.audio_snapshot = input.snapshot();
+            if self.audio_snapshot.callback_errors > 0 {
+                self.audio_status = format!(
+                    "Audio callback errors: {}",
+                    self.audio_snapshot.callback_errors
+                );
+            }
+        }
         let time = self.clock.tick(now);
         let project_dirty = self.project_dirty();
 
@@ -1136,13 +1752,28 @@ impl State {
                         .saturating_duration_since(self.performance_started)
                         .as_secs_f64(),
                     scheduler_stats: std::array::from_fn(|index| self.schedulers[index].stats()),
+                    frame_pool_stats: std::array::from_fn(|index| {
+                        self.decoders[index].frame_pool_stats()
+                    }),
                     frame_time: &time,
                     gpu_info: &self.gpu_info,
                     project_dirty,
                     project_status: &self.project_status,
+                    folder_status: &self.folder_status,
                     recovery_available: self.recovery_path.is_some(),
                     cameras: &self.cameras,
                     camera_status: &self.camera_status,
+                    audio_inputs: &self.audio_inputs,
+                    audio_status: &self.audio_status,
+                    audio_connected: self.audio_input.is_some(),
+                    audio_snapshot: self.audio_snapshot,
+                    midi: ui::MidiMetrics {
+                        inputs: &self.midi_inputs,
+                        status: &self.midi_status,
+                        connected: self.midi_input.is_some(),
+                        stats: self.midi_stats,
+                        mapper: &mut self.midi,
+                    },
                     output_displays: &self.output_displays,
                     output_health: ui::OutputHealthMetrics {
                         status: self.output_health.status,
@@ -1176,10 +1807,16 @@ impl State {
                 }
                 ui::UiAction::ClearSlot(address) => {
                     self.clips.clear(address);
+                    self.folder_pending.remove(&address);
+                    self.relink_pending.remove(&address);
+                    self.relink_active.remove(&address);
                     self.ui.clear_thumbnail(address);
                     self.thumbnail_requests.remove(&address);
                 }
+                ui::UiAction::BrowseRelink(address) => self.browse_relink(address),
                 ui::UiAction::Eject(deck) => {
+                    self.clips
+                        .remember_position(deck, self.transports[deck.index()].position);
                     self.mixer.eject(deck);
                     self.live_configs[deck.index()] = None;
                     self.clips.deactivate(deck);
@@ -1244,6 +1881,24 @@ impl State {
                     }
                 }
                 ui::UiAction::RefreshCameras => self.refresh_cameras(),
+                ui::UiAction::RefreshAudioInputs => self.refresh_audio_inputs(),
+                ui::UiAction::ConnectAudioInput(device_id) => {
+                    self.connect_audio_input(device_id);
+                }
+                ui::UiAction::DisconnectAudioInput => self.disconnect_audio_input(),
+                ui::UiAction::RefreshMidiInputs => self.refresh_midi_inputs(),
+                ui::UiAction::ConnectMidiInput(device_id) => {
+                    self.connect_midi_input(device_id);
+                }
+                ui::UiAction::DisconnectMidiInput => self.disconnect_midi_input(),
+                ui::UiAction::MidiLearn(target) => self.midi.learn(target),
+                ui::UiAction::MidiCancelLearn => self.midi.cancel_learn(),
+                ui::UiAction::MidiClearTarget(target) => self.midi.clear_target(target),
+                ui::UiAction::MidiRemoveBinding(index) => {
+                    if index < self.midi.bindings.len() {
+                        self.midi.bindings.remove(index);
+                    }
+                }
                 ui::UiAction::ConnectCamera {
                     deck,
                     device_id,
@@ -1309,7 +1964,19 @@ impl State {
                 output_aspect: self.ui.composition_extent[0] as f32
                     / self.ui.composition_extent[1].max(1) as f32,
                 effects: std::array::from_fn(|index| {
-                    self.ui.lfos[index].apply(self.ui.effects[index], effect_time, beat_position)
+                    let audio = self.audio_snapshot.analysis;
+                    self.ui.lfos[index].apply_with_audio(
+                        self.ui.effects[index],
+                        effect_time,
+                        beat_position,
+                        [
+                            audio.rms,
+                            audio.bass,
+                            audio.mid,
+                            audio.high,
+                            audio.transient,
+                        ],
+                    )
                 }),
                 master_opacity: self.ui.master_opacity,
                 time_seconds: effect_time,
@@ -1401,6 +2068,128 @@ impl State {
         // rather than spinning.
         self.window.request_redraw();
     }
+}
+
+fn deck_id(index: u8) -> Option<DeckId> {
+    DeckId::ALL.get(usize::from(index)).copied()
+}
+
+fn media_time_from_seconds(seconds: f64) -> Option<MediaTime> {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+    let micros = (seconds * 1_000_000.0).round();
+    if !(0.0..=i64::MAX as f64).contains(&micros) {
+        return None;
+    }
+    MediaTime::new(micros as i64, 1_000_000).ok()
+}
+
+fn current_control_value(
+    ui: &ui::UiState,
+    mixer: &FourDeckMixer,
+    transports: &[DeckTransport; 4],
+    target: ControlTarget,
+) -> f32 {
+    match target {
+        ControlTarget::Crossfader => ui.crossfader,
+        ControlTarget::MasterOpacity => ui.master_opacity,
+        ControlTarget::MasterBlackout => f32::from(ui.blackout),
+        ControlTarget::MasterFreeze => f32::from(ui.master_freeze),
+        ControlTarget::TapTempo => 0.0,
+        ControlTarget::DeckLevel(deck) => deck_id(deck)
+            .map(|deck| mixer.deck(deck).level)
+            .unwrap_or_default(),
+        ControlTarget::DeckPlay(deck) => deck_id(deck)
+            .map(|deck| f32::from(transports[deck.index()].playing))
+            .unwrap_or_default(),
+        ControlTarget::DeckFreeze(deck) => deck_id(deck)
+            .map(|deck| f32::from(transports[deck.index()].frozen))
+            .unwrap_or_default(),
+        ControlTarget::DeckSpeed(deck) => deck_id(deck)
+            .map(|deck| transports[deck.index()].speed)
+            .unwrap_or(1.0),
+        ControlTarget::DeckSelect(deck) => deck_id(deck)
+            .map(|deck| f32::from(mixer.selected() == deck))
+            .unwrap_or_default(),
+        ControlTarget::DeckRestart(_)
+        | ControlTarget::ClipLaunch { .. }
+        | ControlTarget::SceneLaunch(_) => 0.0,
+        ControlTarget::EffectParameter {
+            deck,
+            effect,
+            parameter: _,
+        } => deck_id(deck)
+            .map(|deck| effect_parameter(ui.effects[deck.index()], effect))
+            .unwrap_or_default(),
+        ControlTarget::LfoParameter {
+            deck,
+            lfo,
+            parameter,
+        } => deck_id(deck)
+            .and_then(|deck| ui.lfos[deck.index()].lanes.get(usize::from(lfo)))
+            .map(|lfo| match parameter {
+                0 => f32::from(lfo.enabled),
+                1 => lfo.rate_hz,
+                2 => lfo.depth,
+                3 => lfo.phase,
+                _ => 0.0,
+            })
+            .unwrap_or_default(),
+        ControlTarget::ModRouteParameter {
+            deck,
+            route,
+            parameter,
+        } => deck_id(deck)
+            .and_then(|deck| ui.lfos[deck.index()].routes.get(usize::from(route)))
+            .map(|route| match parameter {
+                0 => f32::from(route.enabled),
+                1 => route.amount,
+                _ => 0.0,
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn effect_parameter(effects: DeckEffects, effect: u8) -> f32 {
+    match effect {
+        0 => effects.hue,
+        1 => effects.contrast,
+        2 => effects.saturation,
+        3 => effects.black_level,
+        4 => effects.white_level,
+        5 => effects.gamma,
+        6 => effects.pixelate,
+        7 => effects.luma_key,
+        8 => effects.neon,
+        9 => effects.fractal,
+        10 => effects.jitter,
+        11 => effects.find_edges,
+        12 => effects.bit_reduction,
+        13 => effects.blacklight,
+        _ => 0.0,
+    }
+}
+
+fn set_effect_parameter(effects: &mut DeckEffects, effect: u8, value: f32) {
+    match effect {
+        0 => effects.hue = value,
+        1 => effects.contrast = value,
+        2 => effects.saturation = value,
+        3 => effects.black_level = value,
+        4 => effects.white_level = value,
+        5 => effects.gamma = value,
+        6 => effects.pixelate = value,
+        7 => effects.luma_key = value,
+        8 => effects.neon = value,
+        9 => effects.fractal = value,
+        10 => effects.jitter = value,
+        11 => effects.find_edges = value,
+        12 => effects.bit_reduction = value,
+        13 => effects.blacklight = value,
+        _ => {}
+    }
+    *effects = effects.sanitized();
 }
 
 fn monitor_id(monitor: &MonitorHandle) -> String {

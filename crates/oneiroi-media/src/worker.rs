@@ -9,7 +9,8 @@ use oneiroi_core::MediaTime;
 use oneiroi_hap::Decoder as HapDecoder;
 
 use crate::{
-    CameraConfig, DecodePath, FfmpegVideoDecoder, HapDemuxer, ScheduledFrame, VideoFramePayload,
+    CameraConfig, DecodePath, FfmpegVideoDecoder, FrameBufferPool, FramePoolStats, HapDemuxer,
+    ScheduledFrame, VideoFramePayload,
 };
 
 #[derive(Debug)]
@@ -19,6 +20,7 @@ enum DecoderCommand {
         decode_path: DecodePath,
         generation: u64,
         start_at: Option<MediaTime>,
+        seek_to: Option<MediaTime>,
     },
     Camera {
         config: CameraConfig,
@@ -35,26 +37,100 @@ pub enum DecoderEvent {
     Error { generation: u64, message: String },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecoderFailureInjection {
+    after_decoded_frames: u64,
+    message: String,
+}
+
+impl DecoderFailureInjection {
+    pub fn after_frames(after_decoded_frames: u64, message: impl Into<String>) -> Self {
+        Self {
+            after_decoded_frames,
+            message: message.into(),
+        }
+    }
+}
+
+struct ArmedDecoderFailure {
+    injection: DecoderFailureInjection,
+    generation: Option<u64>,
+    decoded_frames: u64,
+}
+
+impl ArmedDecoderFailure {
+    fn new(injection: DecoderFailureInjection) -> Self {
+        Self {
+            injection,
+            generation: None,
+            decoded_frames: 0,
+        }
+    }
+
+    fn arm(&mut self, generation: u64) {
+        if self.generation.is_none() {
+            self.generation = Some(generation);
+        }
+    }
+
+    fn record_frame(&mut self, generation: u64) {
+        if self.generation == Some(generation) {
+            self.decoded_frames = self.decoded_frames.saturating_add(1);
+        }
+    }
+
+    fn message_if_due(&self, generation: u64) -> Option<String> {
+        (self.generation == Some(generation)
+            && self.decoded_frames >= self.injection.after_decoded_frames)
+            .then(|| self.injection.message.clone())
+    }
+}
+
 pub struct DeckDecoder {
     commands: mpsc::Sender<DecoderCommand>,
     frames: Receiver<ScheduledFrame<VideoFramePayload>>,
     events: Receiver<DecoderEvent>,
+    frame_pool: FrameBufferPool,
     worker: Option<JoinHandle<()>>,
 }
 
 impl DeckDecoder {
     pub fn spawn(frame_capacity: usize) -> Self {
+        Self::spawn_internal(frame_capacity, None)
+    }
+
+    /// Creates a worker with a deterministic, one-shot decode failure.
+    ///
+    /// This is intended for failure-recovery and soak tests. The fault arms
+    /// against the first successfully opened generation and is consumed once
+    /// its decoded-frame threshold is reached.
+    pub fn spawn_with_failure(frame_capacity: usize, failure: DecoderFailureInjection) -> Self {
+        Self::spawn_internal(frame_capacity, Some(failure))
+    }
+
+    fn spawn_internal(frame_capacity: usize, failure: Option<DecoderFailureInjection>) -> Self {
         let (commands_tx, commands_rx) = mpsc::channel();
         let (frames_tx, frames_rx) = mpsc::sync_channel(frame_capacity.max(1));
         let (events_tx, events_rx) = mpsc::channel();
+        let frame_pool = FrameBufferPool::new(frame_capacity.saturating_add(4));
+        let worker_pool = frame_pool.clone();
         let worker = thread::Builder::new()
             .name("oneiroi-deck-decoder".to_owned())
-            .spawn(move || decoder_loop(commands_rx, frames_tx, events_tx))
+            .spawn(move || {
+                decoder_loop(
+                    commands_rx,
+                    frames_tx,
+                    events_tx,
+                    worker_pool,
+                    failure.map(ArmedDecoderFailure::new),
+                )
+            })
             .expect("spawn deck decoder");
         Self {
             commands: commands_tx,
             frames: frames_rx,
             events: events_rx,
+            frame_pool,
             worker: Some(worker),
         }
     }
@@ -75,11 +151,23 @@ impl DeckDecoder {
         generation: u64,
         start_at: Option<MediaTime>,
     ) {
+        self.load_indexed(path, decode_path, generation, start_at, None);
+    }
+
+    pub fn load_indexed(
+        &self,
+        path: PathBuf,
+        decode_path: DecodePath,
+        generation: u64,
+        start_at: Option<MediaTime>,
+        seek_to: Option<MediaTime>,
+    ) {
         let _ = self.commands.send(DecoderCommand::Load {
             path,
             decode_path,
             generation,
             start_at,
+            seek_to,
         });
     }
 
@@ -113,6 +201,10 @@ impl DeckDecoder {
         timeout: Duration,
     ) -> Result<DecoderEvent, mpsc::RecvTimeoutError> {
         self.events.recv_timeout(timeout)
+    }
+
+    pub fn frame_pool_stats(&self) -> FramePoolStats {
+        self.frame_pool.stats()
     }
 }
 
@@ -205,13 +297,22 @@ fn decoder_loop(
     commands: Receiver<DecoderCommand>,
     frames: SyncSender<ScheduledFrame<VideoFramePayload>>,
     events: mpsc::Sender<DecoderEvent>,
+    frame_pool: FrameBufferPool,
+    mut failure: Option<ArmedDecoderFailure>,
 ) {
     let mut session = None;
     let mut pending = None;
     loop {
         match commands.try_recv() {
             Ok(command) => {
-                if handle_command(command, &mut session, &mut pending, &events) {
+                if handle_command(
+                    command,
+                    &mut session,
+                    &mut pending,
+                    &events,
+                    &frame_pool,
+                    &mut failure,
+                ) {
                     break;
                 }
             }
@@ -222,8 +323,26 @@ fn decoder_loop(
         if pending.is_none()
             && let Some(active) = session.as_mut()
         {
+            let generation = active.generation();
+            if let Some(message) = failure
+                .as_ref()
+                .and_then(|failure| failure.message_if_due(generation))
+            {
+                failure = None;
+                let _ = events.send(DecoderEvent::Error {
+                    generation,
+                    message,
+                });
+                session = None;
+                continue;
+            }
             match active.next_frame() {
-                Ok(Some(frame)) => pending = Some(frame),
+                Ok(Some(frame)) => {
+                    if let Some(failure) = failure.as_mut() {
+                        failure.record_frame(generation);
+                    }
+                    pending = Some(frame);
+                }
                 Ok(None) => {
                     let generation = active.generation();
                     let _ = events.send(DecoderEvent::Ended { generation });
@@ -253,7 +372,14 @@ fn decoder_loop(
                     pending = Some(frame);
                     match commands.recv_timeout(Duration::from_millis(2)) {
                         Ok(command) => {
-                            if handle_command(command, &mut session, &mut pending, &events) {
+                            if handle_command(
+                                command,
+                                &mut session,
+                                &mut pending,
+                                &events,
+                                &frame_pool,
+                                &mut failure,
+                            ) {
                                 break;
                             }
                         }
@@ -266,7 +392,14 @@ fn decoder_loop(
         } else if session.is_none() {
             match commands.recv() {
                 Ok(command) => {
-                    if handle_command(command, &mut session, &mut pending, &events) {
+                    if handle_command(
+                        command,
+                        &mut session,
+                        &mut pending,
+                        &events,
+                        &frame_pool,
+                        &mut failure,
+                    ) {
                         break;
                     }
                 }
@@ -281,6 +414,8 @@ fn handle_command(
     session: &mut Option<Session>,
     pending: &mut Option<ScheduledFrame<VideoFramePayload>>,
     events: &mpsc::Sender<DecoderEvent>,
+    frame_pool: &FrameBufferPool,
+    failure: &mut Option<ArmedDecoderFailure>,
 ) -> bool {
     match command {
         DecoderCommand::Load {
@@ -288,6 +423,7 @@ fn handle_command(
             decode_path,
             generation,
             start_at,
+            seek_to,
         } => {
             *pending = None;
             let opened = match decode_path {
@@ -299,16 +435,21 @@ fn handle_command(
                         skip_before: start_at,
                     })
                     .map_err(|error| error.to_string()),
-                DecodePath::FfmpegVideo => FfmpegVideoDecoder::open(&path)
-                    .map(|decoder| Session::Ffmpeg {
-                        decoder,
-                        generation,
-                        skip_before: start_at,
-                    })
-                    .map_err(|error| error.to_string()),
+                DecodePath::FfmpegVideo => {
+                    { FfmpegVideoDecoder::open_at_with_pool(&path, seek_to, frame_pool.clone()) }
+                        .map(|decoder| Session::Ffmpeg {
+                            decoder,
+                            generation,
+                            skip_before: start_at,
+                        })
+                        .map_err(|error| error.to_string())
+                }
             };
             match opened {
                 Ok(opened) => {
+                    if let Some(failure) = failure.as_mut() {
+                        failure.arm(generation);
+                    }
                     *session = Some(opened);
                     let _ = events.send(DecoderEvent::Loaded { generation });
                 }
@@ -324,8 +465,11 @@ fn handle_command(
         }
         DecoderCommand::Camera { config, generation } => {
             *pending = None;
-            match FfmpegVideoDecoder::open_camera(&config) {
+            match FfmpegVideoDecoder::open_camera_with_pool(&config, frame_pool.clone()) {
                 Ok(decoder) => {
+                    if let Some(failure) = failure.as_mut() {
+                        failure.arm(generation);
+                    }
                     *session = Some(Session::Ffmpeg {
                         decoder,
                         generation,

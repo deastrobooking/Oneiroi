@@ -268,4 +268,25 @@ mod tests {
         ));
         assert_eq!(scheduler.stats().queue_full, 1);
     }
+
+    #[test]
+    fn accelerated_seek_soak_never_selects_an_obsolete_generation() {
+        const GENERATIONS: u64 = 10_000;
+        let mut scheduler = FrameScheduler::new(2, 0, DiscontinuityPolicy::Blank).unwrap();
+
+        for generation in 1..=GENERATIONS {
+            scheduler.activate_generation(generation);
+            scheduler.enqueue(frame(0, generation - 1)).unwrap();
+            scheduler.enqueue(frame(0, generation)).unwrap();
+
+            assert!(matches!(
+                scheduler.select(time(0)),
+                FrameSelection::Advanced(frame) if frame.generation == generation
+            ));
+            assert_eq!(scheduler.queued_len(), 0);
+        }
+
+        assert_eq!(scheduler.stats().invalidated, GENERATIONS);
+        assert_eq!(scheduler.stats().queue_full, 0);
+    }
 }

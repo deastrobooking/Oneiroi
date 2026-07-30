@@ -1,16 +1,17 @@
 use oneiroi_core::{
-    ControlTarget, MappingMode, MidiBinding, MidiMapper, MidiMessage, MidiMessageKind, Quantization,
+    AudioAnalysisSettings, ControlTarget, MappingMode, MidiBinding, MidiMapper, MidiMessage,
+    MidiMessageKind, Quantization,
 };
 use oneiroi_io::{
-    BlendModeProject, CameraProject, ControlTargetProject, CrossfadeBusProject, DeckProject,
-    EffectProject, EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject,
-    MappingModeProject, MidiMappingProject, MidiMessageProject, ModRouteProject, OutputProject,
-    ProjectFile, ProjectSettings, QuantizationProject, SourceModeProject, TransformProject,
-    TransportProject,
+    AudioAnalysisProject, BlendModeProject, CameraProject, ClipLaunchModeProject,
+    ClipPlaybackProject, ControlTargetProject, CrossfadeBusProject, DeckProject, EffectProject,
+    EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject,
+    MidiMappingProject, MidiMessageProject, ModRouteProject, OutputProject, ProjectFile,
+    ProjectSettings, QuantizationProject, SourceModeProject, TransformProject, TransportProject,
 };
 use oneiroi_media::{
-    CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipBank, CrossfadeBus, DeckId,
-    DeckTransport, EndMode, FourDeckMixer,
+    CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipLaunchMode,
+    ClipPlayback, CrossfadeBus, DeckId, DeckTransport, EndMode, FourDeckMixer,
 };
 use oneiroi_render::{
     DeckEffects, DeckLfos, DeckTransform, EffectLfo, EffectTarget, LayerBlendMode, LfoWaveform,
@@ -42,6 +43,7 @@ pub fn snapshot(
                 identify: ui.output_identify,
                 composition_extent: ui.composition_extent,
             },
+            audio_analysis: audio_analysis_to_project(ui.audio_analysis),
         },
         decks: DeckId::ALL
             .into_iter()
@@ -54,6 +56,15 @@ pub fn snapshot(
                             clips
                                 .path(ClipAddress { deck, slot })
                                 .map(ToOwned::to_owned)
+                        })
+                        .collect(),
+                    clip_playback: (0..CLIPS_PER_DECK)
+                        .map(|slot| {
+                            clip_playback_to_project(
+                                clips
+                                    .playback(ClipAddress { deck, slot })
+                                    .unwrap_or_default(),
+                            )
                         })
                         .collect(),
                     selected_slot: clips.selected(deck),
@@ -102,6 +113,30 @@ pub fn snapshot(
             .collect(),
         midi_mappings: midi.bindings.iter().map(midi_to_project).collect(),
         ..ProjectFile::default()
+    }
+}
+
+pub fn clip_playback_from_project(playback: ClipPlaybackProject) -> ClipPlayback {
+    ClipPlayback {
+        in_point: playback.in_point,
+        out_point: playback.out_point,
+        launch_mode: match playback.launch_mode {
+            ClipLaunchModeProject::Restart => ClipLaunchMode::Restart,
+            ClipLaunchModeProject::Resume => ClipLaunchMode::Resume,
+        },
+        beat_duration: playback.beat_duration,
+    }
+}
+
+fn clip_playback_to_project(playback: ClipPlayback) -> ClipPlaybackProject {
+    ClipPlaybackProject {
+        in_point: playback.in_point,
+        out_point: playback.out_point,
+        launch_mode: match playback.launch_mode {
+            ClipLaunchMode::Restart => ClipLaunchModeProject::Restart,
+            ClipLaunchMode::Resume => ClipLaunchModeProject::Resume,
+        },
+        beat_duration: playback.beat_duration,
     }
 }
 
@@ -155,6 +190,7 @@ pub fn apply_master(project: &ProjectFile, ui: &mut UiState) {
     ui.output_identify = project.settings.output.identify;
     ui.composition_extent = project.settings.output.composition_extent;
     ui.custom_composition_extent = project.settings.output.composition_extent;
+    ui.audio_analysis = audio_analysis_from_project(project.settings.audio_analysis);
     ui.blackout = false;
     ui.master_freeze = false;
 }
@@ -194,7 +230,36 @@ pub fn apply_deck(
         speed: project.transport.speed,
         position: project.transport.position.max(0.0),
         duration: None,
+        in_point: 0.0,
     }
+}
+
+fn audio_analysis_to_project(settings: AudioAnalysisSettings) -> AudioAnalysisProject {
+    let settings = settings.sanitized();
+    AudioAnalysisProject {
+        gain: settings.gain,
+        noise_floor: settings.noise_floor,
+        attack_ms: settings.attack_ms,
+        release_ms: settings.release_ms,
+        transient_sensitivity: settings.transient_sensitivity,
+        normalization: settings.normalization,
+        normalization_target: settings.normalization_target,
+        normalization_speed_ms: settings.normalization_speed_ms,
+    }
+}
+
+fn audio_analysis_from_project(settings: AudioAnalysisProject) -> AudioAnalysisSettings {
+    AudioAnalysisSettings {
+        gain: settings.gain,
+        noise_floor: settings.noise_floor,
+        attack_ms: settings.attack_ms,
+        release_ms: settings.release_ms,
+        transient_sensitivity: settings.transient_sensitivity,
+        normalization: settings.normalization,
+        normalization_target: settings.normalization_target,
+        normalization_speed_ms: settings.normalization_speed_ms,
+    }
+    .sanitized()
 }
 
 fn blend_mode_to_project(mode: LayerBlendMode) -> BlendModeProject {
@@ -426,6 +491,8 @@ fn midi_to_project(binding: &MidiBinding) -> MidiMappingProject {
             MappingMode::Continuous => MappingModeProject::Continuous,
             MappingMode::Momentary => MappingModeProject::Momentary,
             MappingMode::Toggle => MappingModeProject::Toggle,
+            MappingMode::RelativeBinaryOffset => MappingModeProject::RelativeBinaryOffset,
+            MappingMode::RelativeTwosComplement => MappingModeProject::RelativeTwosComplement,
         },
         soft_takeover: binding.soft_takeover,
         feedback: None,
@@ -461,6 +528,8 @@ fn midi_from_project(mapping: &MidiMappingProject) -> MidiBinding {
         MappingModeProject::Continuous => MappingMode::Continuous,
         MappingModeProject::Momentary => MappingMode::Momentary,
         MappingModeProject::Toggle => MappingMode::Toggle,
+        MappingModeProject::RelativeBinaryOffset => MappingMode::RelativeBinaryOffset,
+        MappingModeProject::RelativeTwosComplement => MappingMode::RelativeTwosComplement,
     };
     binding.soft_takeover = mapping.soft_takeover;
     binding
@@ -471,10 +540,16 @@ fn target_to_project(target: ControlTarget) -> ControlTargetProject {
         ControlTarget::Crossfader => ControlTargetProject::Crossfader,
         ControlTarget::MasterOpacity => ControlTargetProject::MasterOpacity,
         ControlTarget::MasterBlackout => ControlTargetProject::MasterBlackout,
+        ControlTarget::MasterFreeze => ControlTargetProject::MasterFreeze,
+        ControlTarget::TapTempo => ControlTargetProject::TapTempo,
         ControlTarget::DeckLevel(deck) => ControlTargetProject::DeckLevel { deck },
         ControlTarget::DeckPlay(deck) => ControlTargetProject::DeckPlay { deck },
         ControlTarget::DeckFreeze(deck) => ControlTargetProject::DeckFreeze { deck },
         ControlTarget::DeckSpeed(deck) => ControlTargetProject::DeckSpeed { deck },
+        ControlTarget::DeckSelect(deck) => ControlTargetProject::DeckSelect { deck },
+        ControlTarget::DeckRestart(deck) => ControlTargetProject::DeckRestart { deck },
+        ControlTarget::ClipLaunch { deck, slot } => ControlTargetProject::ClipLaunch { deck, slot },
+        ControlTarget::SceneLaunch(slot) => ControlTargetProject::SceneLaunch { slot },
         ControlTarget::EffectParameter {
             deck,
             effect,
@@ -482,6 +557,24 @@ fn target_to_project(target: ControlTarget) -> ControlTargetProject {
         } => ControlTargetProject::EffectParameter {
             deck,
             effect,
+            parameter,
+        },
+        ControlTarget::LfoParameter {
+            deck,
+            lfo,
+            parameter,
+        } => ControlTargetProject::LfoParameter {
+            deck,
+            lfo,
+            parameter,
+        },
+        ControlTarget::ModRouteParameter {
+            deck,
+            route,
+            parameter,
+        } => ControlTargetProject::ModRouteParameter {
+            deck,
+            route,
             parameter,
         },
     }
@@ -492,10 +585,16 @@ fn target_from_project(target: ControlTargetProject) -> ControlTarget {
         ControlTargetProject::Crossfader => ControlTarget::Crossfader,
         ControlTargetProject::MasterOpacity => ControlTarget::MasterOpacity,
         ControlTargetProject::MasterBlackout => ControlTarget::MasterBlackout,
+        ControlTargetProject::MasterFreeze => ControlTarget::MasterFreeze,
+        ControlTargetProject::TapTempo => ControlTarget::TapTempo,
         ControlTargetProject::DeckLevel { deck } => ControlTarget::DeckLevel(deck),
         ControlTargetProject::DeckPlay { deck } => ControlTarget::DeckPlay(deck),
         ControlTargetProject::DeckFreeze { deck } => ControlTarget::DeckFreeze(deck),
         ControlTargetProject::DeckSpeed { deck } => ControlTarget::DeckSpeed(deck),
+        ControlTargetProject::DeckSelect { deck } => ControlTarget::DeckSelect(deck),
+        ControlTargetProject::DeckRestart { deck } => ControlTarget::DeckRestart(deck),
+        ControlTargetProject::ClipLaunch { deck, slot } => ControlTarget::ClipLaunch { deck, slot },
+        ControlTargetProject::SceneLaunch { slot } => ControlTarget::SceneLaunch(slot),
         ControlTargetProject::EffectParameter {
             deck,
             effect,
@@ -503,6 +602,24 @@ fn target_from_project(target: ControlTargetProject) -> ControlTarget {
         } => ControlTarget::EffectParameter {
             deck,
             effect,
+            parameter,
+        },
+        ControlTargetProject::LfoParameter {
+            deck,
+            lfo,
+            parameter,
+        } => ControlTarget::LfoParameter {
+            deck,
+            lfo,
+            parameter,
+        },
+        ControlTargetProject::ModRouteParameter {
+            deck,
+            route,
+            parameter,
+        } => ControlTarget::ModRouteParameter {
+            deck,
+            route,
             parameter,
         },
     }
@@ -521,5 +638,40 @@ mod tests {
         assert!(!is_dirty(&current, Some(&saved)));
         current.decks[0].level = 0.5;
         assert!(is_dirty(&current, Some(&saved)));
+    }
+
+    #[test]
+    fn extended_midi_target_and_relative_mode_round_trip() {
+        let mut binding = MidiBinding::learned(
+            "controller",
+            MidiMessage::ControlChange {
+                channel: 3,
+                controller: 21,
+                value: 65,
+            },
+            ControlTarget::ModRouteParameter {
+                deck: 1,
+                route: 6,
+                parameter: 1,
+            },
+        );
+        binding.mode = MappingMode::RelativeBinaryOffset;
+        binding.output_range = [-1.0, 1.0];
+        binding.soft_takeover = true;
+        assert_eq!(midi_from_project(&midi_to_project(&binding)), binding);
+    }
+
+    #[test]
+    fn clip_playback_project_conversion_preserves_trim_and_launch_mode() {
+        let playback = ClipPlayback {
+            in_point: 2.5,
+            out_point: Some(14.0),
+            launch_mode: ClipLaunchMode::Resume,
+            beat_duration: Some(16.0),
+        };
+        assert_eq!(
+            clip_playback_from_project(clip_playback_to_project(playback)),
+            playback
+        );
     }
 }

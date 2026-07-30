@@ -59,6 +59,7 @@ impl CameraConfig {
             decode_path: DecodePath::FfmpegVideo,
             health: MediaHealth::Usable,
             health_reason: "Live camera feed; latency depends on capture hardware.".to_owned(),
+            keyframes: crate::KeyframeIndex::default(),
         }
     }
 }

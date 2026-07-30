@@ -1,6 +1,6 @@
 # Application review
 
-Review date: 2026-07-29
+Review date: 2026-07-30
 
 ## Executive assessment
 
@@ -37,6 +37,22 @@ remains before the milestone is stage-certified.
 ### Performance workflow
 
 - Four decks and 32 persistent slots are functional.
+- Every successfully preloaded slot retains a bounded first-frame launch
+  preview, avoiding a blank deck while full decoding starts.
+- Per-slot trim, restart/resume launch mode and musical beat duration now feed
+  the same generation-safe transport and seek path.
+- Conventional clips build capped keyframe indexes and reopen from a preceding
+  anchor before exact-target frame discard.
+- Conventional RGBA frames now use per-deck reusable leases with observable
+  steady-state allocation/reuse behavior.
+- Bounded recursive folder import deterministically fills available slots and
+  reuses the independent probe/preload pipeline.
+- Native per-slot relinking preserves playback settings, records the selected
+  path immediately and rejects superseded or cross-project probe results.
+- Generation-scoped decoder failure injection proves mid-stream error
+  reporting and recovery. Accelerated lease, seek-generation and real FFmpeg
+  reopen soaks enforce bounded allocations and stale-frame rejection; an
+  opt-in 10,000-reopen target is available for release candidates.
 - Scene launch, quantization, tempo, transport, effects, LFOs and modulation
   routes form a coherent playable instrument.
 - Save, autosave, recovery and asynchronous restoration are already integrated.
@@ -45,7 +61,8 @@ remains before the milestone is stage-certified.
 
 - Project values are validated before application.
 - Version-one projects migrate to the current version-two schema.
-- The workspace currently passes 89 tests and strict Clippy.
+- The workspace currently passes 128 tests and strict Clippy, with one extended
+  decoder soak available as an opt-in ignored test.
 
 ## Stage-critical gaps
 
@@ -61,17 +78,22 @@ available. Exact surface errors, recovery and topology changes are now visible
 in the operator UI. Remaining work: stronger identity across topology changes
 and show-machine soak testing.
 
-### 2. Control and audio models are not connected to hardware
+### 2. Physical I/O still needs show-machine validation
 
-MIDI mapping state is device-neutral only. Audio has no capture or analysis
-adapter. The modulation matrix is architecturally ready for more source types,
-but only LFO sources exist.
+MIDI and audio now both have native input capture, bounded queues, diagnostics
+and safe missing-device behavior. MIDI adds automatic known-controller
+reconnection and a complete learn/mapping editor. Both paths still require
+permission, disconnect/reconnect and long-duration testing with physical
+interfaces on the target show machine. MIDI output feedback and clock are not
+implemented.
 
 ### 3. Operational diagnostics are too shallow
 
-FPS and aggregate dropped/repeated/late counts are visible, but there is no GPU
-timing, upload timing, queue occupancy, per-deck decoder health, audio status,
-MIDI status or output-display status.
+FPS, aggregate dropped/repeated/late counts, audio status, MIDI
+received/dropped/parse counts and output-display health are visible. GPU
+timing, upload timing, explicit queue occupancy and detailed per-deck decoder
+timing remain absent. RGBA lease allocation/reuse/live/discard counters are
+now visible.
 
 ## Engineering risks
 
@@ -122,7 +144,7 @@ checkpoint and module seams
     -> dedicated program output
     -> true bus composition and layer transforms
     -> audio-reactive matrix sources
-    -> physical MIDI
+    -> physical MIDI/audio soak validation
     -> clip/media hardening
     -> effect-chain generalization
     -> packaging and soak testing

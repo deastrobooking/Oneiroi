@@ -22,7 +22,7 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
 fn solid(pixel: [u8; 4]) -> VideoFramePayload {
     VideoFramePayload::Rgba8(RgbaFrame {
         extent: [SIZE, SIZE],
-        data: pixel.repeat((SIZE * SIZE) as usize),
+        data: pixel.repeat((SIZE * SIZE) as usize).into(),
     })
 }
 
@@ -40,7 +40,7 @@ fn pattern() -> VideoFramePayload {
     }
     VideoFramePayload::Rgba8(RgbaFrame {
         extent: [SIZE, SIZE],
-        data,
+        data: data.into(),
     })
 }
 
@@ -58,7 +58,7 @@ fn wide_pattern() -> VideoFramePayload {
     }
     VideoFramePayload::Rgba8(RgbaFrame {
         extent: [SIZE, 2],
-        data,
+        data: data.into(),
     })
 }
 

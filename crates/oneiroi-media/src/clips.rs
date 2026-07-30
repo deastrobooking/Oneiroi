@@ -17,11 +17,88 @@ pub struct ClipAddress {
     pub slot: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ClipLaunchMode {
+    #[default]
+    Restart,
+    Resume,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClipPlayback {
+    pub in_point: f64,
+    pub out_point: Option<f64>,
+    pub launch_mode: ClipLaunchMode,
+    /// Optional musical length in beats, measured from the in point.
+    pub beat_duration: Option<f64>,
+}
+
+impl Default for ClipPlayback {
+    fn default() -> Self {
+        Self {
+            in_point: 0.0,
+            out_point: None,
+            launch_mode: ClipLaunchMode::Restart,
+            beat_duration: None,
+        }
+    }
+}
+
+impl ClipPlayback {
+    pub fn sanitized(self, media_duration: Option<f64>) -> Self {
+        let maximum = media_duration
+            .filter(|duration| duration.is_finite() && *duration > 0.0)
+            .unwrap_or(f64::MAX);
+        let maximum_in = if maximum == f64::MAX {
+            maximum
+        } else {
+            (maximum - 0.000_001).max(0.0)
+        };
+        let in_point = if self.in_point.is_finite() {
+            self.in_point.clamp(0.0, maximum_in)
+        } else {
+            0.0
+        };
+        let out_point = self.out_point.filter(|out| out.is_finite()).map(|out| {
+            out.clamp(
+                (in_point + 0.000_001).min(maximum),
+                maximum.max(in_point + 0.000_001),
+            )
+        });
+        let beat_duration = self
+            .beat_duration
+            .filter(|beats| beats.is_finite() && *beats > 0.0)
+            .map(|beats| beats.clamp(0.0625, 256.0));
+        Self {
+            in_point,
+            out_point,
+            launch_mode: self.launch_mode,
+            beat_duration,
+        }
+    }
+
+    pub fn range(self, media_duration: Option<f64>, bpm: f64) -> (f64, Option<f64>) {
+        let playback = self.sanitized(media_duration);
+        let musical_out = playback
+            .beat_duration
+            .filter(|_| bpm.is_finite() && bpm > 0.0)
+            .map(|beats| playback.in_point + beats * 60.0 / bpm);
+        let end = [playback.out_point, musical_out, media_duration]
+            .into_iter()
+            .flatten()
+            .filter(|end| end.is_finite() && *end > playback.in_point)
+            .reduce(f64::min);
+        (playback.in_point, end)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ClipSlot {
     pub movie: Option<MovieMetadata>,
     pub pending_path: Option<PathBuf>,
     pub error: Option<String>,
+    pub playback: ClipPlayback,
+    resume_position: f64,
 }
 
 pub struct ClipBank {
@@ -77,6 +154,14 @@ impl ClipBank {
     }
 
     pub fn assign(&mut self, address: ClipAddress, movie: MovieMetadata) -> bool {
+        if let Some(slot) = self
+            .slots
+            .get_mut(address.deck.index())
+            .and_then(|row| row.get_mut(address.slot))
+        {
+            slot.playback = ClipPlayback::default();
+            slot.resume_position = 0.0;
+        }
         if !self.restore(address, movie) {
             return false;
         }
@@ -110,7 +195,88 @@ impl ClipBank {
             .or(slot.pending_path.as_deref())
     }
 
+    pub fn available_slots_from(&self, start: ClipAddress, limit: usize) -> Vec<ClipAddress> {
+        let start_index = start.deck.index() * CLIPS_PER_DECK + start.slot.min(CLIPS_PER_DECK - 1);
+        (0..4 * CLIPS_PER_DECK)
+            .map(|offset| (start_index + offset) % (4 * CLIPS_PER_DECK))
+            .map(|index| ClipAddress {
+                deck: DeckId::ALL[index / CLIPS_PER_DECK],
+                slot: index % CLIPS_PER_DECK,
+            })
+            .filter(|address| self.path(*address).is_none())
+            .take(limit)
+            .collect()
+    }
+
+    pub fn playback(&self, address: ClipAddress) -> Option<ClipPlayback> {
+        self.slot(address).map(|slot| slot.playback)
+    }
+
+    pub fn set_playback(&mut self, address: ClipAddress, playback: ClipPlayback) -> bool {
+        let Some(slot) = self
+            .slots
+            .get_mut(address.deck.index())
+            .and_then(|row| row.get_mut(address.slot))
+        else {
+            return false;
+        };
+        let duration = slot
+            .movie
+            .as_ref()
+            .and_then(|movie| movie.duration)
+            .map(oneiroi_core::MediaTime::as_seconds);
+        slot.playback = playback.sanitized(duration);
+        true
+    }
+
+    pub fn remember_position(&mut self, deck: DeckId, position: f64) {
+        let Some(slot_index) = self.active[deck.index()] else {
+            return;
+        };
+        let Some(slot) = self.slots[deck.index()].get_mut(slot_index) else {
+            return;
+        };
+        if position.is_finite() {
+            slot.resume_position = position.max(0.0);
+        }
+    }
+
+    pub fn launch_position(
+        &self,
+        address: ClipAddress,
+        media_duration: Option<f64>,
+        bpm: f64,
+    ) -> Option<f64> {
+        let slot = self.slot(address)?;
+        let (start, end) = slot.playback.range(media_duration, bpm);
+        let position = match slot.playback.launch_mode {
+            ClipLaunchMode::Restart => start,
+            ClipLaunchMode::Resume => slot.resume_position,
+        };
+        Some(match end {
+            Some(end) if position >= end => start,
+            Some(end) => position.clamp(start, end),
+            None => position.max(start),
+        })
+    }
+
     pub fn begin_restore(&mut self, address: ClipAddress, path: PathBuf) -> bool {
+        let Some(slot) = self
+            .slots
+            .get_mut(address.deck.index())
+            .and_then(|row| row.get_mut(address.slot))
+        else {
+            return false;
+        };
+        slot.movie = None;
+        slot.pending_path = Some(path);
+        slot.error = None;
+        slot.playback = ClipPlayback::default();
+        slot.resume_position = 0.0;
+        true
+    }
+
+    pub fn begin_relink(&mut self, address: ClipAddress, path: PathBuf) -> bool {
         let Some(slot) = self
             .slots
             .get_mut(address.deck.index())
@@ -320,6 +486,7 @@ mod tests {
             decode_path: DecodePath::FfmpegVideo,
             health: MediaHealth::Caution,
             health_reason: String::new(),
+            keyframes: crate::KeyframeIndex::default(),
         }
     }
 
@@ -387,5 +554,113 @@ mod tests {
             bank.slot(address).unwrap().error.as_deref(),
             Some("not found")
         );
+    }
+
+    #[test]
+    fn clip_range_combines_trim_media_and_musical_duration() {
+        let playback = ClipPlayback {
+            in_point: 2.0,
+            out_point: Some(12.0),
+            beat_duration: Some(8.0),
+            ..ClipPlayback::default()
+        };
+        assert_eq!(playback.range(Some(20.0), 120.0), (2.0, Some(6.0)));
+        assert_eq!(playback.range(Some(5.0), 60.0), (2.0, Some(5.0)));
+    }
+
+    #[test]
+    fn resume_launch_uses_the_remembered_position() {
+        let mut bank = ClipBank::default();
+        let address = ClipAddress {
+            deck: DeckId::A,
+            slot: 2,
+        };
+        bank.assign(address, movie("clip.mov"));
+        bank.set_playback(
+            address,
+            ClipPlayback {
+                in_point: 1.0,
+                out_point: Some(8.0),
+                launch_mode: ClipLaunchMode::Resume,
+                beat_duration: None,
+            },
+        );
+        bank.activate(address);
+        bank.remember_position(DeckId::A, 4.5);
+        assert_eq!(bank.launch_position(address, Some(10.0), 120.0), Some(4.5));
+    }
+
+    #[test]
+    fn trim_is_clamped_inside_known_media_duration() {
+        let playback = ClipPlayback {
+            in_point: 99.0,
+            out_point: Some(120.0),
+            ..ClipPlayback::default()
+        }
+        .sanitized(Some(10.0));
+        assert!(playback.in_point < 10.0);
+        assert_eq!(playback.out_point, Some(10.0));
+    }
+
+    #[test]
+    fn available_slots_wrap_from_selection_and_skip_occupied_slots() {
+        let mut bank = ClipBank::default();
+        bank.assign(
+            ClipAddress {
+                deck: DeckId::D,
+                slot: 7,
+            },
+            movie("occupied.mov"),
+        );
+        let slots = bank.available_slots_from(
+            ClipAddress {
+                deck: DeckId::D,
+                slot: 6,
+            },
+            3,
+        );
+        assert_eq!(
+            slots,
+            [
+                ClipAddress {
+                    deck: DeckId::D,
+                    slot: 6
+                },
+                ClipAddress {
+                    deck: DeckId::A,
+                    slot: 0
+                },
+                ClipAddress {
+                    deck: DeckId::A,
+                    slot: 1
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn relink_preserves_clip_playback_settings() {
+        let mut bank = ClipBank::default();
+        let address = ClipAddress {
+            deck: DeckId::B,
+            slot: 3,
+        };
+        bank.assign(address, movie("old.mov"));
+        let playback = ClipPlayback {
+            in_point: 1.0,
+            out_point: Some(7.0),
+            launch_mode: ClipLaunchMode::Resume,
+            beat_duration: Some(8.0),
+        };
+        bank.set_playback(address, playback);
+        bank.begin_relink(address, PathBuf::from("new.mov"));
+        assert_eq!(bank.path(address), Some(Path::new("new.mov")));
+        assert_eq!(bank.playback(address), Some(playback));
+        assert!(bank.movie(address).is_none());
+
+        bank.begin_relink(address, PathBuf::from("newer.mov"));
+        assert_ne!(bank.path(address), Some(Path::new("new.mov")));
+        assert_eq!(bank.path(address), Some(Path::new("newer.mov")));
+        assert_eq!(bank.playback(address), Some(playback));
     }
 }

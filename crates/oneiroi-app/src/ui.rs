@@ -7,10 +7,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use oneiroi_core::{FrameTime, Quantization, TempoClock};
+use oneiroi_core::{
+    AudioAnalysisSettings, ControlTarget, FrameTime, MappingMode, MidiMapper, Quantization,
+    TempoClock,
+};
+use oneiroi_io::{AudioInputDevice, AudioInputSnapshot, MidiInputDevice, MidiInputStats};
 use oneiroi_media::{
-    CLIPS_PER_DECK, CameraDevice, ClipAddress, ClipBank, CrossfadeBus, DeckId, DeckState,
-    DeckTransport, EndMode, FourDeckMixer, LaunchQueue, MediaHealth,
+    CLIPS_PER_DECK, CameraDevice, ClipAddress, ClipBank, ClipLaunchMode, CrossfadeBus, DeckId,
+    DeckState, DeckTransport, EndMode, FourDeckMixer, LaunchQueue, MediaHealth,
 };
 use oneiroi_render::{
     DeckEffects, DeckLfos, DeckTransform, EffectTarget, LayerBlendMode, LfoWaveform, SourceMode,
@@ -43,6 +47,10 @@ pub struct UiState {
     pub camera_width: u32,
     pub camera_height: u32,
     pub camera_fps: u32,
+    pub audio_device_id: String,
+    pub audio_analysis: AudioAnalysisSettings,
+    pub midi_device_id: String,
+    pub midi_target: ControlTarget,
     thumbnails: HashMap<ClipAddress, CachedThumbnail>,
     thumbnail_failures: HashMap<ClipAddress, (PathBuf, String)>,
     fps: FpsMeter,
@@ -76,6 +84,10 @@ impl Default for UiState {
             camera_width: 1280,
             camera_height: 720,
             camera_fps: 30,
+            audio_device_id: String::new(),
+            audio_analysis: AudioAnalysisSettings::default(),
+            midi_device_id: String::new(),
+            midi_target: ControlTarget::Crossfader,
             thumbnails: HashMap::new(),
             thumbnail_failures: HashMap::new(),
             fps: FpsMeter::default(),
@@ -86,6 +98,7 @@ impl Default for UiState {
 struct CachedThumbnail {
     path: PathBuf,
     texture: egui::TextureHandle,
+    preload: oneiroi_media::RgbaFrame,
 }
 
 impl UiState {
@@ -106,8 +119,14 @@ impl UiState {
             image,
             egui::TextureOptions::LINEAR,
         );
-        self.thumbnails
-            .insert(address, CachedThumbnail { path, texture });
+        self.thumbnails.insert(
+            address,
+            CachedThumbnail {
+                path,
+                texture,
+                preload: thumbnail.preload,
+            },
+        );
         self.thumbnail_failures.remove(&address);
     }
 
@@ -129,6 +148,19 @@ impl UiState {
     fn thumbnail(&self, address: ClipAddress, path: Option<&Path>) -> Option<&egui::TextureHandle> {
         let cached = self.thumbnails.get(&address)?;
         (Some(cached.path.as_path()) == path).then_some(&cached.texture)
+    }
+
+    pub fn preloaded_frame(
+        &self,
+        address: ClipAddress,
+        path: Option<&Path>,
+    ) -> Option<&oneiroi_media::RgbaFrame> {
+        let cached = self.thumbnails.get(&address)?;
+        (Some(cached.path.as_path()) == path).then_some(&cached.preload)
+    }
+
+    fn preloaded_count(&self) -> usize {
+        self.thumbnails.len()
     }
 
     fn thumbnail_failure(&self, address: ClipAddress, path: Option<&Path>) -> Option<&str> {
@@ -174,6 +206,7 @@ pub enum UiAction {
     Launch(ClipAddress),
     LaunchScene(usize),
     ClearSlot(ClipAddress),
+    BrowseRelink(ClipAddress),
     Eject(DeckId),
     SaveProject,
     OpenProject,
@@ -187,6 +220,16 @@ pub enum UiAction {
     SetCompositionExtent([u32; 2]),
     RefreshDisplays,
     RefreshCameras,
+    RefreshAudioInputs,
+    ConnectAudioInput(String),
+    DisconnectAudioInput,
+    RefreshMidiInputs,
+    ConnectMidiInput(String),
+    DisconnectMidiInput,
+    MidiLearn(ControlTarget),
+    MidiCancelLearn,
+    MidiClearTarget(ControlTarget),
+    MidiRemoveBinding(usize),
     ConnectCamera {
         deck: DeckId,
         device_id: String,
@@ -220,15 +263,30 @@ pub struct PerformanceMetrics<'a> {
     pub tempo: TempoClock,
     pub now_seconds: f64,
     pub scheduler_stats: [oneiroi_media::SchedulerStats; 4],
+    pub frame_pool_stats: [oneiroi_media::FramePoolStats; 4],
     pub frame_time: &'a FrameTime,
     pub gpu_info: &'a str,
     pub project_dirty: bool,
     pub project_status: &'a str,
+    pub folder_status: &'a str,
     pub recovery_available: bool,
     pub cameras: &'a [CameraDevice],
     pub camera_status: &'a str,
+    pub audio_inputs: &'a [AudioInputDevice],
+    pub audio_status: &'a str,
+    pub audio_connected: bool,
+    pub audio_snapshot: AudioInputSnapshot,
+    pub midi: MidiMetrics<'a>,
     pub output_displays: &'a [OutputDisplay],
     pub output_health: OutputHealthMetrics<'a>,
+}
+
+pub struct MidiMetrics<'a> {
+    pub inputs: &'a [MidiInputDevice],
+    pub status: &'a str,
+    pub connected: bool,
+    pub stats: MidiInputStats,
+    pub mapper: &'a mut MidiMapper,
 }
 
 pub fn draw(
@@ -238,7 +296,7 @@ pub fn draw(
     clips: &mut ClipBank,
     launches: &LaunchQueue,
     transports: &mut [DeckTransport; 4],
-    metrics: PerformanceMetrics<'_>,
+    mut metrics: PerformanceMetrics<'_>,
 ) -> Vec<UiAction> {
     state.fps.push(metrics.frame_time.delta);
     let mut actions = Vec::new();
@@ -474,6 +532,125 @@ pub fn draw(
                     ui.weak(metrics.camera_status);
                 }
             });
+            ui.horizontal(|ui| {
+                ui.label("Audio");
+                let selected = metrics
+                    .audio_inputs
+                    .iter()
+                    .find(|device| device.id == state.audio_device_id)
+                    .map_or("No input selected", |device| device.label.as_str());
+                egui::ComboBox::from_id_salt("audio-input-device")
+                    .selected_text(selected)
+                    .show_ui(ui, |ui| {
+                        for device in metrics.audio_inputs {
+                            ui.selectable_value(
+                                &mut state.audio_device_id,
+                                device.id.clone(),
+                                if device.is_default {
+                                    format!("{} · default", device.label)
+                                } else {
+                                    device.label.clone()
+                                },
+                            );
+                        }
+                    });
+                if ui.button("Refresh audio").clicked() {
+                    actions.push(UiAction::RefreshAudioInputs);
+                }
+                if metrics.audio_connected {
+                    if ui.button("Disconnect").clicked() {
+                        actions.push(UiAction::DisconnectAudioInput);
+                    }
+                } else if ui
+                    .add_enabled(
+                        !state.audio_device_id.is_empty(),
+                        egui::Button::new("Connect"),
+                    )
+                    .clicked()
+                {
+                    actions.push(UiAction::ConnectAudioInput(state.audio_device_id.clone()));
+                }
+                ui.weak(metrics.audio_status);
+            });
+            egui::CollapsingHeader::new("Audio analysis")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::Slider::new(&mut state.audio_analysis.gain, 0.0..=16.0)
+                                .text("gain"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut state.audio_analysis.noise_floor, 0.0..=0.5)
+                                .text("noise floor"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut state.audio_analysis.attack_ms, 1.0..=2_000.0)
+                                .text("attack ms")
+                                .logarithmic(true),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut state.audio_analysis.release_ms, 1.0..=5_000.0)
+                                .text("release ms")
+                                .logarithmic(true),
+                        );
+                        ui.add(
+                            egui::Slider::new(
+                                &mut state.audio_analysis.transient_sensitivity,
+                                0.0..=16.0,
+                            )
+                            .text("transient"),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.checkbox(
+                            &mut state.audio_analysis.normalization,
+                            "Adaptive normalization",
+                        );
+                        ui.add_enabled_ui(state.audio_analysis.normalization, |ui| {
+                            ui.add(
+                                egui::Slider::new(
+                                    &mut state.audio_analysis.normalization_target,
+                                    0.05..=1.0,
+                                )
+                                .text("target RMS"),
+                            );
+                            ui.add(
+                                egui::Slider::new(
+                                    &mut state.audio_analysis.normalization_speed_ms,
+                                    10.0..=10_000.0,
+                                )
+                                .text("adapt ms")
+                                .logarithmic(true),
+                            );
+                        });
+                    });
+                    state.audio_analysis = state.audio_analysis.sanitized();
+                    let snapshot = metrics.audio_snapshot;
+                    ui.horizontal(|ui| {
+                        for (label, value) in [
+                            ("RMS", snapshot.analysis.rms),
+                            ("Bass", snapshot.analysis.bass),
+                            ("Mid", snapshot.analysis.mid),
+                            ("High", snapshot.analysis.high),
+                            ("Transient", snapshot.analysis.transient),
+                        ] {
+                            ui.add(
+                                egui::ProgressBar::new(value)
+                                    .text(format!("{label} {value:.2}"))
+                                    .desired_width(120.0),
+                            );
+                        }
+                    });
+                    ui.weak(format!(
+                        "{} Hz · {} channel(s) · queue overruns {} · callback errors {}",
+                        snapshot.sample_rate,
+                        snapshot.channels,
+                        snapshot.queue_overruns,
+                        snapshot.callback_errors
+                    ));
+                });
+            draw_midi(ui, state, &mut metrics.midi, &mut actions);
             ui.separator();
 
             ui.horizontal(|ui| {
@@ -481,7 +658,13 @@ pub fn draw(
                 ui.label(format!("frame {}", metrics.frame_time.frame));
                 ui.label(format!("{:.2}s", metrics.frame_time.elapsed));
                 ui.separator();
-                ui.label("Select a deck, then drag a movie onto this window.");
+                ui.label("Select a slot, then drag a movie or folder onto this window.");
+                if !metrics.folder_status.is_empty() {
+                    ui.separator();
+                    ui.weak(metrics.folder_status);
+                }
+                ui.separator();
+                ui.label(format!("first-frame ready {}/32", state.preloaded_count()));
             });
 
             ui.separator();
@@ -528,6 +711,36 @@ pub fn draw(
                 let late: u64 = metrics.scheduler_stats.iter().map(|stats| stats.late).sum();
                 ui.separator();
                 ui.label(format!("drop {dropped} · repeat {repeated} · late {late}"));
+                let allocated: u64 = metrics
+                    .frame_pool_stats
+                    .iter()
+                    .map(|stats| stats.allocations)
+                    .sum();
+                let reused: u64 = metrics
+                    .frame_pool_stats
+                    .iter()
+                    .map(|stats| stats.reuses)
+                    .sum();
+                let in_flight: u64 = metrics
+                    .frame_pool_stats
+                    .iter()
+                    .map(|stats| stats.in_flight)
+                    .sum();
+                let discarded: u64 = metrics
+                    .frame_pool_stats
+                    .iter()
+                    .map(|stats| stats.discarded)
+                    .sum();
+                let bytes: u64 = metrics
+                    .frame_pool_stats
+                    .iter()
+                    .map(|stats| stats.allocated_bytes)
+                    .sum();
+                ui.separator();
+                ui.label(format!(
+                    "RGBA pool alloc {allocated} · reuse {reused} · live {in_flight} · discard {discarded} · {:.1} MiB",
+                    bytes as f64 / (1024.0 * 1024.0)
+                ));
             });
             draw_clip_grid(ui, state, mixer, clips, launches, &mut actions);
 
@@ -587,6 +800,295 @@ pub fn draw(
     actions
 }
 
+fn draw_midi(
+    ui: &mut egui::Ui,
+    state: &mut UiState,
+    metrics: &mut MidiMetrics<'_>,
+    actions: &mut Vec<UiAction>,
+) {
+    let midi = &mut *metrics.mapper;
+    egui::CollapsingHeader::new("MIDI control")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Input");
+                let selected = metrics
+                    .inputs
+                    .iter()
+                    .find(|device| device.id == state.midi_device_id)
+                    .map_or("No controller selected", |device| device.label.as_str());
+                egui::ComboBox::from_id_salt("midi-input-device")
+                    .selected_text(selected)
+                    .show_ui(ui, |ui| {
+                        for device in metrics.inputs {
+                            ui.selectable_value(
+                                &mut state.midi_device_id,
+                                device.id.clone(),
+                                &device.label,
+                            );
+                        }
+                    });
+                if ui.button("Refresh MIDI").clicked() {
+                    actions.push(UiAction::RefreshMidiInputs);
+                }
+                if metrics.connected {
+                    if ui.button("Disconnect").clicked() {
+                        actions.push(UiAction::DisconnectMidiInput);
+                    }
+                } else if ui
+                    .add_enabled(
+                        !state.midi_device_id.is_empty(),
+                        egui::Button::new("Connect"),
+                    )
+                    .clicked()
+                {
+                    actions.push(UiAction::ConnectMidiInput(state.midi_device_id.clone()));
+                }
+                ui.weak(metrics.status);
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Learn target");
+                egui::ComboBox::from_id_salt("midi-learn-target")
+                    .selected_text(midi_target_label(state.midi_target))
+                    .show_ui(ui, |ui| {
+                        for target in midi_targets() {
+                            ui.selectable_value(
+                                &mut state.midi_target,
+                                target,
+                                midi_target_label(target),
+                            );
+                        }
+                    });
+                if midi.learning().is_some() {
+                    ui.colored_label(egui::Color32::YELLOW, "Move a control…");
+                    if ui.button("Cancel learn").clicked() {
+                        actions.push(UiAction::MidiCancelLearn);
+                    }
+                } else if ui
+                    .add_enabled(metrics.connected, egui::Button::new("Learn"))
+                    .clicked()
+                {
+                    actions.push(UiAction::MidiLearn(state.midi_target));
+                }
+                if ui.button("Clear target").clicked() {
+                    actions.push(UiAction::MidiClearTarget(state.midi_target));
+                }
+            });
+
+            ui.weak(format!(
+                "events {} · dropped {} · parse errors {} · {} mapping(s)",
+                metrics.stats.received,
+                metrics.stats.dropped,
+                metrics.stats.parse_errors,
+                midi.bindings.len()
+            ));
+
+            let mut remove = None;
+            egui::Grid::new("midi-mappings")
+                .striped(true)
+                .num_columns(8)
+                .show(ui, |ui| {
+                    ui.strong("Source");
+                    ui.strong("Target");
+                    ui.strong("Mode");
+                    ui.strong("Range");
+                    ui.strong("Invert");
+                    ui.strong("Pickup");
+                    ui.strong("");
+                    ui.end_row();
+                    for (index, binding) in midi.bindings.iter_mut().enumerate() {
+                        ui.label(format!(
+                            "{} · ch {} · {:?} {}",
+                            binding.device,
+                            binding.channel + 1,
+                            binding.kind,
+                            binding.number
+                        ));
+                        ui.label(midi_target_label(binding.target));
+                        egui::ComboBox::from_id_salt(("midi-mode", index))
+                            .selected_text(mapping_mode_label(binding.mode))
+                            .show_ui(ui, |ui| {
+                                for mode in [
+                                    MappingMode::Continuous,
+                                    MappingMode::Momentary,
+                                    MappingMode::Toggle,
+                                    MappingMode::RelativeBinaryOffset,
+                                    MappingMode::RelativeTwosComplement,
+                                ] {
+                                    ui.selectable_value(
+                                        &mut binding.mode,
+                                        mode,
+                                        mapping_mode_label(mode),
+                                    );
+                                }
+                            });
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut binding.output_range[0])
+                                    .speed(0.01)
+                                    .range(-8.0..=8.0),
+                            );
+                            ui.label("–");
+                            ui.add(
+                                egui::DragValue::new(&mut binding.output_range[1])
+                                    .speed(0.01)
+                                    .range(-8.0..=8.0),
+                            );
+                        });
+                        ui.checkbox(&mut binding.invert, "");
+                        ui.checkbox(&mut binding.soft_takeover, "");
+                        if ui.small_button("Remove").clicked() {
+                            remove = Some(index);
+                        }
+                        ui.end_row();
+                    }
+                });
+            if let Some(index) = remove {
+                actions.push(UiAction::MidiRemoveBinding(index));
+            }
+        });
+}
+
+fn midi_targets() -> Vec<ControlTarget> {
+    let mut targets = vec![
+        ControlTarget::Crossfader,
+        ControlTarget::MasterOpacity,
+        ControlTarget::MasterBlackout,
+        ControlTarget::MasterFreeze,
+        ControlTarget::TapTempo,
+    ];
+    for slot in 0..8 {
+        targets.push(ControlTarget::SceneLaunch(slot));
+    }
+    for deck in 0..4 {
+        targets.extend([
+            ControlTarget::DeckLevel(deck),
+            ControlTarget::DeckPlay(deck),
+            ControlTarget::DeckFreeze(deck),
+            ControlTarget::DeckSpeed(deck),
+            ControlTarget::DeckSelect(deck),
+            ControlTarget::DeckRestart(deck),
+        ]);
+        for slot in 0..8 {
+            targets.push(ControlTarget::ClipLaunch { deck, slot });
+        }
+        for effect in 0..14 {
+            targets.push(ControlTarget::EffectParameter {
+                deck,
+                effect,
+                parameter: 0,
+            });
+        }
+        for lfo in 0..3 {
+            for parameter in 0..4 {
+                targets.push(ControlTarget::LfoParameter {
+                    deck,
+                    lfo,
+                    parameter,
+                });
+            }
+        }
+        for route in 0..8 {
+            for parameter in 0..2 {
+                targets.push(ControlTarget::ModRouteParameter {
+                    deck,
+                    route,
+                    parameter,
+                });
+            }
+        }
+    }
+    targets
+}
+
+fn midi_target_label(target: ControlTarget) -> String {
+    match target {
+        ControlTarget::Crossfader => "Mixer · Crossfader".to_owned(),
+        ControlTarget::MasterOpacity => "Master · Opacity".to_owned(),
+        ControlTarget::MasterBlackout => "Master · Blackout".to_owned(),
+        ControlTarget::MasterFreeze => "Master · Freeze".to_owned(),
+        ControlTarget::TapTempo => "Tempo · Tap".to_owned(),
+        ControlTarget::DeckLevel(deck) => format!("Deck {} · Level", deck_label(deck)),
+        ControlTarget::DeckPlay(deck) => format!("Deck {} · Play", deck_label(deck)),
+        ControlTarget::DeckFreeze(deck) => format!("Deck {} · Freeze", deck_label(deck)),
+        ControlTarget::DeckSpeed(deck) => format!("Deck {} · Speed", deck_label(deck)),
+        ControlTarget::DeckSelect(deck) => format!("Deck {} · Select", deck_label(deck)),
+        ControlTarget::DeckRestart(deck) => format!("Deck {} · Restart", deck_label(deck)),
+        ControlTarget::ClipLaunch { deck, slot } => {
+            format!("Deck {} · Launch clip {}", deck_label(deck), slot + 1)
+        }
+        ControlTarget::SceneLaunch(slot) => format!("Scene · Launch {}", slot + 1),
+        ControlTarget::EffectParameter { deck, effect, .. } => format!(
+            "Deck {} · FX {}",
+            deck_label(deck),
+            effect_parameter_label(effect)
+        ),
+        ControlTarget::LfoParameter {
+            deck,
+            lfo,
+            parameter,
+        } => format!(
+            "Deck {} · LFO {} · {}",
+            deck_label(deck),
+            lfo + 1,
+            ["Enabled", "Rate", "Depth", "Phase"]
+                .get(usize::from(parameter))
+                .copied()
+                .unwrap_or("Unknown")
+        ),
+        ControlTarget::ModRouteParameter {
+            deck,
+            route,
+            parameter,
+        } => format!(
+            "Deck {} · Matrix {} · {}",
+            deck_label(deck),
+            route + 1,
+            ["Enabled", "Amount"]
+                .get(usize::from(parameter))
+                .copied()
+                .unwrap_or("Unknown")
+        ),
+    }
+}
+
+fn deck_label(deck: u8) -> char {
+    char::from(b'A'.saturating_add(deck.min(3)))
+}
+
+fn effect_parameter_label(effect: u8) -> &'static str {
+    [
+        "Hue",
+        "Contrast",
+        "Saturation",
+        "Black level",
+        "White level",
+        "Gamma",
+        "Pixelate",
+        "Luma key",
+        "Neon",
+        "Fractal",
+        "Jitter",
+        "Find edges",
+        "Bit reduction",
+        "Black light",
+    ]
+    .get(usize::from(effect))
+    .copied()
+    .unwrap_or("Unknown")
+}
+
+fn mapping_mode_label(mode: MappingMode) -> &'static str {
+    match mode {
+        MappingMode::Continuous => "Absolute",
+        MappingMode::Momentary => "Momentary",
+        MappingMode::Toggle => "Toggle",
+        MappingMode::RelativeBinaryOffset => "Relative offset",
+        MappingMode::RelativeTwosComplement => "Relative 2's comp",
+    }
+}
+
 fn draw_clip_grid(
     ui: &mut egui::Ui,
     state: &UiState,
@@ -618,6 +1120,9 @@ fn draw_clip_grid(
                         .slot(address)
                         .cloned()
                         .expect("valid clip-grid address");
+                    let first_frame_ready = state
+                        .preloaded_frame(address, clips.path(address))
+                        .is_some();
                     let label = if let Some(movie) = &slot_state.movie {
                         let name = movie
                             .display_name
@@ -629,8 +1134,10 @@ fn draw_clip_grid(
                             format!("◷ {short}")
                         } else if active {
                             format!("▶ {short}")
+                        } else if first_frame_ready {
+                            format!("● {short}")
                         } else {
-                            short
+                            format!("○ {short}")
                         }
                     } else if slot_state.error.is_some() {
                         format!("⚠ {}{}", deck.label(), slot + 1)
@@ -676,10 +1183,25 @@ fn draw_clip_grid(
                                 movie.visible_extent[1],
                                 movie.codec
                             );
+                            if movie.decode_path == oneiroi_media::DecodePath::FfmpegVideo {
+                                details.push_str(&format!(
+                                    "\n{} keyframe(s) indexed{}",
+                                    movie.keyframes.len(),
+                                    if movie.keyframes.is_complete() {
+                                        ""
+                                    } else {
+                                        " · capped"
+                                    }
+                                ));
+                            }
                             if let Some(error) =
                                 state.thumbnail_failure(address, clips.path(address))
                             {
                                 details.push_str(&format!("\nThumbnail unavailable: {error}"));
+                            } else if first_frame_ready {
+                                details.push_str("\nFirst frame ready for immediate launch");
+                            } else {
+                                details.push_str("\nFirst frame is still preloading");
                             }
                             details
                         } else if let Some(error) = &slot_state.error {
@@ -696,6 +1218,11 @@ fn draw_clip_grid(
                             "Empty slot · select then drop a movie".to_owned()
                         })
                         .context_menu(|ui| {
+                            if clips.path(address).is_some() && ui.button("Relink media…").clicked()
+                            {
+                                actions.push(UiAction::BrowseRelink(address));
+                                ui.close();
+                            }
                             if clips.path(address).is_some() && ui.button("Clear slot").clicked() {
                                 actions.push(UiAction::ClearSlot(address));
                                 ui.close();
@@ -705,6 +1232,116 @@ fn draw_clip_grid(
                 ui.end_row();
             }
         });
+
+    let deck = mixer.selected();
+    let address = ClipAddress {
+        deck,
+        slot: clips.selected(deck),
+    };
+    if let Some(movie) = clips.movie(address) {
+        let name = movie.display_name.clone();
+        let media_duration = movie.duration.map(oneiroi_core::MediaTime::as_seconds);
+        let mut playback = clips.playback(address).unwrap_or_default();
+        let mut changed = false;
+        egui::CollapsingHeader::new(format!("Selected clip playback · {name}"))
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Launch");
+                    changed |= ui
+                        .selectable_value(
+                            &mut playback.launch_mode,
+                            ClipLaunchMode::Restart,
+                            "Restart at In",
+                        )
+                        .changed();
+                    changed |= ui
+                        .selectable_value(
+                            &mut playback.launch_mode,
+                            ClipLaunchMode::Resume,
+                            "Resume last position",
+                        )
+                        .changed();
+                });
+                let maximum = media_duration.unwrap_or(86_400.0).max(0.001);
+                ui.horizontal(|ui| {
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut playback.in_point)
+                                .range(0.0..=maximum)
+                                .speed(0.05)
+                                .suffix(" s")
+                                .prefix("In "),
+                        )
+                        .changed();
+                    let mut out_enabled = playback.out_point.is_some();
+                    if ui.checkbox(&mut out_enabled, "Out").changed() {
+                        playback.out_point = out_enabled.then_some(maximum);
+                        changed = true;
+                    }
+                    if let Some(out_point) = &mut playback.out_point {
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(out_point)
+                                    .range(0.001..=maximum)
+                                    .speed(0.05)
+                                    .suffix(" s"),
+                            )
+                            .changed();
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let mut beat_enabled = playback.beat_duration.is_some();
+                    if ui
+                        .checkbox(&mut beat_enabled, "BPM-relative duration")
+                        .changed()
+                    {
+                        playback.beat_duration = beat_enabled.then_some(4.0);
+                        changed = true;
+                    }
+                    if let Some(beats) = &mut playback.beat_duration {
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(beats)
+                                    .range(0.0625..=256.0)
+                                    .speed(0.25)
+                                    .suffix(" beats"),
+                            )
+                            .changed();
+                    }
+                    if let Some(beats) = playback.beat_duration {
+                        ui.weak(format!(
+                            "{:.3} s at {:.1} BPM",
+                            beats * 60.0 / state.bpm,
+                            state.bpm
+                        ));
+                    }
+                });
+                let (start, end) = playback.range(media_duration, state.bpm);
+                ui.weak(match end {
+                    Some(end) => format!("Effective range {start:.3}–{end:.3} s"),
+                    None => format!("Effective range starts at {start:.3} s"),
+                });
+            });
+        if changed {
+            clips.set_playback(address, playback);
+        }
+    } else if let Some(path) = clips.path(address) {
+        let path = path.to_path_buf();
+        egui::CollapsingHeader::new(format!(
+            "Missing media · Deck {} slot {}",
+            deck.label(),
+            address.slot + 1
+        ))
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.colored_label(egui::Color32::LIGHT_RED, path.display().to_string());
+            if ui.button("Browse and relink…").clicked() {
+                actions.push(UiAction::BrowseRelink(address));
+            }
+            ui.weak("Trim, launch mode and beat-duration settings will be preserved.");
+        });
+    }
 }
 
 struct DeckControls<'a> {
@@ -796,6 +1433,9 @@ fn draw_deck(
                     }
                     if let Some(duration) = movie.duration {
                         ui.label(format!("{:.1}s", duration.as_seconds()));
+                    }
+                    if movie.decode_path == oneiroi_media::DecodePath::FfmpegVideo {
+                        ui.label(format!("{} keys", movie.keyframes.len()));
                     }
                 });
                 let (label, color) = match movie.health {
@@ -906,7 +1546,9 @@ fn draw_deck(
             });
         }
         if let Some(duration) = transport.duration.filter(|duration| *duration > 0.0) {
-            let mut progress = (transport.position / duration).clamp(0.0, 1.0) as f32;
+            let range = (duration - transport.in_point).max(f64::EPSILON);
+            let mut progress =
+                ((transport.position - transport.in_point) / range).clamp(0.0, 1.0) as f32;
             if ui
                 .add(egui::Slider::new(&mut progress, 0.0..=1.0).text("playhead"))
                 .changed()
@@ -1107,13 +1749,13 @@ fn draw_deck(
                                 "mod-source-{}-{index}",
                                 id.label()
                             ))
-                            .selected_text(format!("LFO {}", route.source + 1))
+                            .selected_text(mod_source_label(route.source))
                             .show_ui(ui, |ui| {
-                                for source in 0..3 {
+                                for source in 0..10 {
                                     ui.selectable_value(
                                         &mut route.source,
                                         source,
-                                        format!("LFO {}", source + 1),
+                                        mod_source_label(source),
                                     );
                                 }
                             });
@@ -1206,6 +1848,22 @@ fn blend_mode_label(mode: LayerBlendMode) -> &'static str {
         LayerBlendMode::Lighten => "Lighten",
         LayerBlendMode::Darken => "Darken",
         LayerBlendMode::Overlay => "Overlay",
+    }
+}
+
+fn mod_source_label(source: u8) -> &'static str {
+    match source {
+        0 => "LFO 1",
+        1 => "LFO 2",
+        2 => "LFO 3",
+        3 => "Audio RMS",
+        4 => "Audio bass",
+        5 => "Audio mid",
+        6 => "Audio high",
+        7 => "Audio transient",
+        8 => "Beat phase",
+        9 => "Bar phase",
+        _ => "Invalid source",
     }
 }
 

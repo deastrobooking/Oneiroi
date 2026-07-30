@@ -6,6 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+cpal.workspace = true
+log.workspace = true
+midir.workspace = true
+oneiroi-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

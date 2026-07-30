@@ -6,7 +6,7 @@ use ffmpeg_next as ffmpeg;
 use oneiroi_core::{MediaTime, MediaTimeError};
 use thiserror::Error;
 
-use crate::FrameRate;
+use crate::{FrameRate, KeyframeIndex};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DecodePath {
@@ -45,6 +45,7 @@ pub struct MovieMetadata {
     pub decode_path: DecodePath,
     pub health: MediaHealth,
     pub health_reason: String,
+    pub keyframes: KeyframeIndex,
 }
 
 #[derive(Debug, Error)]
@@ -67,7 +68,7 @@ pub enum ProbeError {
 pub fn probe_movie(path: impl AsRef<Path>) -> Result<MovieMetadata, ProbeError> {
     let path = path.as_ref();
     ffmpeg::init().map_err(ProbeError::Initialize)?;
-    let input = ffmpeg::format::input(path).map_err(|source| ProbeError::Open {
+    let mut input = ffmpeg::format::input(path).map_err(|source| ProbeError::Open {
         path: path.to_path_buf(),
         source,
     })?;
@@ -112,6 +113,15 @@ pub fn probe_movie(path: impl AsRef<Path>) -> Result<MovieMetadata, ProbeError> 
     let has_decoder = ffmpeg::codec::decoder::find(codec_id).is_some();
     let (decode_path, health, health_reason) =
         classify(codec_id, has_decoder, width as u32, height as u32);
+    let container = input.format().name().to_owned();
+    let frame_count = u64::try_from(stream.frames())
+        .ok()
+        .filter(|count| *count > 0);
+    let keyframes = if decode_path == DecodePath::FfmpegVideo {
+        build_keyframe_index(&mut input, stream_index, time_base)
+    } else {
+        KeyframeIndex::default()
+    };
 
     Ok(MovieMetadata {
         path: path.to_path_buf(),
@@ -120,21 +130,52 @@ pub fn probe_movie(path: impl AsRef<Path>) -> Result<MovieMetadata, ProbeError> 
             .and_then(|name| name.to_str())
             .unwrap_or("Untitled movie")
             .to_owned(),
-        container: input.format().name().to_owned(),
+        container,
         stream_index,
         codec: codec_id.name().to_owned(),
         codec_tag,
         visible_extent: [width as u32, height as u32],
         frame_rate,
         duration,
-        frame_count: u64::try_from(stream.frames())
-            .ok()
-            .filter(|count| *count > 0),
+        frame_count,
         alpha: alpha_mode(codec_id, codec_tag),
         decode_path,
         health,
         health_reason,
+        keyframes,
     })
+}
+
+fn build_keyframe_index(
+    input: &mut ffmpeg::format::context::Input,
+    stream_index: usize,
+    time_base: ffmpeg::Rational,
+) -> KeyframeIndex {
+    let mut index = KeyframeIndex::new();
+    if time_base.numerator() <= 0 || time_base.denominator() <= 0 {
+        return index;
+    }
+    for (stream, packet) in input.packets() {
+        if stream.index() != stream_index || !packet.is_key() {
+            continue;
+        }
+        let Some(timestamp) = packet.pts().or_else(|| packet.dts()) else {
+            continue;
+        };
+        if timestamp < 0 {
+            continue;
+        }
+        let Ok(timestamp) =
+            MediaTime::from_time_base(timestamp, time_base.numerator(), time_base.denominator())
+        else {
+            continue;
+        };
+        if !index.push(timestamp) {
+            break;
+        }
+    }
+    index.finish();
+    index
 }
 
 fn valid_rate(rate: ffmpeg::Rational) -> Option<FrameRate> {

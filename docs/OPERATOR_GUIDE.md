@@ -26,15 +26,84 @@ GPU-compressed path; other supported movies and stills use FFmpeg.
 1. Select deck A, B, C or D.
 2. Select one of its eight clip slots.
 3. Drag a MOV, MP4, MKV, AVI, WebM, MXF, PNG or JPEG file onto the window.
-4. Wait for the slot to show its thumbnail and ready state.
+4. Wait for the slot to show its thumbnail and filled-circle first-frame
+   readiness marker.
 5. Click the slot to launch it.
+
+To populate multiple slots, select the desired starting slot and drag a folder
+onto the window. Oneiroi recursively finds supported media, sorts paths
+lexically, fills from the selected slot, wraps across decks and skips occupied
+slots. At most the 32 available clip addresses are assigned. The status line
+reports scanning, probe progress, truncation caused by available capacity and
+completion.
+
+Folder scanning accepts MOV, MP4, M4V, MKV, AVI, WebM, MXF, PNG, JPG and JPEG.
+It is bounded to 16 directory levels and 4,096 entries per directory. Files
+that fail probing remain visible in their assigned slot with an error while
+the rest continue importing.
 
 Scene buttons and number keys `1`–`8` launch the same slot across all four
 decks. Choose Immediate, Next beat or Next bar before triggering.
 
+A filled circle means the bounded first-frame launch preview is ready. An open
+circle means metadata is ready but the preview worker is still decoding. The
+header shows the total ready count out of 32. On a ready launch, this preview
+appears immediately and is replaced by the full-resolution decoder output.
+
 Each active deck exposes level, A/B bus assignment, play/pause, restart,
 freeze, loop/one-shot, speed and seek controls. Camera decks expose freeze but
 disable file-only transport controls.
+
+Expand **Selected clip playback** below the clip grid to configure the selected
+slot:
+
+- **Restart at In** always launches from the trim start.
+- **Resume last position** remembers where that slot was when another source
+  replaced it; reaching the end causes the next resume to start at In.
+- **In** and optional **Out** are source-time seconds.
+- **BPM-relative duration** limits the range to a number of beats from In. The
+  effective end uses whichever comes first: Out, media end or beat duration.
+
+The deck playhead, Restart, Loop and One shot controls all respect this
+effective range. Changing BPM immediately changes a beat-relative boundary.
+
+Conventional-codec slots show their indexed keyframe count in the deck
+metadata and clip tooltip. A `capped` marker means the clip reached the
+65,536-entry safety limit; seeking still works, but targets after the indexed
+region may require a longer forward decode from the last indexed anchor. HAP
+clips use their direct compressed path and do not report a conventional
+keyframe index.
+
+The performance line includes **RGBA pool** diagnostics:
+
+- **alloc** counts new pixel buffers or capacity growth.
+- **reuse** counts frames served by returned storage.
+- **live** is the number of leases still held by decode/scheduling/render.
+- **discard** counts non-blocking returns dropped because the bounded pool was
+  full or gone.
+- **MiB** is cumulative allocated pixel capacity, not current resident memory.
+
+During stable-resolution playback, `alloc` should flatten while `reuse`
+continues increasing. Growth after a resolution switch is expected; continuous
+growth at a fixed resolution should be treated as a soak-test failure.
+
+## Decoder failure rehearsal and soak
+
+The normal workspace tests include an injected mid-stream decoder failure,
+recovery on a new generation, 100,000 frame-buffer reuse cycles, 10,000
+generation changes and 64 FFmpeg reopen cycles. Before a release candidate,
+run the extended 10,000-reopen decoder soak:
+
+```sh
+cargo test -p oneiroi-media --test hap_mov_demux \
+  extended_decoder_reopen_soak -- --ignored --exact
+```
+
+The test fails if fixed-resolution RGBA allocation grows beyond the decoder's
+bounded working set, a generation is mislabeled, a reopen fails or a frame
+lease remains live after the source ends. This complements, but does not
+replace, a show-machine soak with the actual media, capture devices and output
+displays.
 
 ## Connect a camera or capture card
 
@@ -124,11 +193,37 @@ Direct to use the LFO only as a matrix source.
 
 The matrix has eight routes per deck:
 
-- Choose LFO 1, 2 or 3 as the source.
+- Choose LFO 1–3, Audio RMS, bass, mid, high, transient, beat phase or bar
+  phase as the source.
 - Choose any continuous effect parameter as the destination.
 - Set an amount from `-1.0` to `+1.0`.
 - Negative amounts invert the modulation.
 - Multiple routes can share a source or destination and are summed safely.
+
+## Audio-reactive modulation
+
+Choose an input in the **Audio** toolbar and click **Connect**. On macOS, grant
+microphone/audio-input permission if prompted. The analysis panel displays RMS,
+bass, mid, high and transient meters plus sample rate, channel count, bounded
+queue overruns and callback errors.
+
+Analysis controls are:
+
+- **Gain**: scales all normalized signals.
+- **Noise floor**: suppresses low-level room/device noise.
+- **Attack** and **release**: smooth RMS and band envelopes.
+- **Transient**: scales positive RMS onsets.
+- **Adaptive normalization**: slowly adjusts analysis gain toward the selected
+  target RMS; adaptation speed controls how quickly it follows level changes.
+
+The native callback only downmixes into fixed-size chunks and attempts a
+non-blocking bounded-queue write. FFT and smoothing run on a worker. If the
+queue is full, the chunk is dropped and the overrun counter increases. A
+callback error resolves all audio matrix sources to zero.
+
+Beat phase ramps from 0 to 1 every beat. Bar phase ramps from 0 to 1 across
+four beats. Both follow the internal tempo clock and retain phase when BPM
+changes.
 
 ## Tempo
 
@@ -186,25 +281,60 @@ recoveries, timeouts, occlusion, validation errors and display-topology
 changes. Connected displays are polled every two seconds, so reconnecting an
 adapter or projector updates the target list without restarting the app.
 
+## MIDI controllers
+
+Expand **MIDI control**, choose a controller and press **Connect**. To create a
+mapping, choose a target, press **Learn**, then move a knob, encoder, fader or
+button. **Cancel learn** exits without changing a mapping; **Clear target**
+removes every mapping for the selected target. Individual rows can also be
+removed.
+
+Each row supports:
+
+- **Absolute** for normal knobs/faders and pitch bend.
+- **Momentary** for press/release behavior.
+- **Toggle** for one-button latching.
+- **Relative offset** for encoders centered on value 64.
+- **Relative 2's comp** for encoders sending `1`/`127` increments.
+- Editable output minimum/maximum, inversion and pickup/soft takeover.
+
+Mappings cover crossfader/master controls, all four deck transports and
+levels, clip and scene launches, effects, LFO parameters and modulation-matrix
+routes. Blackout and master freeze act immediately; clip and scene launches
+still follow the current quantization setting.
+
+The activity line shows received packets, queue drops and parse errors. If a
+connected controller disappears, Oneiroi keeps its mappings and attempts to
+reconnect the selected identity every two seconds. Use **Disconnect** to stop
+that automatic reconnect intent.
+
 ## Projects and recovery
 
 The project toolbar can open and save `.oneiroi` files. Version-two projects store all 32
-clip paths, deck state, camera reconnect settings, mixer values, transport,
-effects, LFOs, modulation routes, tempo, output settings and MIDI mapping data.
+clip paths, per-slot trim/launch/beat settings, deck state, camera reconnect
+settings, mixer values, transport, effects, LFOs, modulation routes, tempo,
+output settings and MIDI mapping data.
 Version-one projects are upgraded when loaded.
 
 Oneiroi writes a recovery autosave after changes and on close. Use **Recover
 autosave** when the recovery copy is newer. Missing files remain represented in
-their slots so they can be relinked in a future release.
+their original slots. Select a missing slot and press **Browse and relink…**,
+or right-click any path-bearing slot and choose **Relink media…**. The native
+picker starts beside the previous file when that directory still exists.
+Relinking preserves the slot's In/Out trim, launch mode and beat duration. If
+the slot is live, a successful relink launches the replacement automatically.
 
 ## Pre-show checklist
 
 1. Run a release build on the actual show machine.
-2. Confirm camera and media permissions.
+2. Confirm camera, audio and MIDI permissions.
 3. Trigger every required clip and inspect media-health warnings.
 4. Verify HAP clips report the direct path.
 5. Exercise blackout and freeze.
 6. Watch FPS and dropped/repeated/late counters.
-7. Save the project, close it, and verify restoration.
-8. Select the stage display and verify the test card through the full signal path.
+7. Exercise every MIDI mapping, including pickup after moving a saved
+   parameter away from the hardware position.
+8. Disconnect and reconnect the controller and confirm activity resumes.
+9. Save the project, close it, and verify restoration.
+10. Select the stage display and verify the test card through the full signal path.
 9. Disable sleep, automatic updates and unnecessary background applications.

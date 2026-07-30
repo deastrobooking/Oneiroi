@@ -97,68 +97,85 @@ Acceptance criteria:
 
 ## Phase 3: audio-reactive modulation
 
-After output and composition are stable, extend the existing source/destination
-matrix instead of creating a separate audio-effect path.
+Status: implementation complete; hardware validation remains. Native input
+capture, bounded callback handoff, worker-thread RMS/FFT analysis, adaptive
+normalization, live diagnostics, five audio sources and beat/bar phase sources
+are implemented.
 
 Implementation sequence:
 
 1. Add input-device enumeration and a bounded audio callback adapter in
-   `oneiroi-io`.
+   `oneiroi-io`. (implemented)
 2. Copy callback samples into a fixed-capacity queue; never perform FFT or UI
-   work inside the callback.
+   work inside the callback. (implemented)
 3. Publish smoothed broadband RMS, bass, mid, high and transient signals from
-   an analysis worker.
-4. Add gain, noise floor, attack, release and normalization.
-5. Generalize matrix source identifiers beyond LFO 1–3.
-6. Add audio sources, beat phase and bar phase to the routing UI.
-7. Persist device-independent analysis and routing settings.
+   an analysis worker. (implemented)
+4. Add gain, noise floor, attack, release and normalization. (implemented)
+5. Generalize matrix source identifiers beyond LFO 1–3. (implemented)
+6. Add audio sources, beat phase and bar phase to the routing UI. (implemented)
+7. Persist device-independent analysis and routing settings. (implemented)
 8. Display input device, sample rate, queue overrun and signal-health status.
+   (implemented)
 
 Acceptance criteria:
 
 - The render thread reads a snapshot and never waits on audio work.
 - Disconnecting an input device resolves sources safely to zero.
 - Band separation, envelope timing and transient behavior have deterministic
-  signal-fixture tests.
+  signal-fixture tests. (implemented, including normalization convergence)
 - Audio queue growth is bounded and overruns are observable.
 
 ## Phase 4: physical performance control
 
-The device-neutral MIDI mapping model already exists. Connect it to hardware
-and make it operable without editing project JSON.
+Implemented. The device-neutral mapper is now connected to native hardware and
+is operable without editing project JSON.
 
 Implementation sequence:
 
-1. Add platform MIDI input and device enumeration.
-2. Build learn/cancel/clear UI around exposed controls.
-3. Support note, CC, pitch bend and common relative encoders.
-4. Route clip, scene, transport, mixer, effect, LFO, matrix and emergency
-   targets.
-5. Expose pickup/soft-takeover and mapping activity.
-6. Add controller reconnection and device-missing behavior.
+1. Platform MIDI input and device enumeration. (implemented)
+2. Learn/cancel/clear/remove UI around exposed controls. (implemented)
+3. Note, CC, pitch bend, binary-offset and two's-complement encoders.
+   (implemented)
+4. Clip, scene, transport, mixer, effect, LFO, matrix and emergency targets.
+   (implemented)
+5. Pickup/soft-takeover, editable ranges and mapping activity. (implemented)
+6. Controller reconnection and device-missing behavior. (implemented)
 
 Acceptance criteria:
 
-- MIDI callbacks cannot block rendering.
-- Reconnecting a known controller restores mappings.
-- Emergency actions are not quantized.
+- MIDI callbacks use bounded `try_send` and cannot block rendering.
+- Reconnecting a known controller restores its persisted mappings.
+- Emergency blackout/freeze actions bypass launch quantization.
 - Soft takeover prevents parameter jumps after project load.
+
+Remaining MIDI work is output feedback, MIDI clock/sync, controller templates
+and physical-device soak testing.
 
 ## Phase 5: clip readiness and media hardening
 
-1. Preload and retain the first visible frame of every ready slot.
+1. Preload and retain a bounded first-frame launch preview for every ready
+   slot. (implemented at 640×360 maximum)
 2. Add clip in/out points, restart/resume mode and BPM-relative duration.
-3. Build keyframe indexes for conventional-codec seeks.
+   (implemented)
+3. Build keyframe indexes for conventional-codec seeks. (implemented with a
+   65,536-entry per-clip cap)
 4. Add reusable CPU frame leases and steady-state allocation instrumentation.
-5. Add folder import and a bounded preload policy.
-6. Add missing-media browsing and explicit relink.
-7. Add decoder failure injection and long-running soak tests.
+   (implemented for conventional RGBA decode)
+5. Add folder import. The fixed-size preload policy is implemented.
+   (implemented with bounded recursive scanning and 32-slot assignment)
+6. Add missing-media browsing and explicit relink. (implemented with a native
+   per-slot picker, preserved playback settings and stale-result rejection)
+7. Add decoder failure injection and long-running soak tests. (implemented
+   with one-shot generation-scoped faults, accelerated allocation/generation/
+   reopen coverage and an opt-in 10,000-reopen decoder soak)
 
 Acceptance criteria:
 
-- A preloaded launch becomes visible within two display frames.
+- A preloaded launch is uploaded in the launch frame, before full decode
+  produces its first scheduled frame. (implemented)
 - Seeking and looping cannot present obsolete generations.
-- Memory remains bounded with all 32 slots populated.
+- The 32-slot first-frame cache is bounded to 29,491,200 bytes plus 160×90 UI
+  thumbnails. (implemented)
 - Missing files never prevent the rest of a project from opening.
 
 ## Phase 6: effect-chain architecture

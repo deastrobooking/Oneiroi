@@ -3,11 +3,13 @@
 //! This crate must stay free of GPU and I/O dependencies so it can be tested
 //! on a machine with no display and no audio device.
 
+pub mod audio;
 pub mod clock;
 pub mod control;
 pub mod media_time;
 pub mod tempo;
 
+pub use audio::{AUDIO_ANALYSIS_SIZE, AudioAnalysisSettings, AudioAnalyzer, AudioSnapshot};
 pub use clock::{Clock, FrameTime};
 pub use control::{
     ControlTarget, ControlUpdate, MappingMode, MidiBinding, MidiMapper, MidiMessage,

@@ -62,11 +62,19 @@ pub enum ControlTarget {
     Crossfader,
     MasterOpacity,
     MasterBlackout,
+    MasterFreeze,
+    TapTempo,
     DeckLevel(u8),
     DeckPlay(u8),
     DeckFreeze(u8),
     DeckSpeed(u8),
+    DeckSelect(u8),
+    DeckRestart(u8),
+    ClipLaunch { deck: u8, slot: u8 },
+    SceneLaunch(u8),
     EffectParameter { deck: u8, effect: u8, parameter: u8 },
+    LfoParameter { deck: u8, lfo: u8, parameter: u8 },
+    ModRouteParameter { deck: u8, route: u8, parameter: u8 },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,6 +82,8 @@ pub enum MappingMode {
     Continuous,
     Momentary,
     Toggle,
+    RelativeBinaryOffset,
+    RelativeTwosComplement,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -121,18 +131,60 @@ impl MidiBinding {
                 return None;
             }
             self.latched = !self.latched;
-            return Some(f32::from(self.latched));
+            let normalized = if self.invert {
+                f32::from(!self.latched)
+            } else {
+                f32::from(self.latched)
+            };
+            return Some(self.map_output(normalized));
         }
         if self.mode == MappingMode::Momentary {
-            return Some(if raw > 0.0 { 1.0 } else { 0.0 });
+            let active = raw > 0.0;
+            let normalized = if self.invert {
+                f32::from(!active)
+            } else {
+                f32::from(active)
+            };
+            return Some(self.map_output(normalized));
+        }
+        if matches!(
+            self.mode,
+            MappingMode::RelativeBinaryOffset | MappingMode::RelativeTwosComplement
+        ) {
+            let MidiMessage::ControlChange { value, .. } = message else {
+                return None;
+            };
+            let mut delta = match self.mode {
+                MappingMode::RelativeBinaryOffset => i16::from(value) - 64,
+                MappingMode::RelativeTwosComplement => {
+                    if value == 0 || value == 64 {
+                        0
+                    } else if value < 64 {
+                        i16::from(value)
+                    } else {
+                        i16::from(value) - 128
+                    }
+                }
+                _ => unreachable!(),
+            };
+            if self.invert {
+                delta = -delta;
+            }
+            if delta == 0 {
+                return None;
+            }
+            let span = self.output_range[1] - self.output_range[0];
+            return Some((current + f32::from(delta) * span / 63.0).clamp(
+                self.output_range[0].min(self.output_range[1]),
+                self.output_range[0].max(self.output_range[1]),
+            ));
         }
         let input_span = (self.input_range[1] - self.input_range[0]).max(f32::EPSILON);
         let mut normalized = ((raw - self.input_range[0]) / input_span).clamp(0.0, 1.0);
         if self.invert {
             normalized = 1.0 - normalized;
         }
-        let mapped =
-            self.output_range[0] + normalized * (self.output_range[1] - self.output_range[0]);
+        let mapped = self.map_output(normalized);
         if self.soft_takeover && !self.picked_up {
             let tolerance = (self.output_range[1] - self.output_range[0]).abs() / 127.0 * 2.0;
             if (mapped - current).abs() > tolerance.max(0.01) {
@@ -141,6 +193,10 @@ impl MidiBinding {
             self.picked_up = true;
         }
         Some(mapped)
+    }
+
+    fn map_output(&self, normalized: f32) -> f32 {
+        self.output_range[0] + normalized * (self.output_range[1] - self.output_range[0])
     }
 }
 
@@ -163,6 +219,17 @@ impl MidiMapper {
 
     pub fn cancel_learn(&mut self) {
         self.learning = None;
+    }
+
+    pub fn learning(&self) -> Option<ControlTarget> {
+        self.learning
+    }
+
+    pub fn clear_target(&mut self, target: ControlTarget) {
+        self.bindings.retain(|binding| binding.target != target);
+        if self.learning == Some(target) {
+            self.learning = None;
+        }
     }
 
     pub fn ingest(
@@ -268,5 +335,130 @@ mod tests {
         };
         assert_eq!(binding.apply(low, 0.8), None);
         assert!(binding.apply(near, 0.8).is_some());
+    }
+
+    #[test]
+    fn relative_binary_offset_moves_around_64() {
+        let mut binding = MidiBinding::learned(
+            "controller",
+            MidiMessage::ControlChange {
+                channel: 0,
+                controller: 1,
+                value: 64,
+            },
+            ControlTarget::Crossfader,
+        );
+        binding.mode = MappingMode::RelativeBinaryOffset;
+        let up = binding.apply(
+            MidiMessage::ControlChange {
+                channel: 0,
+                controller: 1,
+                value: 65,
+            },
+            0.5,
+        );
+        let down = binding.apply(
+            MidiMessage::ControlChange {
+                channel: 0,
+                controller: 1,
+                value: 63,
+            },
+            0.5,
+        );
+        assert!(up.is_some_and(|value| value > 0.5));
+        assert!(down.is_some_and(|value| value < 0.5));
+    }
+
+    #[test]
+    fn relative_twos_complement_handles_increment_and_decrement() {
+        let mut binding = MidiBinding::learned(
+            "controller",
+            MidiMessage::ControlChange {
+                channel: 0,
+                controller: 1,
+                value: 0,
+            },
+            ControlTarget::Crossfader,
+        );
+        binding.mode = MappingMode::RelativeTwosComplement;
+        assert!(
+            binding
+                .apply(
+                    MidiMessage::ControlChange {
+                        channel: 0,
+                        controller: 1,
+                        value: 1,
+                    },
+                    0.5,
+                )
+                .is_some_and(|value| value > 0.5)
+        );
+        assert!(
+            binding
+                .apply(
+                    MidiMessage::ControlChange {
+                        channel: 0,
+                        controller: 1,
+                        value: 127,
+                    },
+                    0.5,
+                )
+                .is_some_and(|value| value < 0.5)
+        );
+    }
+
+    #[test]
+    fn clear_target_removes_bindings_and_cancels_matching_learn() {
+        let mut mapper = MidiMapper::default();
+        mapper.bindings.push(MidiBinding::learned(
+            "controller",
+            MidiMessage::ControlChange {
+                channel: 0,
+                controller: 7,
+                value: 0,
+            },
+            ControlTarget::DeckLevel(0),
+        ));
+        mapper.learn(ControlTarget::DeckLevel(0));
+        mapper.clear_target(ControlTarget::DeckLevel(0));
+        assert!(mapper.bindings.is_empty());
+        assert_eq!(mapper.learning(), None);
+    }
+
+    #[test]
+    fn momentary_mode_honors_inversion_and_output_range() {
+        let mut binding = MidiBinding::learned(
+            "controller",
+            MidiMessage::NoteOn {
+                channel: 0,
+                note: 10,
+                velocity: 127,
+            },
+            ControlTarget::DeckFreeze(0),
+        );
+        binding.mode = MappingMode::Momentary;
+        binding.invert = true;
+        binding.output_range = [-1.0, 1.0];
+        assert_eq!(
+            binding.apply(
+                MidiMessage::NoteOn {
+                    channel: 0,
+                    note: 10,
+                    velocity: 127,
+                },
+                0.0,
+            ),
+            Some(-1.0)
+        );
+        assert_eq!(
+            binding.apply(
+                MidiMessage::NoteOff {
+                    channel: 0,
+                    note: 10,
+                },
+                0.0,
+            ),
+            Some(1.0)
+        );
     }
 }

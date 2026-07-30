@@ -63,6 +63,21 @@ impl ProjectFile {
             || !unit(self.settings.master_opacity)
             || !(320..=7680).contains(&self.settings.output.composition_extent[0])
             || !(180..=4320).contains(&self.settings.output.composition_extent[1])
+            || !effect_value(self.settings.audio_analysis.gain, 0.0, 16.0)
+            || !effect_value(self.settings.audio_analysis.noise_floor, 0.0, 0.5)
+            || !effect_value(self.settings.audio_analysis.attack_ms, 1.0, 2_000.0)
+            || !effect_value(self.settings.audio_analysis.release_ms, 1.0, 5_000.0)
+            || !effect_value(
+                self.settings.audio_analysis.transient_sensitivity,
+                0.0,
+                16.0,
+            )
+            || !effect_value(self.settings.audio_analysis.normalization_target, 0.05, 1.0)
+            || !effect_value(
+                self.settings.audio_analysis.normalization_speed_ms,
+                10.0,
+                10_000.0,
+            )
         {
             return Err(ProjectError::InvalidValue(
                 "master settings are outside supported ranges".to_owned(),
@@ -73,6 +88,12 @@ impl ProjectFile {
                 return Err(ProjectError::InvalidShape(format!(
                     "deck {index} expected {CLIPS_PER_DECK} clips, found {}",
                     deck.clips.len()
+                )));
+            }
+            if deck.clip_playback.len() != CLIPS_PER_DECK {
+                return Err(ProjectError::InvalidShape(format!(
+                    "deck {index} expected {CLIPS_PER_DECK} clip playback entries, found {}",
+                    deck.clip_playback.len()
                 )));
             }
             if deck.selected_slot >= CLIPS_PER_DECK
@@ -122,7 +143,7 @@ impl ProjectFile {
                 || deck
                     .mod_routes
                     .iter()
-                    .any(|route| route.source >= 3 || !effect_value(route.amount, -1.0, 1.0))
+                    .any(|route| route.source >= 10 || !effect_value(route.amount, -1.0, 1.0))
                 || deck.camera.as_ref().is_some_and(|camera| {
                     camera.device_id.is_empty()
                         || camera.requested_fps == Some(0)
@@ -131,6 +152,16 @@ impl ProjectFile {
                             .is_some_and(|[width, height]| width == 0 || height == 0)
                 })
                 || (deck.camera.is_some() && deck.active_slot.is_some())
+                || deck.clip_playback.iter().any(|playback| {
+                    !playback.in_point.is_finite()
+                        || playback.in_point < 0.0
+                        || playback
+                            .out_point
+                            .is_some_and(|out| !out.is_finite() || out <= playback.in_point)
+                        || playback.beat_duration.is_some_and(|beats| {
+                            !beats.is_finite() || !(0.0625..=256.0).contains(&beats)
+                        })
+                })
             {
                 return Err(ProjectError::InvalidValue(format!(
                     "deck {index} contains an unsupported value"
@@ -140,6 +171,7 @@ impl ProjectFile {
         for mapping in &self.midi_mappings {
             if mapping.channel > 15
                 || mapping.number > 127
+                || !valid_control_target(mapping.target)
                 || mapping
                     .input_range
                     .iter()
@@ -163,6 +195,39 @@ fn effect_value(value: f32, minimum: f32, maximum: f32) -> bool {
     value.is_finite() && (minimum..=maximum).contains(&value)
 }
 
+fn valid_control_target(target: ControlTargetProject) -> bool {
+    match target {
+        ControlTargetProject::Crossfader
+        | ControlTargetProject::MasterOpacity
+        | ControlTargetProject::MasterBlackout
+        | ControlTargetProject::MasterFreeze
+        | ControlTargetProject::TapTempo => true,
+        ControlTargetProject::DeckLevel { deck }
+        | ControlTargetProject::DeckPlay { deck }
+        | ControlTargetProject::DeckFreeze { deck }
+        | ControlTargetProject::DeckSpeed { deck }
+        | ControlTargetProject::DeckSelect { deck }
+        | ControlTargetProject::DeckRestart { deck } => deck < 4,
+        ControlTargetProject::ClipLaunch { deck, slot } => deck < 4 && slot < 8,
+        ControlTargetProject::SceneLaunch { slot } => slot < 8,
+        ControlTargetProject::EffectParameter {
+            deck,
+            effect,
+            parameter,
+        } => deck < 4 && effect < 14 && parameter == 0,
+        ControlTargetProject::LfoParameter {
+            deck,
+            lfo,
+            parameter,
+        } => deck < 4 && lfo < 3 && parameter < 4,
+        ControlTargetProject::ModRouteParameter {
+            deck,
+            route,
+            parameter,
+        } => deck < 4 && route < 8 && parameter < 2,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProjectSettings {
     pub bpm: f64,
@@ -172,6 +237,8 @@ pub struct ProjectSettings {
     pub master_opacity: f32,
     #[serde(default)]
     pub output: OutputProject,
+    #[serde(default)]
+    pub audio_analysis: AudioAnalysisProject,
 }
 
 impl Default for ProjectSettings {
@@ -183,8 +250,47 @@ impl Default for ProjectSettings {
             equal_power: true,
             master_opacity: 1.0,
             output: OutputProject::default(),
+            audio_analysis: AudioAnalysisProject::default(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AudioAnalysisProject {
+    pub gain: f32,
+    pub noise_floor: f32,
+    pub attack_ms: f32,
+    pub release_ms: f32,
+    pub transient_sensitivity: f32,
+    #[serde(default)]
+    pub normalization: bool,
+    #[serde(default = "default_normalization_target")]
+    pub normalization_target: f32,
+    #[serde(default = "default_normalization_speed")]
+    pub normalization_speed_ms: f32,
+}
+
+impl Default for AudioAnalysisProject {
+    fn default() -> Self {
+        Self {
+            gain: 1.0,
+            noise_floor: 0.01,
+            attack_ms: 20.0,
+            release_ms: 180.0,
+            transient_sensitivity: 2.0,
+            normalization: false,
+            normalization_target: default_normalization_target(),
+            normalization_speed_ms: default_normalization_speed(),
+        }
+    }
+}
+
+fn default_normalization_target() -> f32 {
+    0.5
+}
+
+fn default_normalization_speed() -> f32 {
+    1_000.0
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -224,6 +330,8 @@ pub enum QuantizationProject {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeckProject {
     pub clips: Vec<Option<PathBuf>>,
+    #[serde(default = "default_clip_playback")]
+    pub clip_playback: Vec<ClipPlaybackProject>,
     pub selected_slot: usize,
     pub active_slot: Option<usize>,
     pub level: f32,
@@ -250,6 +358,7 @@ impl Default for DeckProject {
     fn default() -> Self {
         Self {
             clips: vec![None; CLIPS_PER_DECK],
+            clip_playback: default_clip_playback(),
             selected_slot: 0,
             active_slot: None,
             level: 1.0,
@@ -265,6 +374,38 @@ impl Default for DeckProject {
             camera: None,
         }
     }
+}
+
+fn default_clip_playback() -> Vec<ClipPlaybackProject> {
+    vec![ClipPlaybackProject::default(); CLIPS_PER_DECK]
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ClipPlaybackProject {
+    pub in_point: f64,
+    pub out_point: Option<f64>,
+    #[serde(default)]
+    pub launch_mode: ClipLaunchModeProject,
+    pub beat_duration: Option<f64>,
+}
+
+impl Default for ClipPlaybackProject {
+    fn default() -> Self {
+        Self {
+            in_point: 0.0,
+            out_point: None,
+            launch_mode: ClipLaunchModeProject::Restart,
+            beat_duration: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipLaunchModeProject {
+    #[default]
+    Restart,
+    Resume,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -511,6 +652,8 @@ pub enum MappingModeProject {
     Continuous,
     Momentary,
     Toggle,
+    RelativeBinaryOffset,
+    RelativeTwosComplement,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -519,11 +662,19 @@ pub enum ControlTargetProject {
     Crossfader,
     MasterOpacity,
     MasterBlackout,
+    MasterFreeze,
+    TapTempo,
     DeckLevel { deck: u8 },
     DeckPlay { deck: u8 },
     DeckFreeze { deck: u8 },
     DeckSpeed { deck: u8 },
+    DeckSelect { deck: u8 },
+    DeckRestart { deck: u8 },
+    ClipLaunch { deck: u8, slot: u8 },
+    SceneLaunch { slot: u8 },
     EffectParameter { deck: u8, effect: u8, parameter: u8 },
+    LfoParameter { deck: u8, lfo: u8, parameter: u8 },
+    ModRouteParameter { deck: u8, route: u8, parameter: u8 },
 }
 
 impl Default for EffectProject {
@@ -712,7 +863,7 @@ mod tests {
         };
         project.decks[1].mod_routes[0] = ModRouteProject {
             enabled: true,
-            source: 0,
+            source: 9,
             target: EffectTargetProject::Jitter,
             amount: -0.6,
         };
@@ -736,17 +887,37 @@ mod tests {
             identify: true,
             composition_extent: [3840, 2160],
         };
+        project.settings.audio_analysis = AudioAnalysisProject {
+            gain: 2.5,
+            noise_floor: 0.03,
+            attack_ms: 8.0,
+            release_ms: 240.0,
+            transient_sensitivity: 3.5,
+            normalization: true,
+            normalization_target: 0.6,
+            normalization_speed_ms: 750.0,
+        };
         project.settings.bpm = 128.0;
+        project.decks[0].clip_playback[3] = ClipPlaybackProject {
+            in_point: 1.25,
+            out_point: Some(9.5),
+            launch_mode: ClipLaunchModeProject::Resume,
+            beat_duration: Some(8.0),
+        };
         project.midi_mappings.push(MidiMappingProject {
             device: "controller".to_owned(),
             channel: 0,
             message: MidiMessageProject::ControlChange,
             number: 7,
-            target: ControlTargetProject::Crossfader,
+            target: ControlTargetProject::LfoParameter {
+                deck: 2,
+                lfo: 1,
+                parameter: 2,
+            },
             input_range: [0.0, 1.0],
             output_range: [0.0, 1.0],
             invert: false,
-            mode: MappingModeProject::Continuous,
+            mode: MappingModeProject::RelativeTwosComplement,
             soft_takeover: true,
             feedback: Some("ring".to_owned()),
         });
@@ -774,6 +945,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_out_of_range_midi_targets() {
+        let mut project = ProjectFile::default();
+        project.midi_mappings.push(MidiMappingProject {
+            device: "controller".to_owned(),
+            channel: 0,
+            message: MidiMessageProject::Note,
+            number: 1,
+            target: ControlTargetProject::ClipLaunch { deck: 4, slot: 0 },
+            input_range: [0.0, 1.0],
+            output_range: [0.0, 1.0],
+            invert: false,
+            mode: MappingModeProject::Momentary,
+            soft_takeover: false,
+            feedback: None,
+        });
+        assert!(matches!(
+            project.validate(),
+            Err(ProjectError::InvalidValue(_))
+        ));
+    }
+
+    #[test]
     fn derives_saved_and_untitled_autosave_paths() {
         let workspace = Path::new("/shows");
         assert_eq!(
@@ -795,6 +988,11 @@ mod tests {
             .unwrap()
             .remove("output")
             .unwrap();
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("audio_analysis")
+            .unwrap();
         value
             .as_object_mut()
             .unwrap()
@@ -808,6 +1006,7 @@ mod tests {
             deck.remove("bypassed").unwrap();
             deck.remove("lfos").unwrap();
             deck.remove("mod_routes").unwrap();
+            deck.remove("clip_playback").unwrap();
             let effects = deck["effects"].as_object_mut().unwrap();
             for field in [
                 "hue",
@@ -826,6 +1025,12 @@ mod tests {
         }
         let project: ProjectFile = serde_json::from_value(value).unwrap();
         assert!(project.midi_mappings.is_empty());
+        assert!(
+            project
+                .decks
+                .iter()
+                .all(|deck| deck.clip_playback == default_clip_playback())
+        );
         assert!(project.decks.iter().all(|deck| deck.lfos == default_lfos()));
         assert!(
             project
@@ -918,6 +1123,39 @@ mod tests {
                 .decks
                 .iter()
                 .all(|deck| !deck.solo && !deck.bypassed)
+        );
+        project.validate().unwrap();
+    }
+
+    #[test]
+    fn projects_saved_before_audio_analysis_receive_safe_defaults() {
+        let mut value = serde_json::to_value(ProjectFile::default()).unwrap();
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("audio_analysis")
+            .unwrap();
+        let project: ProjectFile = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            project.settings.audio_analysis,
+            AudioAnalysisProject::default()
+        );
+        project.validate().unwrap();
+    }
+
+    #[test]
+    fn early_audio_settings_default_to_manual_gain() {
+        let mut value = serde_json::to_value(ProjectFile::default()).unwrap();
+        let audio = value["settings"]["audio_analysis"].as_object_mut().unwrap();
+        audio.remove("normalization").unwrap();
+        audio.remove("normalization_target").unwrap();
+        audio.remove("normalization_speed_ms").unwrap();
+        let project: ProjectFile = serde_json::from_value(value).unwrap();
+        assert!(!project.settings.audio_analysis.normalization);
+        assert_eq!(project.settings.audio_analysis.normalization_target, 0.5);
+        assert_eq!(
+            project.settings.audio_analysis.normalization_speed_ms,
+            1_000.0
         );
         project.validate().unwrap();
     }
