@@ -78,6 +78,7 @@ impl ProjectFile {
                 10.0,
                 10_000.0,
             )
+            || !valid_master_effects(&self.settings.master_effects)
         {
             return Err(ProjectError::InvalidValue(
                 "master settings are outside supported ranges".to_owned(),
@@ -132,6 +133,7 @@ impl ProjectFile {
                 || !unit(deck.effects.find_edges)
                 || !unit(deck.effects.bit_reduction)
                 || !unit(deck.effects.blacklight)
+                || !valid_effect_slots(&deck.effects.slots)
                 || deck.lfos.len() > 3
                 || deck.lfos.iter().any(|lfo| {
                     !effect_value(lfo.rate_hz, 0.01, 20.0)
@@ -195,6 +197,23 @@ fn effect_value(value: f32, minimum: f32, maximum: f32) -> bool {
     value.is_finite() && (minimum..=maximum).contains(&value)
 }
 
+fn valid_effect_slots(slots: &[EffectSlotProject]) -> bool {
+    slots.len() == 3
+        && slots.iter().all(|slot| unit(slot.mix))
+        && EffectGroupProject::ALL
+            .into_iter()
+            .all(|group| slots.iter().filter(|slot| slot.group == group).count() == 1)
+}
+
+fn valid_master_effects(effects: &MasterEffectsProject) -> bool {
+    effects.slots.len() == 2
+        && effects.slots.iter().all(|slot| {
+            unit(slot.mix)
+                && effect_value(slot.amount, 0.0, 32.0)
+                && effect_value(slot.feedback, 0.0, 0.99)
+        })
+}
+
 fn valid_control_target(target: ControlTargetProject) -> bool {
     match target {
         ControlTargetProject::Crossfader
@@ -239,6 +258,8 @@ pub struct ProjectSettings {
     pub output: OutputProject,
     #[serde(default)]
     pub audio_analysis: AudioAnalysisProject,
+    #[serde(default)]
+    pub master_effects: MasterEffectsProject,
 }
 
 impl Default for ProjectSettings {
@@ -251,8 +272,69 @@ impl Default for ProjectSettings {
             master_opacity: 1.0,
             output: OutputProject::default(),
             audio_analysis: AudioAnalysisProject::default(),
+            master_effects: MasterEffectsProject::default(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MasterEffectKindProject {
+    #[default]
+    None,
+    Blur,
+    Feedback,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MasterEffectSlotProject {
+    pub kind: MasterEffectKindProject,
+    #[serde(default)]
+    pub bypassed: bool,
+    #[serde(default = "one")]
+    pub mix: f32,
+    #[serde(default = "default_blur_amount")]
+    pub amount: f32,
+    #[serde(default = "default_feedback_amount")]
+    pub feedback: f32,
+}
+
+impl Default for MasterEffectSlotProject {
+    fn default() -> Self {
+        Self {
+            kind: MasterEffectKindProject::None,
+            bypassed: false,
+            mix: 1.0,
+            amount: default_blur_amount(),
+            feedback: default_feedback_amount(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MasterEffectsProject {
+    #[serde(default = "default_master_effect_slots")]
+    pub slots: Vec<MasterEffectSlotProject>,
+}
+
+impl Default for MasterEffectsProject {
+    fn default() -> Self {
+        Self {
+            slots: default_master_effect_slots(),
+        }
+    }
+}
+
+fn default_master_effect_slots() -> Vec<MasterEffectSlotProject> {
+    vec![MasterEffectSlotProject::default(); 2]
+}
+
+fn default_blur_amount() -> f32 {
+    8.0
+}
+
+fn default_feedback_amount() -> f32 {
+    0.85
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -495,6 +577,8 @@ pub enum EndModeProject {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EffectProject {
+    #[serde(default = "default_effect_slots")]
+    pub slots: Vec<EffectSlotProject>,
     pub contrast: f32,
     pub saturation: f32,
     #[serde(default)]
@@ -520,6 +604,38 @@ pub struct EffectProject {
     #[serde(default)]
     pub blacklight: f32,
     pub mirror: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectGroupProject {
+    Geometry,
+    Color,
+    Stylize,
+}
+
+impl EffectGroupProject {
+    const ALL: [Self; 3] = [Self::Geometry, Self::Color, Self::Stylize];
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EffectSlotProject {
+    pub group: EffectGroupProject,
+    #[serde(default)]
+    pub bypassed: bool,
+    #[serde(default = "one")]
+    pub mix: f32,
+}
+
+fn default_effect_slots() -> Vec<EffectSlotProject> {
+    EffectGroupProject::ALL
+        .into_iter()
+        .map(|group| EffectSlotProject {
+            group,
+            bypassed: false,
+            mix: 1.0,
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -680,6 +796,7 @@ pub enum ControlTargetProject {
 impl Default for EffectProject {
     fn default() -> Self {
         Self {
+            slots: default_effect_slots(),
             contrast: 1.0,
             saturation: 1.0,
             hue: 0.0,
@@ -877,6 +994,9 @@ mod tests {
             source_mode: SourceModeProject::Fill,
         };
         project.decks[0].blend_mode = BlendModeProject::Screen;
+        project.decks[0].effects.slots.swap(0, 2);
+        project.decks[0].effects.slots[1].bypassed = true;
+        project.decks[0].effects.slots[2].mix = 0.35;
         project.decks[0].solo = true;
         project.decks[2].bypassed = true;
         project.settings.output = OutputProject {
@@ -897,6 +1017,21 @@ mod tests {
             normalization_target: 0.6,
             normalization_speed_ms: 750.0,
         };
+        project.settings.master_effects.slots[0] = MasterEffectSlotProject {
+            kind: MasterEffectKindProject::Blur,
+            bypassed: false,
+            mix: 0.65,
+            amount: 14.0,
+            feedback: 0.85,
+        };
+        project.settings.master_effects.slots[1] = MasterEffectSlotProject {
+            kind: MasterEffectKindProject::Feedback,
+            bypassed: false,
+            mix: 0.8,
+            amount: 8.0,
+            feedback: 0.92,
+        };
+        project.settings.master_effects.slots.swap(0, 1);
         project.settings.bpm = 128.0;
         project.decks[0].clip_playback[3] = ClipPlaybackProject {
             in_point: 1.25,
@@ -967,6 +1102,47 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_or_invalid_effect_slots() {
+        let mut project = ProjectFile::default();
+        project.decks[0].effects.slots[1].group = project.decks[0].effects.slots[0].group;
+        assert!(matches!(
+            project.validate(),
+            Err(ProjectError::InvalidValue(_))
+        ));
+
+        project = ProjectFile::default();
+        project.decks[0].effects.slots[0].mix = 1.5;
+        assert!(matches!(
+            project.validate(),
+            Err(ProjectError::InvalidValue(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_master_effect_slots() {
+        let mut project = ProjectFile::default();
+        project.settings.master_effects.slots.pop();
+        assert!(matches!(
+            project.validate(),
+            Err(ProjectError::InvalidValue(_))
+        ));
+
+        project = ProjectFile::default();
+        project.settings.master_effects.slots[0].amount = 64.0;
+        assert!(matches!(
+            project.validate(),
+            Err(ProjectError::InvalidValue(_))
+        ));
+
+        project = ProjectFile::default();
+        project.settings.master_effects.slots[0].feedback = 1.0;
+        assert!(matches!(
+            project.validate(),
+            Err(ProjectError::InvalidValue(_))
+        ));
+    }
+
+    #[test]
     fn derives_saved_and_untitled_autosave_paths() {
         let workspace = Path::new("/shows");
         assert_eq!(
@@ -993,6 +1169,11 @@ mod tests {
             .unwrap()
             .remove("audio_analysis")
             .unwrap();
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("master_effects")
+            .unwrap();
         value
             .as_object_mut()
             .unwrap()
@@ -1008,6 +1189,7 @@ mod tests {
             deck.remove("mod_routes").unwrap();
             deck.remove("clip_playback").unwrap();
             let effects = deck["effects"].as_object_mut().unwrap();
+            effects.remove("slots").unwrap();
             for field in [
                 "hue",
                 "black_level",

@@ -17,7 +17,8 @@ use oneiroi_media::{
     DeckState, DeckTransport, EndMode, FourDeckMixer, LaunchQueue, MediaHealth,
 };
 use oneiroi_render::{
-    DeckEffects, DeckLfos, DeckTransform, EffectTarget, LayerBlendMode, LfoWaveform, SourceMode,
+    DeckEffects, DeckLfos, DeckTransform, EffectPreset, EffectTarget, LayerBlendMode, LfoWaveform,
+    MasterEffectChain, MasterEffectKind, SourceMode,
 };
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.
@@ -34,6 +35,9 @@ pub struct UiState {
     pub output_identify: bool,
     pub composition_extent: [u32; 2],
     pub custom_composition_extent: [u32; 2],
+    pub master_effects: MasterEffectChain,
+    pub effect_manifest_path: String,
+    pub effect_reload_status: String,
     pub effects: [DeckEffects; 4],
     pub transforms: [DeckTransform; 4],
     pub blend_modes: [LayerBlendMode; 4],
@@ -71,6 +75,9 @@ impl Default for UiState {
             output_identify: false,
             composition_extent: [1920, 1080],
             custom_composition_extent: [1920, 1080],
+            master_effects: MasterEffectChain::default(),
+            effect_manifest_path: "effects/master-effects/effect.json".to_owned(),
+            effect_reload_status: "Built-in master effect pipeline".to_owned(),
             effects: [DeckEffects::default(); 4],
             transforms: [DeckTransform::default(); 4],
             blend_modes: [LayerBlendMode::Normal; 4],
@@ -218,6 +225,8 @@ pub enum UiAction {
     SetOutputFullscreen(bool),
     SetOutputDisplay(String),
     SetCompositionExtent([u32; 2]),
+    WatchEffectManifest,
+    ReloadEffectManifest,
     RefreshDisplays,
     RefreshCameras,
     RefreshAudioInputs,
@@ -796,6 +805,90 @@ pub fn draw(
                 }
                 ui.checkbox(&mut state.master_freeze, "master freeze");
             });
+            egui::CollapsingHeader::new("Master effects")
+                .default_open(false)
+                .show(ui, |ui| {
+                    let slot_count = state.master_effects.slots.len();
+                    let mut reorder = None;
+                    for index in 0..slot_count {
+                        ui.group(|ui| {
+                            let slot = &mut state.master_effects.slots[index];
+                            ui.horizontal(|ui| {
+                                ui.monospace(format!("{}", index + 1));
+                                egui::ComboBox::from_id_salt(format!("master-fx-kind-{index}"))
+                                    .selected_text(slot.kind.label())
+                                    .show_ui(ui, |ui| {
+                                        for kind in MasterEffectKind::ALL {
+                                            ui.selectable_value(
+                                                &mut slot.kind,
+                                                kind,
+                                                kind.label(),
+                                            );
+                                        }
+                                    });
+                                ui.checkbox(&mut slot.bypassed, "Bypass");
+                                ui.add(
+                                    egui::Slider::new(&mut slot.mix, 0.0..=1.0).text("wet"),
+                                );
+                                if ui
+                                    .add_enabled(index > 0, egui::Button::new("↑"))
+                                    .clicked()
+                                {
+                                    reorder = Some((index, index - 1));
+                                }
+                                if ui
+                                    .add_enabled(
+                                        index + 1 < slot_count,
+                                        egui::Button::new("↓"),
+                                    )
+                                    .clicked()
+                                {
+                                    reorder = Some((index, index + 1));
+                                }
+                            });
+                            if slot.kind == MasterEffectKind::Blur {
+                                ui.add(
+                                    egui::Slider::new(&mut slot.amount, 0.0..=32.0)
+                                        .text("radius px"),
+                                );
+                            } else if slot.kind == MasterEffectKind::Feedback {
+                                ui.add(
+                                    egui::Slider::new(&mut slot.feedback, 0.0..=0.99)
+                                        .text("persistence"),
+                                );
+                            }
+                        });
+                    }
+                    if let Some((from, to)) = reorder {
+                        state.master_effects.slots.swap(from, to);
+                    }
+                    if ui.button("Reset master effects").clicked() {
+                        state.master_effects = MasterEffectChain::default();
+                    }
+                    state.master_effects = state.master_effects.sanitized();
+                    ui.weak(
+                        "Blur uses fixed ping-pong textures allocated with the composition target.",
+                    );
+                    ui.separator();
+                    ui.label("Effect package");
+                    ui.text_edit_singleline(&mut state.effect_manifest_path);
+                    ui.horizontal(|ui| {
+                        if ui.button("Watch").clicked() {
+                            actions.push(UiAction::WatchEffectManifest);
+                        }
+                        if ui.button("Reload now").clicked() {
+                            actions.push(UiAction::ReloadEffectManifest);
+                        }
+                    });
+                    if state.effect_reload_status.contains("rejected") {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(255, 190, 80),
+                            &state.effect_reload_status,
+                        );
+                    } else {
+                        ui.weak(&state.effect_reload_status);
+                    }
+                });
         });
     actions
 }
@@ -1611,6 +1704,54 @@ fn draw_deck(
         egui::CollapsingHeader::new("GPU effects")
             .id_salt(format!("effects-{}", id.label()))
             .show(ui, |ui| {
+                ui.strong("Effect chain");
+                let mut reorder = None;
+                let slot_count = effects.slots.len();
+                for index in 0..slot_count {
+                    ui.horizontal(|ui| {
+                        let slot = &mut effects.slots[index];
+                        ui.monospace(format!("{}", index + 1));
+                        ui.label(slot.group.label());
+                        ui.checkbox(&mut slot.bypassed, "Bypass");
+                        ui.add(
+                            egui::Slider::new(&mut slot.mix, 0.0..=1.0)
+                                .text("wet")
+                                .show_value(true),
+                        );
+                        if ui
+                            .add_enabled(index > 0, egui::Button::new("↑"))
+                            .on_hover_text("Move earlier")
+                            .clicked()
+                        {
+                            reorder = Some((index, index - 1));
+                        }
+                        if ui
+                            .add_enabled(index + 1 < slot_count, egui::Button::new("↓"))
+                            .on_hover_text("Move later")
+                            .clicked()
+                        {
+                            reorder = Some((index, index + 1));
+                        }
+                    });
+                }
+                if let Some((from, to)) = reorder {
+                    effects.slots.swap(from, to);
+                }
+                ui.horizontal(|ui| {
+                    ui.menu_button("Load preset", |ui| {
+                        for preset in EffectPreset::ALL {
+                            if ui.button(preset.label()).clicked() {
+                                *effects = DeckEffects::preset(preset);
+                                ui.close();
+                            }
+                        }
+                    });
+                    if ui.button("Reset chain").clicked() {
+                        *effects = DeckEffects::default();
+                    }
+                    ui.weak("Top to bottom · each slot has bypass and dry/wet.");
+                });
+                ui.separator();
                 ui.columns(2, |columns| {
                     columns[0].label("Color");
                     columns[0].add(egui::Slider::new(&mut effects.hue, -1.0..=1.0).text("hue"));

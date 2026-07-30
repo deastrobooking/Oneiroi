@@ -181,13 +181,19 @@ Acceptance criteria:
 ## Phase 6: effect-chain architecture
 
 1. Replace the monolithic fixed effect struct with three reorderable deck slots
-   and two master slots.
-2. Add common bypass, dry/wet, reset and preset behavior.
-3. Implement separable blur.
-4. Implement persistent feedback/trails textures.
-5. Define effect manifests and validated parameter schemas.
+   and two master slots. (implemented)
+2. Add common bypass, dry/wet, reset and preset behavior. (implemented for
+   deck slots with four factory presets)
+3. Implement separable blur. (implemented in the master chain with fixed
+   ping-pong targets)
+4. Implement persistent feedback/trails textures. (implemented with bounded
+   final-frame history and deterministic lifecycle resets)
+5. Define effect manifests and validated parameter schemas. (implemented for
+   the master shader package with version, identity, path, entry-point and
+   control-range validation)
 6. Compile changed WGSL away from presentation and retain the last valid
-   pipeline after errors.
+   pipeline after errors. (implemented with background polling/compilation,
+   GPU error scopes and an atomic render-thread pipeline swap)
 
 Acceptance criteria:
 

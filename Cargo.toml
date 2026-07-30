@@ -40,6 +40,7 @@ env_logger = "0.11"
 ffmpeg-next = { version = "8.1.0", default-features = false, features = ["device", "format", "software-scaling"] }
 log = "0.4"
 midir = "0.10"
+naga = { version = "29.0", features = ["wgsl-in"] }
 pollster = "0.4"
 rustfft = "6"
 rfd = "0.15"

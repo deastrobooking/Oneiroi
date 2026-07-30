@@ -424,6 +424,55 @@ fn expanded_effects_each_change_a_patterned_source() {
 }
 
 #[test]
+fn effect_slots_apply_bypass_dry_wet_and_order() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer.upload(&device, &queue, 0, &pattern()).unwrap();
+    let render_effect = |mixer: &mut FourDeckCompositor, effect| {
+        render(
+            &device,
+            &queue,
+            mixer,
+            MixerParams {
+                effects: [
+                    effect,
+                    DeckEffects::default(),
+                    DeckEffects::default(),
+                    DeckEffects::default(),
+                ],
+                ..Default::default()
+            },
+        )
+    };
+
+    let base = render_effect(&mut mixer, DeckEffects::default());
+    let full_effect = DeckEffects {
+        saturation: 0.0,
+        blacklight: 1.0,
+        ..Default::default()
+    };
+    let full = render_effect(&mut mixer, full_effect);
+    assert_ne!(full, base);
+
+    let mut bypassed = full_effect;
+    bypassed.slots[1].bypassed = true;
+    bypassed.slots[2].bypassed = true;
+    assert_eq!(render_effect(&mut mixer, bypassed), base);
+
+    let mut dry = full_effect;
+    dry.slots[1].mix = 0.0;
+    dry.slots[2].mix = 0.0;
+    assert_eq!(render_effect(&mut mixer, dry), base);
+
+    let mut reordered = full_effect;
+    reordered.slots.swap(1, 2);
+    assert_ne!(render_effect(&mut mixer, reordered), full);
+}
+
+#[test]
 fn layer_transforms_change_an_asymmetric_source() {
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter; skipping");

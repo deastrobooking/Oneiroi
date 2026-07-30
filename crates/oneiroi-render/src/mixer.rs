@@ -27,6 +27,15 @@ struct MixerGlobals {
     bit_reduction: [f32; 4],
     blacklight: [f32; 4],
     mirror: [u32; 4],
+    effect_slot_groups_0: [u32; 4],
+    effect_slot_groups_1: [u32; 4],
+    effect_slot_groups_2: [u32; 4],
+    effect_slot_enabled_0: [u32; 4],
+    effect_slot_enabled_1: [u32; 4],
+    effect_slot_enabled_2: [u32; 4],
+    effect_slot_mix_0: [f32; 4],
+    effect_slot_mix_1: [f32; 4],
+    effect_slot_mix_2: [f32; 4],
     position_x: [f32; 4],
     position_y: [f32; 4],
     scale: [f32; 4],
@@ -49,8 +58,90 @@ struct MixerGlobals {
     _padding_b: u32,
 }
 
+pub const EFFECT_SLOTS_PER_DECK: usize = 3;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum EffectGroup {
+    #[default]
+    Color,
+    Geometry,
+    Stylize,
+}
+
+impl EffectGroup {
+    pub const ALL: [Self; EFFECT_SLOTS_PER_DECK] = [Self::Color, Self::Geometry, Self::Stylize];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Color => "Color + levels",
+            Self::Geometry => "Geometry",
+            Self::Stylize => "Stylize + key",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EffectSlot {
+    pub group: EffectGroup,
+    pub bypassed: bool,
+    pub mix: f32,
+}
+
+impl EffectSlot {
+    pub const fn new(group: EffectGroup) -> Self {
+        Self {
+            group,
+            bypassed: false,
+            mix: 1.0,
+        }
+    }
+
+    pub fn sanitized(mut self) -> Self {
+        self.mix = if self.mix.is_finite() {
+            self.mix.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        self
+    }
+}
+
+impl Default for EffectSlot {
+    fn default() -> Self {
+        Self::new(EffectGroup::Color)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum EffectPreset {
+    #[default]
+    Neutral,
+    NeonNight,
+    Blacklight,
+    Glitch,
+}
+
+impl EffectPreset {
+    pub const ALL: [Self; 4] = [
+        Self::Neutral,
+        Self::NeonNight,
+        Self::Blacklight,
+        Self::Glitch,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Neutral => "Neutral",
+            Self::NeonNight => "Neon night",
+            Self::Blacklight => "Blacklight",
+            Self::Glitch => "Glitch",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DeckEffects {
+    pub slots: [EffectSlot; EFFECT_SLOTS_PER_DECK],
     /// 1.0 is neutral.
     pub contrast: f32,
     /// 1.0 is neutral, 0.0 is monochrome.
@@ -77,6 +168,11 @@ pub struct DeckEffects {
 impl Default for DeckEffects {
     fn default() -> Self {
         Self {
+            slots: [
+                EffectSlot::new(EffectGroup::Geometry),
+                EffectSlot::new(EffectGroup::Color),
+                EffectSlot::new(EffectGroup::Stylize),
+            ],
             contrast: 1.0,
             saturation: 1.0,
             hue: 0.0,
@@ -97,7 +193,33 @@ impl Default for DeckEffects {
 }
 
 impl DeckEffects {
+    pub fn preset(preset: EffectPreset) -> Self {
+        let mut effects = Self::default();
+        match preset {
+            EffectPreset::Neutral => {}
+            EffectPreset::NeonNight => {
+                effects.contrast = 1.2;
+                effects.saturation = 1.4;
+                effects.neon = 0.85;
+                effects.find_edges = 0.2;
+            }
+            EffectPreset::Blacklight => {
+                effects.contrast = 1.15;
+                effects.saturation = 1.35;
+                effects.blacklight = 1.0;
+            }
+            EffectPreset::Glitch => {
+                effects.fractal = 0.3;
+                effects.jitter = 0.65;
+                effects.bit_reduction = 0.55;
+                effects.blacklight = 0.15;
+            }
+        }
+        effects
+    }
+
     pub fn sanitized(mut self) -> Self {
+        self.slots = self.slots.map(EffectSlot::sanitized);
         self.contrast = self.contrast.clamp(0.0, 4.0);
         self.saturation = self.saturation.clamp(0.0, 4.0);
         self.hue = self.hue.clamp(-1.0, 1.0);
@@ -662,6 +784,16 @@ impl FourDeckCompositor {
             }
         });
         let float_values = |read: fn(DeckEffects) -> f32| effects.map(read);
+        let slot_groups = |slot: usize| {
+            effects.map(|effect| match effect.slots[slot].group {
+                EffectGroup::Geometry => 0,
+                EffectGroup::Color => 1,
+                EffectGroup::Stylize => 2,
+            })
+        };
+        let slot_enabled =
+            |slot: usize| effects.map(|effect| u32::from(!effect.slots[slot].bypassed));
+        let slot_mix = |slot: usize| effects.map(|effect| effect.slots[slot].mix);
         queue.write_buffer(
             &self.globals,
             0,
@@ -683,6 +815,15 @@ impl FourDeckCompositor {
                 bit_reduction: float_values(|effect| effect.bit_reduction),
                 blacklight: float_values(|effect| effect.blacklight),
                 mirror: effects.map(|effect| u32::from(effect.mirror)),
+                effect_slot_groups_0: slot_groups(0),
+                effect_slot_groups_1: slot_groups(1),
+                effect_slot_groups_2: slot_groups(2),
+                effect_slot_enabled_0: slot_enabled(0),
+                effect_slot_enabled_1: slot_enabled(1),
+                effect_slot_enabled_2: slot_enabled(2),
+                effect_slot_mix_0: slot_mix(0),
+                effect_slot_mix_1: slot_mix(1),
+                effect_slot_mix_2: slot_mix(2),
                 position_x: transforms.map(|transform| transform.position[0]),
                 position_y: transforms.map(|transform| transform.position[1]),
                 scale: transforms.map(|transform| transform.scale),
@@ -951,6 +1092,44 @@ fn write_rgba(queue: &wgpu::Queue, texture: &wgpu::Texture, frame: &RgbaFrame) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mixer_shader_parses_and_validates_without_a_gpu_adapter() {
+        let module = naga::front::wgsl::parse_str(include_str!("../shaders/mixer.wgsl"))
+            .expect("parse mixer shader");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("validate mixer shader");
+    }
+
+    #[test]
+    fn effect_chain_defaults_presets_and_mix_sanitize() {
+        let default = DeckEffects::default();
+        assert_eq!(
+            default.slots.map(|slot| slot.group),
+            [
+                EffectGroup::Geometry,
+                EffectGroup::Color,
+                EffectGroup::Stylize
+            ]
+        );
+
+        let neon = DeckEffects::preset(EffectPreset::NeonNight);
+        assert!(neon.neon > 0.0);
+        assert!(neon.saturation > 1.0);
+
+        let mut invalid = default;
+        invalid.slots[0].mix = f32::NAN;
+        invalid.slots[1].mix = -1.0;
+        invalid.slots[2].mix = 2.0;
+        let sanitized = invalid.sanitized();
+        assert_eq!(sanitized.slots[0].mix, 1.0);
+        assert_eq!(sanitized.slots[1].mix, 0.0);
+        assert_eq!(sanitized.slots[2].mix, 1.0);
+    }
 
     #[test]
     fn lfo_waveforms_have_expected_quarter_cycle_values() {

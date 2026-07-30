@@ -4,17 +4,20 @@ use oneiroi_core::{
 };
 use oneiroi_io::{
     AudioAnalysisProject, BlendModeProject, CameraProject, ClipLaunchModeProject,
-    ClipPlaybackProject, ControlTargetProject, CrossfadeBusProject, DeckProject, EffectProject,
-    EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject,
-    MidiMappingProject, MidiMessageProject, ModRouteProject, OutputProject, ProjectFile,
-    ProjectSettings, QuantizationProject, SourceModeProject, TransformProject, TransportProject,
+    ClipPlaybackProject, ControlTargetProject, CrossfadeBusProject, DeckProject,
+    EffectGroupProject, EffectProject, EffectSlotProject, EffectTargetProject, EndModeProject,
+    LfoProject, LfoWaveformProject, MappingModeProject, MasterEffectKindProject,
+    MasterEffectSlotProject, MasterEffectsProject, MidiMappingProject, MidiMessageProject,
+    ModRouteProject, OutputProject, ProjectFile, ProjectSettings, QuantizationProject,
+    SourceModeProject, TransformProject, TransportProject,
 };
 use oneiroi_media::{
     CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipLaunchMode,
     ClipPlayback, CrossfadeBus, DeckId, DeckTransport, EndMode, FourDeckMixer,
 };
 use oneiroi_render::{
-    DeckEffects, DeckLfos, DeckTransform, EffectLfo, EffectTarget, LayerBlendMode, LfoWaveform,
+    DeckEffects, DeckLfos, DeckTransform, EffectGroup, EffectLfo, EffectSlot, EffectTarget,
+    LayerBlendMode, LfoWaveform, MasterEffectChain, MasterEffectKind, MasterEffectSlot,
     ModulationRoute, SourceMode,
 };
 
@@ -44,6 +47,7 @@ pub fn snapshot(
                 composition_extent: ui.composition_extent,
             },
             audio_analysis: audio_analysis_to_project(ui.audio_analysis),
+            master_effects: master_effects_to_project(ui.master_effects),
         },
         decks: DeckId::ALL
             .into_iter()
@@ -191,8 +195,47 @@ pub fn apply_master(project: &ProjectFile, ui: &mut UiState) {
     ui.composition_extent = project.settings.output.composition_extent;
     ui.custom_composition_extent = project.settings.output.composition_extent;
     ui.audio_analysis = audio_analysis_from_project(project.settings.audio_analysis);
+    ui.master_effects = master_effects_from_project(&project.settings.master_effects);
     ui.blackout = false;
     ui.master_freeze = false;
+}
+
+fn master_effects_to_project(effects: MasterEffectChain) -> MasterEffectsProject {
+    MasterEffectsProject {
+        slots: effects
+            .slots
+            .into_iter()
+            .map(|slot| MasterEffectSlotProject {
+                kind: match slot.kind {
+                    MasterEffectKind::None => MasterEffectKindProject::None,
+                    MasterEffectKind::Blur => MasterEffectKindProject::Blur,
+                    MasterEffectKind::Feedback => MasterEffectKindProject::Feedback,
+                },
+                bypassed: slot.bypassed,
+                mix: slot.mix,
+                amount: slot.amount,
+                feedback: slot.feedback,
+            })
+            .collect(),
+    }
+}
+
+fn master_effects_from_project(effects: &MasterEffectsProject) -> MasterEffectChain {
+    let mut result = MasterEffectChain::default();
+    for (destination, source) in result.slots.iter_mut().zip(&effects.slots) {
+        *destination = MasterEffectSlot {
+            kind: match source.kind {
+                MasterEffectKindProject::None => MasterEffectKind::None,
+                MasterEffectKindProject::Blur => MasterEffectKind::Blur,
+                MasterEffectKindProject::Feedback => MasterEffectKind::Feedback,
+            },
+            bypassed: source.bypassed,
+            mix: source.mix,
+            amount: source.amount,
+            feedback: source.feedback,
+        };
+    }
+    result.sanitized()
 }
 
 pub fn apply_deck(
@@ -323,6 +366,19 @@ fn transform_from_project(transform: TransformProject) -> DeckTransform {
 
 fn effect_to_project(effect: DeckEffects) -> EffectProject {
     EffectProject {
+        slots: effect
+            .slots
+            .into_iter()
+            .map(|slot| EffectSlotProject {
+                group: match slot.group {
+                    EffectGroup::Geometry => EffectGroupProject::Geometry,
+                    EffectGroup::Color => EffectGroupProject::Color,
+                    EffectGroup::Stylize => EffectGroupProject::Stylize,
+                },
+                bypassed: slot.bypassed,
+                mix: slot.mix,
+            })
+            .collect(),
         contrast: effect.contrast,
         saturation: effect.saturation,
         hue: effect.hue,
@@ -342,7 +398,7 @@ fn effect_to_project(effect: DeckEffects) -> EffectProject {
 }
 
 fn effect_from_project(effect: &EffectProject) -> DeckEffects {
-    DeckEffects {
+    let mut result = DeckEffects {
         contrast: effect.contrast,
         saturation: effect.saturation,
         hue: effect.hue,
@@ -358,7 +414,20 @@ fn effect_from_project(effect: &EffectProject) -> DeckEffects {
         bit_reduction: effect.bit_reduction,
         blacklight: effect.blacklight,
         mirror: effect.mirror,
+        ..DeckEffects::default()
+    };
+    for (destination, source) in result.slots.iter_mut().zip(&effect.slots) {
+        *destination = EffectSlot {
+            group: match source.group {
+                EffectGroupProject::Geometry => EffectGroup::Geometry,
+                EffectGroupProject::Color => EffectGroup::Color,
+                EffectGroupProject::Stylize => EffectGroup::Stylize,
+            },
+            bypassed: source.bypassed,
+            mix: source.mix,
+        };
     }
+    result.sanitized()
 }
 
 fn lfo_to_project(lfo: EffectLfo) -> LfoProject {

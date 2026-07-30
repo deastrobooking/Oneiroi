@@ -53,6 +53,19 @@ remains before the milestone is stage-certified.
   reporting and recovery. Accelerated lease, seek-generation and real FFmpeg
   reopen soaks enforce bounded allocations and stale-frame rejection; an
   opt-in 10,000-reopen target is available for release candidates.
+- The fixed deck effects are now organized as three reorderable persisted
+  groups with shared bypass/dry-wet/reset behavior and factory presets.
+- Two persisted master slots now route through a bounded post-composite graph.
+  Separable blur reuses fixed horizontal scratch and ping textures, while an
+  inactive chain retains the direct composition path.
+- Persistent feedback samples the previous final program frame and owns
+  explicit reset behavior for source/project/resolution/blackout/disable
+  transitions. Master freeze now holds both final output and history.
+- The master shader now has a versioned, path-safe package manifest with
+  validated parameter ranges and WGSL entry points. Candidate pipelines compile
+  on a watcher worker and replace the render pipeline only after validation;
+  failures preserve the last-known-good output and remain visible to the
+  operator.
 - Scene launch, quantization, tempo, transport, effects, LFOs and modulation
   routes form a coherent playable instrument.
 - Save, autosave, recovery and asynchronous restoration are already integrated.
@@ -61,7 +74,7 @@ remains before the milestone is stage-certified.
 
 - Project values are validated before application.
 - Version-one projects migrate to the current version-two schema.
-- The workspace currently passes 128 tests and strict Clippy, with one extended
+- The workspace currently passes 142 tests and strict Clippy, with one extended
   decoder soak available as an opt-in ignored test.
 
 ## Stage-critical gaps
@@ -111,15 +124,17 @@ Recommended boundaries:
 - `actions.rs`: UI and keyboard action dispatch
 - UI panels split by toolbar, clips, deck/effects and diagnostics
 
-### Monolithic compositor and effect shader
+### Arbitrary effect registration is not yet implemented
 
-The compositor Rust module and mixer WGSL now contain source interpretation,
-UV effects, color effects, edge sampling, modulation structures and
-composition. Adding transforms, blend modes, blur and feedback directly to this
-shader would make validation and performance harder.
+Deck and master chains now provide ordered slots, common controls, bounded blur
+and deterministic feedback history. The master shader package now has a
+validated external manifest and safe last-known-good hot reload. Effect kinds
+and their UI remain compiled into the application, however; manifests cannot
+yet register a new kind or generate controls from arbitrary schemas.
 
-Resolution: finish bus composition first, then introduce explicit effect-pass
-boundaries before multipass effects.
+Resolution: introduce an effect registry and map validated schema controls onto
+parameter storage, project migration and operator widgets without weakening
+the existing bounded render graph.
 
 ### Project schema discipline
 

@@ -26,8 +26,9 @@ use oneiroi_media::{
     TransportEvent, VideoFramePayload, crossfade_gains, discover_cameras,
 };
 use oneiroi_render::{
-    DeckEffects, FourDeckCompositor, Gpu, MixerBus, MixerParams, PROGRAM_FORMAT, PresentSurface,
-    PresentationOptions, ProgramPresenter, ProgramTarget, SurfaceAcquireStatus,
+    DeckEffects, FourDeckCompositor, Gpu, MasterEffectProcessor, MixerBus, MixerParams,
+    PROGRAM_FORMAT, PresentSurface, PresentationOptions, ProgramPresenter, ProgramTarget,
+    SurfaceAcquireStatus,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
@@ -69,6 +70,7 @@ struct State {
     gpu: Gpu,
     output_surface: PresentSurface,
     program: ProgramTarget,
+    master_effect_processor: MasterEffectProcessor,
     operator_presenter: ProgramPresenter,
     output_presenter: ProgramPresenter,
     compositor: FourDeckCompositor,
@@ -378,7 +380,12 @@ impl State {
         let preferred_display_id = preferred_monitor.map(monitor_id);
         let preferred_position = preferred_monitor.map(MonitorHandle::position);
         let (output_monitors, output_displays) = describe_monitors(monitor_handles);
+        let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut ui = ui::UiState::default();
+        ui.effect_manifest_path = workspace
+            .join("effects/master-effects/effect.json")
+            .to_string_lossy()
+            .into_owned();
         if let Some(id) = preferred_display_id {
             ui.output_display_id = id;
         }
@@ -417,6 +424,9 @@ impl State {
         let output_surface =
             gpu.create_surface(output_window.clone(), output_size.width, output_size.height)?;
         let program = ProgramTarget::new(&gpu.device, [1920, 1080]);
+        let mut master_effect_processor = MasterEffectProcessor::new(&gpu.device, &program);
+        master_effect_processor.watch_effect_manifest(PathBuf::from(&ui.effect_manifest_path));
+        ui.effect_reload_status = master_effect_processor.reload_status().to_owned();
         let operator_presenter = ProgramPresenter::new(&gpu.device, &program, gpu.content_format());
         let output_presenter =
             ProgramPresenter::new(&gpu.device, &program, output_surface.content_format());
@@ -447,7 +457,6 @@ impl State {
         );
 
         window.request_redraw();
-        let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let untitled_recovery = autosave_path(None, &workspace);
         let recovery_path = untitled_recovery.exists().then_some(untitled_recovery);
         let (cameras, camera_status) = match discover_cameras() {
@@ -504,6 +513,7 @@ impl State {
             gpu,
             output_surface,
             program,
+            master_effect_processor,
             operator_presenter,
             output_presenter,
             compositor,
@@ -789,6 +799,7 @@ impl State {
         let Some(movie) = self.clips.movie(address).cloned() else {
             return;
         };
+        self.master_effect_processor.reset_history();
         self.clips
             .remember_position(address.deck, self.transports[address.deck.index()].position);
         let media_duration = movie.duration.map(MediaTime::as_seconds);
@@ -885,6 +896,7 @@ impl State {
         extent: [u32; 2],
         fps: u32,
     ) {
+        self.master_effect_processor.reset_history();
         self.clips
             .remember_position(deck, self.transports[deck.index()].position);
         let config = CameraConfig {
@@ -1292,6 +1304,7 @@ impl State {
     }
 
     fn apply_project(&mut self, project_file: ProjectFile, recovered: bool) {
+        self.master_effect_processor.reset_history();
         self.project_epoch = self.project_epoch.wrapping_add(1);
         self.clips = ClipBank::default();
         self.ui.clear_thumbnails();
@@ -1370,6 +1383,12 @@ impl State {
     fn apply_output_settings(&mut self) {
         if self.program.extent() != self.ui.composition_extent {
             self.program = ProgramTarget::new(&self.gpu.device, self.ui.composition_extent);
+            self.master_effect_processor =
+                MasterEffectProcessor::new(&self.gpu.device, &self.program);
+            let manifest_path = self.resolved_effect_manifest_path();
+            self.master_effect_processor
+                .watch_effect_manifest(manifest_path);
+            self.ui.effect_reload_status = self.master_effect_processor.reload_status().to_owned();
             self.operator_presenter =
                 ProgramPresenter::new(&self.gpu.device, &self.program, self.gpu.content_format());
             self.output_presenter = ProgramPresenter::new(
@@ -1380,6 +1399,21 @@ impl State {
         }
         self.output_window.set_visible(self.ui.output_enabled);
         self.apply_output_monitor();
+    }
+
+    fn resolved_effect_manifest_path(&self) -> PathBuf {
+        let path = PathBuf::from(&self.ui.effect_manifest_path);
+        if path.is_absolute() {
+            path
+        } else {
+            self.workspace.join(path)
+        }
+    }
+
+    fn watch_effect_manifest(&mut self) {
+        let path = self.resolved_effect_manifest_path();
+        self.master_effect_processor.watch_effect_manifest(path);
+        self.ui.effect_reload_status = self.master_effect_processor.reload_status().to_owned();
     }
 
     fn apply_output_monitor(&mut self) {
@@ -1709,6 +1743,9 @@ impl State {
     }
 
     fn render(&mut self) {
+        if self.master_effect_processor.poll_effect_reload() {
+            self.ui.effect_reload_status = self.master_effect_processor.reload_status().to_owned();
+        }
         self.poll_imports();
         self.poll_folder_scans();
         self.poll_restores();
@@ -1806,6 +1843,9 @@ impl State {
                     }
                 }
                 ui::UiAction::ClearSlot(address) => {
+                    if self.clips.active(address.deck) == Some(address.slot) {
+                        self.master_effect_processor.reset_history();
+                    }
                     self.clips.clear(address);
                     self.folder_pending.remove(&address);
                     self.relink_pending.remove(&address);
@@ -1815,6 +1855,7 @@ impl State {
                 }
                 ui::UiAction::BrowseRelink(address) => self.browse_relink(address),
                 ui::UiAction::Eject(deck) => {
+                    self.master_effect_processor.reset_history();
                     self.clips
                         .remember_position(deck, self.transports[deck.index()].position);
                     self.mixer.eject(deck);
@@ -1873,6 +1914,12 @@ impl State {
                     self.ui.composition_extent = extent;
                     self.ui.custom_composition_extent = extent;
                     self.apply_output_settings();
+                }
+                ui::UiAction::WatchEffectManifest => self.watch_effect_manifest(),
+                ui::UiAction::ReloadEffectManifest => {
+                    self.master_effect_processor.reload_effect_manifest();
+                    self.ui.effect_reload_status =
+                        self.master_effect_processor.reload_status().to_owned();
                 }
                 ui::UiAction::RefreshDisplays => self.refresh_output_displays(),
                 ui::UiAction::RecoverProject => {
@@ -1938,51 +1985,73 @@ impl State {
                 label: Some("frame"),
             });
 
-        self.compositor.draw(
-            &self.gpu.device,
-            &self.gpu.queue,
-            &mut encoder,
-            &self.program.view,
-            MixerParams {
-                levels: std::array::from_fn(|index| {
-                    let deck = self.mixer.deck(DeckId::ALL[index]);
-                    if matches!(deck.state, DeckState::Ready(_) | DeckState::Live(_)) {
-                        deck.level
-                    } else {
-                        0.0
-                    }
-                }),
-                solo: self.ui.solo,
-                bypassed: self.ui.bypassed,
-                buses: std::array::from_fn(|index| match self.mixer.deck(DeckId::ALL[index]).bus {
-                    CrossfadeBus::Left => MixerBus::A,
-                    CrossfadeBus::Right => MixerBus::B,
-                }),
-                crossfade_gains: crossfade_gains(self.ui.crossfader, self.ui.equal_power),
-                transforms: self.ui.transforms,
-                blend_modes: self.ui.blend_modes,
-                output_aspect: self.ui.composition_extent[0] as f32
-                    / self.ui.composition_extent[1].max(1) as f32,
-                effects: std::array::from_fn(|index| {
-                    let audio = self.audio_snapshot.analysis;
-                    self.ui.lfos[index].apply_with_audio(
-                        self.ui.effects[index],
-                        effect_time,
-                        beat_position,
-                        [
-                            audio.rms,
-                            audio.bass,
-                            audio.mid,
-                            audio.high,
-                            audio.transient,
-                        ],
-                    )
-                }),
-                master_opacity: self.ui.master_opacity,
-                time_seconds: effect_time,
-                blackout: self.ui.blackout,
-            },
-        );
+        let master_effects_active = !self.ui.blackout && self.ui.master_effects.active();
+        if !master_effects_active {
+            self.master_effect_processor.reset_history();
+        }
+        let freeze_program = self.ui.master_freeze && !self.ui.blackout;
+        if !freeze_program {
+            let composition_target = if master_effects_active {
+                self.program.composition_view()
+            } else {
+                &self.program.view
+            };
+            self.compositor.draw(
+                &self.gpu.device,
+                &self.gpu.queue,
+                &mut encoder,
+                composition_target,
+                MixerParams {
+                    levels: std::array::from_fn(|index| {
+                        let deck = self.mixer.deck(DeckId::ALL[index]);
+                        if matches!(deck.state, DeckState::Ready(_) | DeckState::Live(_)) {
+                            deck.level
+                        } else {
+                            0.0
+                        }
+                    }),
+                    solo: self.ui.solo,
+                    bypassed: self.ui.bypassed,
+                    buses: std::array::from_fn(|index| {
+                        match self.mixer.deck(DeckId::ALL[index]).bus {
+                            CrossfadeBus::Left => MixerBus::A,
+                            CrossfadeBus::Right => MixerBus::B,
+                        }
+                    }),
+                    crossfade_gains: crossfade_gains(self.ui.crossfader, self.ui.equal_power),
+                    transforms: self.ui.transforms,
+                    blend_modes: self.ui.blend_modes,
+                    output_aspect: self.ui.composition_extent[0] as f32
+                        / self.ui.composition_extent[1].max(1) as f32,
+                    effects: std::array::from_fn(|index| {
+                        let audio = self.audio_snapshot.analysis;
+                        self.ui.lfos[index].apply_with_audio(
+                            self.ui.effects[index],
+                            effect_time,
+                            beat_position,
+                            [
+                                audio.rms,
+                                audio.bass,
+                                audio.mid,
+                                audio.high,
+                                audio.transient,
+                            ],
+                        )
+                    }),
+                    master_opacity: self.ui.master_opacity,
+                    time_seconds: effect_time,
+                    blackout: self.ui.blackout,
+                },
+            );
+            if master_effects_active {
+                self.master_effect_processor.draw(
+                    &self.gpu.queue,
+                    &mut encoder,
+                    &self.program,
+                    self.ui.master_effects,
+                );
+            }
+        }
 
         let (width, height) = self.gpu.size();
         let screen = egui_wgpu::ScreenDescriptor {

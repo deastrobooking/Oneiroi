@@ -15,7 +15,7 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Triggering | Immediate, next-beat and next-bar clip/scene launches, per-slot restart/resume and BPM-relative beat duration |
 | Mixing | Independent A/B composites, eight blend modes, Solo/Bypass, transforms, crop/source modes, linear/equal-power crossfade, master opacity and blackout |
 | Output | Offscreen preset/custom program target, clean second window, display selection, aspect preservation, enable/fullscreen, calibration overlays and surface-health diagnostics |
-| Effects | Color/levels, mirror, neon, fractal, jitter, edges, bit reduction, black light, pixelate and luma key |
+| Effects | Three reorderable deck groups plus two master slots; color/levels, mirror, neon, fractal, jitter, edges, bit reduction, black light, pixelate, luma key, separable blur and persistent feedback/trails |
 | Modulation | Three LFOs and eight bipolar routes per deck across 14 continuous destinations |
 | Musical control | Manual BPM, Tap, half/double, beat/bar phase and synchronized LFO divisions |
 | Audio modulation | Native input capture, bounded queue, RMS/FFT bands, transient, adaptive normalization, live meters and five audio plus beat/bar matrix sources |
@@ -28,14 +28,12 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 |---|---|---|
 | MIDI | Native device discovery/input, reconnect, learn UI, activity/drop diagnostics, absolute/momentary/toggle/relative modes, editable ranges, soft takeover, broad target routing and persistence | Output feedback, MIDI clock and physical-controller soak validation |
 | Audio analysis | Gain, noise floor, attack/release, normalization, band and transient analysis | Show-device disconnect/soak validation |
-| Effects system | Native GPU effect chain and parameter model | Manifest packages, reorderable slots, presets and safe hot reload |
+| Effects system | Three persisted deck slots, two persisted master slots, common bypass/dry-wet/reset, four deck presets, bounded ping-pong blur, reset-safe feedback history, and a validated hot-reloadable master shader package with last-known-good fallback | Arbitrary effect registration and schema-generated controls |
 | Output routing | Shared operator/output presentation, connected-display selection, persisted descriptor, topology polling and surface recovery diagnostics | Stronger identity across display topology changes and show-machine soak testing |
 | Performance | Bounded workers, reusable CPU RGBA frame leases, 29.5 MB maximum first-frame cache, capped keyframe indexes, deterministic decoder faults and accelerated/extended soak coverage | Physical-media and show-machine soak certification |
 
 ## Not implemented
 
-- Blur and persistent feedback/trails passes
-- Dedicated master-effect slots
 - Recent-project list and graphical Save As browser
 - OSC, Ableton Link, MIDI clock, NDI, Syphon/Spout and projection mapping
 - Application packaging, signing and FFmpeg distribution

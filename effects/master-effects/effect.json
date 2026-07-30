@@ -1,0 +1,32 @@
+{
+  "format": "oneiroi-effect",
+  "version": 1,
+  "id": "master-effects",
+  "name": "Oneiroi master effects",
+  "shader": "master_effects.wgsl",
+  "vertex_entry": "vs_main",
+  "fragment_entry": "fs_main",
+  "parameters": [
+    {
+      "id": "radius",
+      "label": "Blur radius",
+      "minimum": 0.0,
+      "maximum": 32.0,
+      "default": 8.0
+    },
+    {
+      "id": "mix",
+      "label": "Wet mix",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 1.0
+    },
+    {
+      "id": "feedback",
+      "label": "Feedback persistence",
+      "minimum": 0.0,
+      "maximum": 0.99,
+      "default": 0.85
+    }
+  ]
+}

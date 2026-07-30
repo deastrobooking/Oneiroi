@@ -215,6 +215,71 @@ The render thread receives only resolved values. Base knobs are not overwritten
 by modulation. Routes are bipolar and may be matrix-only or combined with an
 LFO's direct destination.
 
+Each deck owns three explicit effect slots containing the Geometry, Color +
+levels and Stylize + key groups exactly once. The default
+Geometry → Color → Stylize order reproduces the legacy fixed shader. Slot order,
+bypass and wet mix are project state; older projects receive that canonical
+order during deserialization. Modulation still resolves named parameters
+before slot evaluation, so reordering a group does not invalidate MIDI or
+matrix targets.
+
+The current implementation retains a single compositor pass. Geometry wet mix
+interpolates transformed UVs, while color and stylize wet mix interpolate
+their RGBA stage result. Reordering Color and Stylize therefore changes their
+actual evaluation order. Blur and feedback require sampled intermediate
+textures and will introduce the ping-pong multipass boundary rather than
+pretending to be point effects inside this pass.
+
+The master chain supplies that first multipass boundary. Its two reorderable
+slots accept Empty, Separable blur or Feedback / trails. When neither slot is active,
+the compositor renders directly into the final program texture and the
+postprocessor records no passes. When active, composition renders into a
+dedicated input followed by horizontal and vertical blur passes. An inactive
+slot inside an active chain performs a copy into the next fixed stage so slot
+order remains deterministic.
+
+Feedback samples one previous final program frame, blends it toward the current
+slot input using the persisted 0–0.99 persistence value, and applies the
+slot's common wet mix. Only after both master slots finish is the final texture
+copied into history. A newly enabled or reset feedback slot copies clean
+current output on its first frame, seeds history, and begins trails on the next.
+
+History becomes invalid on clip launch, camera connection, active-slot clear
+or eject, project application, composition resize, blackout, and every rendered
+period without active feedback. Master freeze skips both composition and
+postprocessing, retaining the final texture and history exactly; blackout
+overrides freeze, renders black immediately and invalidates history.
+
+Composition resize allocates exactly five program-resolution RGBA8-sRGB
+textures: composition input, one shared horizontal scratch target, one ping
+target, one history target and final output. Both slots reuse scratch/ping and
+never allocate during a frame. Relative to the original final target, bounded
+additional capacity is `4 × width × height × 4` bytes: about 31.6 MiB at
+1080p or 126.6 MiB at UHD. Each pass has its own uniform buffer, preventing
+later queue writes from changing parameters of earlier encoded passes.
+
+### Effect package validation and reload
+
+The master postprocessor can watch a versioned `oneiroi-effect` JSON manifest.
+The manifest declares package identity, a package-relative WGSL path,
+vertex/fragment entry points and parameter schemas. Validation rejects path
+traversal, unsupported versions, duplicate or malformed controls, ranges that
+do not cover the current master controls, malformed WGSL and entry-point stage
+mismatches before the candidate reaches wgpu.
+
+A dedicated worker fingerprints the manifest and shader every 500 ms. Changed
+source is parsed with Naga and compiled against the established master bind
+group contract outside the presentation loop. A wgpu validation error scope
+captures pipeline-layout failures. The render thread receives only a completed
+candidate and swaps it between frames; parse, schema or GPU compilation errors
+update operator diagnostics while the existing pipeline remains active. Thus
+editing or breaking a watched package cannot replace the last-known-good
+program path.
+
+The bundled package is `effects/master-effects/effect.json`. This boundary
+currently reloads the existing master processor contract; it does not yet
+register arbitrary effect kinds or generate controls dynamically from schemas.
+
 Free-running LFOs derive phase from elapsed seconds. Synchronized LFOs derive
 phase from the internal clock's beat position, so BPM changes retain musical
 phase.

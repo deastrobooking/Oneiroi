@@ -16,6 +16,15 @@ struct MixerGlobals {
     bit_reduction: vec4<f32>,
     blacklight: vec4<f32>,
     mirror: vec4<u32>,
+    effect_slot_groups_0: vec4<u32>,
+    effect_slot_groups_1: vec4<u32>,
+    effect_slot_groups_2: vec4<u32>,
+    effect_slot_enabled_0: vec4<u32>,
+    effect_slot_enabled_1: vec4<u32>,
+    effect_slot_enabled_2: vec4<u32>,
+    effect_slot_mix_0: vec4<f32>,
+    effect_slot_mix_1: vec4<f32>,
+    effect_slot_mix_2: vec4<f32>,
     position_x: vec4<f32>,
     position_y: vec4<f32>,
     scale: vec4<f32>,
@@ -54,6 +63,9 @@ struct EffectConfig {
     bit_reduction: f32,
     blacklight: f32,
     mirror: u32,
+    slot_groups: vec4<u32>,
+    slot_enabled: vec4<u32>,
+    slot_mix: vec4<f32>,
 }
 
 @group(0) @binding(0) var source_sampler: sampler;
@@ -223,7 +235,7 @@ fn layer_uv(
     return vec3(crop_min + uv * crop_size, 1.0);
 }
 
-fn effect_uv(input_uv: vec2<f32>, effect: EffectConfig) -> vec2<f32> {
+fn geometry_effect_uv(input_uv: vec2<f32>, effect: EffectConfig) -> vec2<f32> {
     var uv = input_uv;
     if effect.mirror != 0u {
         uv.x = abs(uv.x * 2.0 - 1.0);
@@ -248,6 +260,20 @@ fn effect_uv(input_uv: vec2<f32>, effect: EffectConfig) -> vec2<f32> {
         uv = (floor(uv / effect.pixelate) + vec2(0.5)) * effect.pixelate;
     }
     return clamp(uv, vec2(0.0), vec2(1.0));
+}
+
+fn effect_uv_slot(input_uv: vec2<f32>, effect: EffectConfig, slot: u32) -> vec2<f32> {
+    if effect.slot_enabled[slot] == 0u || effect.slot_groups[slot] != 0u {
+        return input_uv;
+    }
+    let effected = geometry_effect_uv(input_uv, effect);
+    return mix(input_uv, effected, effect.slot_mix[slot]);
+}
+
+fn effect_uv(input_uv: vec2<f32>, effect: EffectConfig) -> vec2<f32> {
+    var uv = effect_uv_slot(input_uv, effect, 0u);
+    uv = effect_uv_slot(uv, effect, 1u);
+    return effect_uv_slot(uv, effect, 2u);
 }
 
 fn hue_rotate(color: vec3<f32>, turns: f32) -> vec3<f32> {
@@ -275,10 +301,10 @@ fn edge_strength(
     return clamp(length(gradient) * 3.0, 0.0, 1.0);
 }
 
-fn apply_color_effects(color: vec4<f32>, edge: f32, effect: EffectConfig) -> vec4<f32> {
+fn apply_color_group(color: vec4<f32>, effect: EffectConfig) -> vec4<f32> {
     var rgb = max(color.rgb, vec3(0.0));
-    let initial_luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
-    rgb = mix(vec3(initial_luma), rgb, effect.saturation);
+    let luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    rgb = mix(vec3(luma), rgb, effect.saturation);
     rgb = hue_rotate(rgb, effect.hue);
     rgb = (rgb - vec3(0.5)) * effect.contrast + vec3(0.5);
     rgb = clamp(
@@ -293,6 +319,16 @@ fn apply_color_effects(color: vec4<f32>, edge: f32, effect: EffectConfig) -> vec
         let steps = max(2.0, floor(mix(256.0, 2.0, effect.bit_reduction)));
         rgb = floor(rgb * steps + vec3(0.5)) / steps;
     }
+    return vec4(clamp(rgb, vec3(0.0), vec3(1.0)), color.a);
+}
+
+fn apply_stylize_group(
+    color: vec4<f32>,
+    edge: f32,
+    source_luma: f32,
+    effect: EffectConfig,
+) -> vec4<f32> {
+    var rgb = max(color.rgb, vec3(0.0));
     if effect.blacklight > 0.0001 {
         let inverse = vec3(1.0) - rgb;
         let ultraviolet = vec3(
@@ -313,9 +349,41 @@ fn apply_color_effects(color: vec4<f32>, edge: f32, effect: EffectConfig) -> vec
 
     var alpha = color.a;
     if effect.luma_key > 0.0001 {
-        alpha *= smoothstep(effect.luma_key - 0.05, effect.luma_key + 0.05, initial_luma);
+        alpha *= smoothstep(effect.luma_key - 0.05, effect.luma_key + 0.05, source_luma);
     }
     return vec4(clamp(rgb, vec3(0.0), vec3(1.0)), alpha);
+}
+
+fn apply_effect_slot(
+    color: vec4<f32>,
+    edge: f32,
+    source_luma: f32,
+    effect: EffectConfig,
+    slot: u32,
+) -> vec4<f32> {
+    if effect.slot_enabled[slot] == 0u {
+        return color;
+    }
+    var effected = color;
+    if effect.slot_groups[slot] == 1u {
+        effected = apply_color_group(color, effect);
+    } else if effect.slot_groups[slot] == 2u {
+        effected = apply_stylize_group(color, edge, source_luma, effect);
+    }
+    return mix(color, effected, effect.slot_mix[slot]);
+}
+
+fn apply_color_effects(color: vec4<f32>, edge: f32, effect: EffectConfig) -> vec4<f32> {
+    let source_luma = dot(max(color.rgb, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
+    var resolved = apply_effect_slot(color, edge, source_luma, effect, 0u);
+    resolved = apply_effect_slot(resolved, edge, source_luma, effect, 1u);
+    return apply_effect_slot(resolved, edge, source_luma, effect, 2u);
+}
+
+fn stylize_slot_active(effect: EffectConfig, slot: u32) -> bool {
+    return effect.slot_enabled[slot] != 0u
+        && effect.slot_groups[slot] == 2u
+        && effect.slot_mix[slot] > 0.0001;
 }
 
 fn process_source(
@@ -328,7 +396,10 @@ fn process_source(
     let uv = effect_uv(input_uv, effect);
     let color = sample_source(primary, alpha_texture, uv, kind);
     var edge = 0.0;
-    if effect.neon > 0.0001 || effect.find_edges > 0.0001 {
+    let stylize_active = stylize_slot_active(effect, 0u)
+        || stylize_slot_active(effect, 1u)
+        || stylize_slot_active(effect, 2u);
+    if stylize_active && (effect.neon > 0.0001 || effect.find_edges > 0.0001) {
         edge = edge_strength(primary, alpha_texture, uv, kind);
     }
     return apply_color_effects(color, edge, effect);
@@ -353,10 +424,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         return vec4(0.0, 0.0, 0.0, 1.0);
     }
 
-    let effect_a = EffectConfig(globals.contrast.x, globals.saturation.x, globals.hue.x, globals.black_level.x, globals.white_level.x, globals.gamma.x, globals.pixelate.x, globals.luma_key.x, globals.neon.x, globals.fractal.x, globals.jitter.x, globals.find_edges.x, globals.bit_reduction.x, globals.blacklight.x, globals.mirror.x);
-    let effect_b = EffectConfig(globals.contrast.y, globals.saturation.y, globals.hue.y, globals.black_level.y, globals.white_level.y, globals.gamma.y, globals.pixelate.y, globals.luma_key.y, globals.neon.y, globals.fractal.y, globals.jitter.y, globals.find_edges.y, globals.bit_reduction.y, globals.blacklight.y, globals.mirror.y);
-    let effect_c = EffectConfig(globals.contrast.z, globals.saturation.z, globals.hue.z, globals.black_level.z, globals.white_level.z, globals.gamma.z, globals.pixelate.z, globals.luma_key.z, globals.neon.z, globals.fractal.z, globals.jitter.z, globals.find_edges.z, globals.bit_reduction.z, globals.blacklight.z, globals.mirror.z);
-    let effect_d = EffectConfig(globals.contrast.w, globals.saturation.w, globals.hue.w, globals.black_level.w, globals.white_level.w, globals.gamma.w, globals.pixelate.w, globals.luma_key.w, globals.neon.w, globals.fractal.w, globals.jitter.w, globals.find_edges.w, globals.bit_reduction.w, globals.blacklight.w, globals.mirror.w);
+    let effect_a = EffectConfig(globals.contrast.x, globals.saturation.x, globals.hue.x, globals.black_level.x, globals.white_level.x, globals.gamma.x, globals.pixelate.x, globals.luma_key.x, globals.neon.x, globals.fractal.x, globals.jitter.x, globals.find_edges.x, globals.bit_reduction.x, globals.blacklight.x, globals.mirror.x, vec4(globals.effect_slot_groups_0.x, globals.effect_slot_groups_1.x, globals.effect_slot_groups_2.x, 0u), vec4(globals.effect_slot_enabled_0.x, globals.effect_slot_enabled_1.x, globals.effect_slot_enabled_2.x, 0u), vec4(globals.effect_slot_mix_0.x, globals.effect_slot_mix_1.x, globals.effect_slot_mix_2.x, 0.0));
+    let effect_b = EffectConfig(globals.contrast.y, globals.saturation.y, globals.hue.y, globals.black_level.y, globals.white_level.y, globals.gamma.y, globals.pixelate.y, globals.luma_key.y, globals.neon.y, globals.fractal.y, globals.jitter.y, globals.find_edges.y, globals.bit_reduction.y, globals.blacklight.y, globals.mirror.y, vec4(globals.effect_slot_groups_0.y, globals.effect_slot_groups_1.y, globals.effect_slot_groups_2.y, 0u), vec4(globals.effect_slot_enabled_0.y, globals.effect_slot_enabled_1.y, globals.effect_slot_enabled_2.y, 0u), vec4(globals.effect_slot_mix_0.y, globals.effect_slot_mix_1.y, globals.effect_slot_mix_2.y, 0.0));
+    let effect_c = EffectConfig(globals.contrast.z, globals.saturation.z, globals.hue.z, globals.black_level.z, globals.white_level.z, globals.gamma.z, globals.pixelate.z, globals.luma_key.z, globals.neon.z, globals.fractal.z, globals.jitter.z, globals.find_edges.z, globals.bit_reduction.z, globals.blacklight.z, globals.mirror.z, vec4(globals.effect_slot_groups_0.z, globals.effect_slot_groups_1.z, globals.effect_slot_groups_2.z, 0u), vec4(globals.effect_slot_enabled_0.z, globals.effect_slot_enabled_1.z, globals.effect_slot_enabled_2.z, 0u), vec4(globals.effect_slot_mix_0.z, globals.effect_slot_mix_1.z, globals.effect_slot_mix_2.z, 0.0));
+    let effect_d = EffectConfig(globals.contrast.w, globals.saturation.w, globals.hue.w, globals.black_level.w, globals.white_level.w, globals.gamma.w, globals.pixelate.w, globals.luma_key.w, globals.neon.w, globals.fractal.w, globals.jitter.w, globals.find_edges.w, globals.bit_reduction.w, globals.blacklight.w, globals.mirror.w, vec4(globals.effect_slot_groups_0.w, globals.effect_slot_groups_1.w, globals.effect_slot_groups_2.w, 0u), vec4(globals.effect_slot_enabled_0.w, globals.effect_slot_enabled_1.w, globals.effect_slot_enabled_2.w, 0u), vec4(globals.effect_slot_mix_0.w, globals.effect_slot_mix_1.w, globals.effect_slot_mix_2.w, 0.0));
     let aspect_a = f32(textureDimensions(source_a).x) / max(f32(textureDimensions(source_a).y), 1.0);
     let aspect_b = f32(textureDimensions(source_b).x) / max(f32(textureDimensions(source_b).y), 1.0);
     let aspect_c = f32(textureDimensions(source_c).x) / max(f32(textureDimensions(source_c).y), 1.0);

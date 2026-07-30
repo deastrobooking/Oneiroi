@@ -13,9 +13,11 @@ pub use midi::{
 };
 pub use project::{
     AudioAnalysisProject, BlendModeProject, CameraProject, ClipLaunchModeProject,
-    ClipPlaybackProject, ControlTargetProject, CrossfadeBusProject, DeckProject, EffectProject,
-    EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject,
-    MidiMappingProject, MidiMessageProject, ModRouteProject, OutputProject, ProjectError,
-    ProjectFile, ProjectSettings, QuantizationProject, SourceModeProject, TransformProject,
-    TransportProject, autosave_path, load_project, recovery_is_newer, save_project_atomic,
+    ClipPlaybackProject, ControlTargetProject, CrossfadeBusProject, DeckProject,
+    EffectGroupProject, EffectProject, EffectSlotProject, EffectTargetProject, EndModeProject,
+    LfoProject, LfoWaveformProject, MappingModeProject, MasterEffectKindProject,
+    MasterEffectSlotProject, MasterEffectsProject, MidiMappingProject, MidiMessageProject,
+    ModRouteProject, OutputProject, ProjectError, ProjectFile, ProjectSettings,
+    QuantizationProject, SourceModeProject, TransformProject, TransportProject, autosave_path,
+    load_project, recovery_is_newer, save_project_atomic,
 };

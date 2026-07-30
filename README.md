@@ -49,6 +49,15 @@ target OS:
   modulation sources.
 - Native per-deck mirror, neon glow, fractal fold, scanline jitter, find-edges,
   bit reduction, black-light inversion, pixelate and luma-key effects.
+- Three reorderable deck-effect groups with independent bypass and dry/wet,
+  legacy-compatible project defaults and Neutral, Neon Night, Blacklight and
+  Glitch presets.
+- Two reorderable master-effect slots with persisted bypass/dry-wet controls
+  plus separable Gaussian blur and persistent feedback/trails backed by fixed
+  ping-pong and history textures.
+- A versioned master-effect package manifest with validated parameter schemas,
+  background WGSL/pipeline reload and atomic last-known-good fallback when a
+  candidate is invalid.
 - Per-deck hue, contrast, saturation, black/white levels and gamma grading,
   plus three assignable LFO lanes with sine, triangle, saw-up, saw-down and
   square waves.
@@ -106,7 +115,8 @@ target OS:
 - Camera-aware deck controls and project persistence; saved live inputs
   reconnect when a project is restored.
 
-MIDI feedback/clock and blur/feedback effects have not landed yet.
+MIDI feedback/clock and arbitrary third-party effect registration have not
+landed yet.
 
 ```sh
 cargo run          # the app; select a deck and drop movies

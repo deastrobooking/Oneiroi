@@ -129,8 +129,51 @@ Open **GPU effects** on a deck. Available controls include:
 - Mirror, neon glow, fractal fold, jitter and find edges
 - Pixelate and luma key
 
-Effects run on each source before deck composition. **Reset effects** restores
-neutral values for that deck.
+The chain has three rows: **Geometry**, **Color + levels**, and **Stylize +
+key**. Use the arrow buttons to reorder them. Every row has an independent
+**Bypass** and **wet** control; zero wet returns that stage to its dry input
+without changing its parameter knobs. **Load preset** offers Neutral, Neon
+night, Blacklight and Glitch. **Reset chain** or **Reset effects** restores
+neutral parameters, full wet, no bypass and the legacy-compatible
+Geometry → Color → Stylize order.
+
+Effects run on each source before deck composition. Slot order, bypass and wet
+mix are saved in the project. Existing projects that predate effect slots open
+with the legacy-compatible default order.
+
+### Master effects and blur
+
+Expand **Master effects** below the crossfader and master controls. Two
+reorderable slots can be Empty, Separable blur or Feedback / trails. Blur
+exposes a 0–32 pixel radius. Feedback exposes 0–0.99 persistence; larger values
+retain more of the previous final frame. Both use the common bypass and wet
+controls. The arrow buttons change master evaluation order, and **Reset master
+effects** returns both slots to Empty.
+
+With both slots empty or bypassed, composition renders directly to program
+output. Enabling blur or feedback activates fixed ping-pong/history targets
+allocated at the chosen composition resolution; no effect texture is created
+during a frame. UHD uses about 126.6 MiB of additional bounded texture storage
+versus the direct path, so certify the target GPU at show resolution.
+
+Feedback history resets on a source launch/change, active source removal,
+project load, composition resize, blackout, or after feedback is disabled.
+The first frame after reset is clean and seeds new history. Master freeze holds
+the exact final frame and pauses history evolution; blackout still takes
+priority and clears the future history state.
+
+The **Effect package** field points to a versioned JSON manifest. The bundled
+default is `effects/master-effects/effect.json`. Choose **Watch** after changing
+the path; the app checks the manifest and referenced WGSL every 500 ms.
+**Reload now** requests an immediate compile even when the files appear
+unchanged. Successful reloads show the package name and fingerprint. Rejected
+schema, WGSL or GPU pipeline changes are shown in amber and the last working
+pipeline remains on program output.
+
+Package shader paths must be relative to the manifest and cannot traverse out
+of their directory. The current package must retain the existing master shader
+bindings, `radius`, `mix` and `feedback` schemas, and declared vertex/fragment
+entry points.
 
 ## Layer transforms
 
