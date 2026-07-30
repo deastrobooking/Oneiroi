@@ -33,6 +33,8 @@ pub struct UiState {
     pub effects: [DeckEffects; 4],
     pub transforms: [DeckTransform; 4],
     pub blend_modes: [LayerBlendMode; 4],
+    pub solo: [bool; 4],
+    pub bypassed: [bool; 4],
     pub lfos: [DeckLfos; 4],
     pub bpm: f64,
     pub quantization: Quantization,
@@ -64,6 +66,8 @@ impl Default for UiState {
             effects: [DeckEffects::default(); 4],
             transforms: [DeckTransform::default(); 4],
             blend_modes: [LayerBlendMode::Normal; 4],
+            solo: [false; 4],
+            bypassed: [false; 4],
             lfos: [DeckLfos::default(); 4],
             bpm: 120.0,
             quantization: Quantization::Immediate,
@@ -541,6 +545,8 @@ pub fn draw(
                                 transport: &mut transports[deck_id.index()],
                                 transform: &mut state.transforms[deck_id.index()],
                                 blend_mode: &mut state.blend_modes[deck_id.index()],
+                                solo: &mut state.solo[deck_id.index()],
+                                bypassed: &mut state.bypassed[deck_id.index()],
                                 effects: &mut state.effects[deck_id.index()],
                                 lfos: &mut state.lfos[deck_id.index()],
                             },
@@ -705,6 +711,8 @@ struct DeckControls<'a> {
     transport: &'a mut DeckTransport,
     transform: &'a mut DeckTransform,
     blend_mode: &'a mut LayerBlendMode,
+    solo: &'a mut bool,
+    bypassed: &'a mut bool,
     effects: &'a mut DeckEffects,
     lfos: &'a mut DeckLfos,
 }
@@ -720,6 +728,8 @@ fn draw_deck(
         transport,
         transform,
         blend_mode,
+        solo,
+        bypassed,
         effects,
         lfos,
     } = controls;
@@ -831,6 +841,14 @@ fn draw_deck(
             );
             ui.selectable_value(&mut deck.bus, CrossfadeBus::Left, "Bus A");
             ui.selectable_value(&mut deck.bus, CrossfadeBus::Right, "Bus B");
+        });
+        ui.horizontal(|ui| {
+            if ui.selectable_label(*solo, "Solo").clicked() {
+                *solo = !*solo;
+            }
+            if ui.selectable_label(*bypassed, "Bypass").clicked() {
+                *bypassed = !*bypassed;
+            }
             egui::ComboBox::from_id_salt(format!("blend-mode-{}", id.label()))
                 .selected_text(blend_mode_label(*blend_mode))
                 .show_ui(ui, |ui| {
@@ -847,6 +865,11 @@ fn draw_deck(
                         ui.selectable_value(blend_mode, mode, blend_mode_label(mode));
                     }
                 });
+            if *bypassed {
+                ui.weak("Layer excluded from composition");
+            } else if *solo {
+                ui.weak("Other non-solo decks isolated");
+            }
         });
         let live = matches!(mixer.deck(id).state, DeckState::Live(_));
         if live {

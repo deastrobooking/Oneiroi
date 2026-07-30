@@ -99,6 +99,18 @@ inside its assigned bus. Blending is calculated in linear light with
 alpha-correct source-over coverage. The selected mode is stored in the project;
 older projects load as Normal.
 
+## Solo and bypass
+
+Use **Solo** to isolate a deck without changing any other deck settings.
+Multiple soloed decks remain active together, including decks assigned to
+different buses. When any Solo is active, non-solo decks are excluded before
+bus composition.
+
+Use **Bypass** to remove a deck from composition while preserving its level,
+bus, transform, blend mode and effects. Bypass takes precedence over Solo.
+These controls are stored in the project; older projects load with every deck
+active and unsoloed.
+
 ## LFOs and modulation matrix
 
 Open **LFOs + Mod Matrix** on a deck.

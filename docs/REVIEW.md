@@ -45,7 +45,7 @@ remains before the milestone is stage-certified.
 
 - Project values are validated before application.
 - Version-one projects migrate to the current version-two schema.
-- The workspace currently passes 87 tests and strict Clippy.
+- The workspace currently passes 89 tests and strict Clippy.
 
 ## Stage-critical gaps
 
@@ -61,20 +61,13 @@ available. Exact surface errors, recovery and topology changes are now visible
 in the operator UI. Remaining work: stronger identity across topology changes
 and show-machine soak testing.
 
-### 2. Solo and bypass remain incomplete
-
-The compositor now builds Bus A and Bus B independently and supports per-deck
-position, scale, rotation, horizontal/vertical flip, four-edge crop and
-aspect-aware Fit/Fill/Stretch source modes. All eight specified blend modes are
-implemented with GPU coverage. Per-deck solo and bypass remain.
-
-### 3. Control and audio models are not connected to hardware
+### 2. Control and audio models are not connected to hardware
 
 MIDI mapping state is device-neutral only. Audio has no capture or analysis
 adapter. The modulation matrix is architecturally ready for more source types,
 but only LFO sources exist.
 
-### 4. Operational diagnostics are too shallow
+### 3. Operational diagnostics are too shallow
 
 FPS and aggregate dropped/repeated/late counts are visible, but there is no GPU
 timing, upload timing, queue occupancy, per-deck decoder health, audio status,

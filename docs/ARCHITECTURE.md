@@ -110,6 +110,11 @@ premultiplied bus accumulator. Normal, Add, Screen, Multiply, Difference,
 Lighten, Darken and Overlay therefore share correct source-over coverage and
 operate in linear light.
 
+Before writing mixer globals, the CPU resolves deck visibility. If any Solo is
+active, only soloed decks remain eligible; Bypass then excludes its deck even
+when soloed. This produces effective zero levels without mutating the saved
+deck levels or any composition/effect settings.
+
 Layer geometry uses an inverse UV transform before source effects: output
 position is translated back into deck-local coordinates, inverse-rotated,
 scaled and optionally flipped. Coordinates outside `[0, 1]` resolve to

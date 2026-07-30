@@ -13,7 +13,7 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Playback | Play, pause, restart, freeze, seek, loop/one-shot and 0.25–4× speed |
 | Timing | Exact timestamps, bounded schedulers and generation-safe stale-frame rejection |
 | Triggering | Immediate, next-beat and next-bar clip/scene launches |
-| Mixing | Independent A/B composites, per-deck level, linear/equal-power bus crossfade, master opacity and blackout |
+| Mixing | Independent A/B composites, eight blend modes, Solo/Bypass, transforms, crop/source modes, linear/equal-power crossfade, master opacity and blackout |
 | Output | Offscreen preset/custom program target, clean second window, display selection, aspect preservation, enable/fullscreen, calibration overlays and surface-health diagnostics |
 | Effects | Color/levels, mirror, neon, fractal, jitter, edges, bit reduction, black light, pixelate and luma key |
 | Modulation | Three LFOs and eight bipolar routes per deck across 14 continuous destinations |
@@ -29,7 +29,6 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Missing media | Missing paths remain visible and resavable | File browser and explicit relink workflow |
 | Effects system | Native GPU effect chain and parameter model | Manifest packages, reorderable slots, presets and safe hot reload |
 | Output routing | Shared operator/output presentation, connected-display selection, persisted descriptor, topology polling and surface recovery diagnostics | Stronger identity across display topology changes and show-machine soak testing |
-| Layer composition | Independent bus composites, eight blend modes, levels, position, scale, rotation, H/V flip, crop, Fit/Fill/Stretch and source-space effects | Solo and bypass |
 | Performance | Bounded workers and GPU texture reuse | Reusable CPU frame leases, keyframe index and soak/failure testing |
 
 ## Not implemented

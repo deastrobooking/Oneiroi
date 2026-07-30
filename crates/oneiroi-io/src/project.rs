@@ -228,6 +228,10 @@ pub struct DeckProject {
     pub active_slot: Option<usize>,
     pub level: f32,
     pub bus: CrossfadeBusProject,
+    #[serde(default)]
+    pub solo: bool,
+    #[serde(default)]
+    pub bypassed: bool,
     pub transport: TransportProject,
     #[serde(default)]
     pub transform: TransformProject,
@@ -250,6 +254,8 @@ impl Default for DeckProject {
             active_slot: None,
             level: 1.0,
             bus: CrossfadeBusProject::Left,
+            solo: false,
+            bypassed: false,
             transport: TransportProject::default(),
             transform: TransformProject::default(),
             blend_mode: BlendModeProject::Normal,
@@ -720,6 +726,8 @@ mod tests {
             source_mode: SourceModeProject::Fill,
         };
         project.decks[0].blend_mode = BlendModeProject::Screen;
+        project.decks[0].solo = true;
+        project.decks[2].bypassed = true;
         project.settings.output = OutputProject {
             enabled: false,
             fullscreen: true,
@@ -796,6 +804,8 @@ mod tests {
             let deck = deck.as_object_mut().unwrap();
             deck.remove("transform").unwrap();
             deck.remove("blend_mode").unwrap();
+            deck.remove("solo").unwrap();
+            deck.remove("bypassed").unwrap();
             deck.remove("lfos").unwrap();
             deck.remove("mod_routes").unwrap();
             let effects = deck["effects"].as_object_mut().unwrap();
@@ -890,6 +900,24 @@ mod tests {
                 .decks
                 .iter()
                 .all(|deck| deck.blend_mode == BlendModeProject::Normal)
+        );
+        project.validate().unwrap();
+    }
+
+    #[test]
+    fn projects_saved_before_solo_and_bypass_default_to_active() {
+        let mut value = serde_json::to_value(ProjectFile::default()).unwrap();
+        for deck in value["decks"].as_array_mut().unwrap() {
+            let deck = deck.as_object_mut().unwrap();
+            deck.remove("solo").unwrap();
+            deck.remove("bypassed").unwrap();
+        }
+        let project: ProjectFile = serde_json::from_value(value).unwrap();
+        assert!(
+            project
+                .decks
+                .iter()
+                .all(|deck| !deck.solo && !deck.bypassed)
         );
         project.validate().unwrap();
     }

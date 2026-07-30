@@ -265,6 +265,61 @@ fn blend_modes_match_known_opaque_primary_colors() {
 }
 
 #[test]
+fn solo_isolates_decks_and_bypass_excludes_without_changing_level() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer
+        .upload(&device, &queue, 0, &solid([255, 0, 0, 255]))
+        .unwrap();
+    mixer
+        .upload(&device, &queue, 1, &solid([0, 255, 0, 255]))
+        .unwrap();
+    let params = MixerParams {
+        levels: [1.0, 1.0, 0.0, 0.0],
+        ..Default::default()
+    };
+
+    let normal = render(&device, &queue, &mut mixer, params);
+    assert_eq!(&normal[..4], &[0, 255, 0, 255]);
+
+    let bypassed = render(
+        &device,
+        &queue,
+        &mut mixer,
+        MixerParams {
+            bypassed: [false, true, false, false],
+            ..params
+        },
+    );
+    assert_eq!(&bypassed[..4], &[255, 0, 0, 255]);
+
+    let solo_a = render(
+        &device,
+        &queue,
+        &mut mixer,
+        MixerParams {
+            solo: [true, false, false, false],
+            ..params
+        },
+    );
+    assert_eq!(&solo_a[..4], &[255, 0, 0, 255]);
+
+    let multi_solo = render(
+        &device,
+        &queue,
+        &mut mixer,
+        MixerParams {
+            solo: [true, true, false, false],
+            ..params
+        },
+    );
+    assert_eq!(&multi_solo[..4], &[0, 255, 0, 255]);
+}
+
+#[test]
 fn expanded_effects_each_change_a_patterned_source() {
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter; skipping");

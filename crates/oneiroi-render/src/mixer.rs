@@ -283,6 +283,8 @@ fn modulate(effects: &mut DeckEffects, target: EffectTarget, value: f32) {
 #[derive(Clone, Copy, Debug)]
 pub struct MixerParams {
     pub levels: [f32; 4],
+    pub solo: [bool; 4],
+    pub bypassed: [bool; 4],
     pub buses: [MixerBus; 4],
     pub crossfade_gains: [f32; 2],
     pub transforms: [DeckTransform; 4],
@@ -396,6 +398,8 @@ impl Default for MixerParams {
     fn default() -> Self {
         Self {
             levels: [1.0; 4],
+            solo: [false; 4],
+            bypassed: [false; 4],
             buses: [MixerBus::A; 4],
             crossfade_gains: [1.0, 0.0],
             transforms: [DeckTransform::default(); 4],
@@ -641,12 +645,20 @@ impl FourDeckCompositor {
         });
         let effects = params.effects.map(DeckEffects::sanitized);
         let transforms = params.transforms.map(DeckTransform::sanitized);
+        let any_solo = params.solo.into_iter().any(|solo| solo);
+        let levels = std::array::from_fn(|index| {
+            if params.bypassed[index] || (any_solo && !params.solo[index]) {
+                0.0
+            } else {
+                params.levels[index]
+            }
+        });
         let float_values = |read: fn(DeckEffects) -> f32| effects.map(read);
         queue.write_buffer(
             &self.globals,
             0,
             bytemuck::bytes_of(&MixerGlobals {
-                levels: params.levels,
+                levels,
                 source_kinds: kinds,
                 contrast: float_values(|effect| effect.contrast),
                 saturation: float_values(|effect| effect.saturation),

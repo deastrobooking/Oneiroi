@@ -69,9 +69,10 @@ Acceptance criteria:
 
 ## Phase 2: correct layer composition
 
-Status: in progress. Decks are now composited into independent A and B images
-in fixed order within each bus, then the completed bus images are crossfaded.
-Complete the layer-control model before adding more sources.
+Status: implementation complete. Decks are composited into independent A and B
+images in fixed order within each bus, then the completed bus images are
+crossfaded. The layer-control model includes transforms, source modes, crop,
+blend modes, Solo and Bypass.
 
 Implementation sequence:
 
@@ -82,8 +83,8 @@ Implementation sequence:
 4. Add crop plus fit, fill and stretch source modes. (implemented)
 5. Add linear-light Normal, Add, Screen, Multiply, Difference, Lighten, Darken
    and Overlay blend modes. (implemented and GPU tested)
-6. Add per-deck solo and bypass.
-7. Persist and validate every composition field.
+6. Add per-deck solo and bypass. (implemented and GPU tested)
+7. Persist and validate every composition field. (implemented)
 
 Acceptance criteria:
 
@@ -92,6 +93,7 @@ Acceptance criteria:
   sources. (transform path implemented and GPU tested)
 - Every blend mode has GPU readback coverage using known input colors.
 - Neutral defaults render identically to the current mixer.
+  (preserved through project compatibility defaults)
 
 ## Phase 3: audio-reactive modulation
 

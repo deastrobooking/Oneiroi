@@ -1297,6 +1297,8 @@ impl State {
                         0.0
                     }
                 }),
+                solo: self.ui.solo,
+                bypassed: self.ui.bypassed,
                 buses: std::array::from_fn(|index| match self.mixer.deck(DeckId::ALL[index]).bus {
                     CrossfadeBus::Left => MixerBus::A,
                     CrossfadeBus::Right => MixerBus::B,

@@ -38,6 +38,8 @@ target OS:
   transparent pixels outside transformed layer bounds.
 - Alpha-correct per-deck Normal, Add, Screen, Multiply, Difference, Lighten,
   Darken and Overlay blend modes inside each bus.
+- Per-deck Solo isolation and non-destructive layer Bypass, including
+  multi-solo operation across both buses.
 - Native per-deck mirror, neon glow, fractal fold, scanline jitter, find-edges,
   bit reduction, black-light inversion, pixelate and luma-key effects.
 - Per-deck hue, contrast, saturation, black/white levels and gamma grading,

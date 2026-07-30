@@ -63,6 +63,8 @@ pub fn snapshot(
                         CrossfadeBus::Left => CrossfadeBusProject::Left,
                         CrossfadeBus::Right => CrossfadeBusProject::Right,
                     },
+                    solo: ui.solo[deck.index()],
+                    bypassed: ui.bypassed[deck.index()],
                     transport: TransportProject {
                         playing: transport.playing,
                         frozen: transport.frozen,
@@ -169,6 +171,8 @@ pub fn apply_deck(
         CrossfadeBusProject::Left => CrossfadeBus::Left,
         CrossfadeBusProject::Right => CrossfadeBus::Right,
     };
+    ui.solo[deck.index()] = project.solo;
+    ui.bypassed[deck.index()] = project.bypassed;
     ui.effects[deck.index()] = effect_from_project(&project.effects);
     ui.transforms[deck.index()] = transform_from_project(project.transform);
     ui.blend_modes[deck.index()] = blend_mode_from_project(project.blend_mode);
