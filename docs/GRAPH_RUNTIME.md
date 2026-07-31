@@ -202,8 +202,10 @@ blocks or stops program output; the in-memory take remains available.
 - Deck source and deck-effect nodes are fused into the existing compositor;
   they are not independently executable passes yet.
 - Node kinds beyond the compatibility graph do not yet have GPU executors.
-- OSC is not connected, and project open/restore is intentionally treated as
-  baseline state rather than live `ShowCommand` traffic.
+- OSC input reaches the same command gateway as operator, keyboard and MIDI
+  control. OSC output/feedback and timetag scheduling are not yet connected;
+  project open/restore is intentionally treated as baseline state rather than
+  live `ShowCommand` traffic.
 - Recovery still assumes the matching project is loaded so clip indices map to
   the same media. Journals identify the project but do not embed its asset
   manifest, and camera/media history is not used to guess a missing baseline.
@@ -219,7 +221,7 @@ while the graph becomes executable one node family at a time.
 
 ## Next implementation slice
 
-1. Add OSC transport through the authoritative command gateway.
+1. Add OSC output feedback and optional bundle-timetag scheduling.
 2. Add marker editing plus portable project/media manifests for take bundles.
 3. Add the shadow-graph editor and preview/commit controls.
 4. Add the shadow-graph editor and preview/commit controls.

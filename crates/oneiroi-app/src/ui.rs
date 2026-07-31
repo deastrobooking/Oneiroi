@@ -69,6 +69,7 @@ pub struct UiState {
     pub audio_analysis: AudioAnalysisSettings,
     pub midi_device_id: String,
     pub midi_target: ControlTarget,
+    pub osc_bind_address: String,
     pub session_recovery_selected: usize,
     pub take_name_input: String,
     pub random_seed_scope: String,
@@ -120,6 +121,7 @@ impl Default for UiState {
             audio_analysis: AudioAnalysisSettings::default(),
             midi_device_id: String::new(),
             midi_target: ControlTarget::Crossfader,
+            osc_bind_address: "0.0.0.0:9000".to_owned(),
             session_recovery_selected: 0,
             take_name_input: "Take 1".to_owned(),
             random_seed_scope: "visuals".to_owned(),
@@ -282,6 +284,8 @@ pub enum UiAction {
     RefreshMidiInputs,
     ConnectMidiInput(String),
     DisconnectMidiInput,
+    ConnectOscInput,
+    DisconnectOscInput,
     MidiLearn(ControlTarget),
     MidiCancelLearn,
     MidiClearTarget(ControlTarget),
@@ -337,6 +341,7 @@ pub struct PerformanceMetrics<'a> {
     pub audio_connected: bool,
     pub audio_snapshot: AudioInputSnapshot,
     pub midi: MidiMetrics<'a>,
+    pub osc: OscMetrics<'a>,
     pub output_displays: &'a [OutputDisplay],
     pub output_health: OutputHealthMetrics<'a>,
 }
@@ -347,6 +352,12 @@ pub struct MidiMetrics<'a> {
     pub connected: bool,
     pub stats: MidiInputStats,
     pub mapper: &'a mut MidiMapper,
+}
+
+pub struct OscMetrics<'a> {
+    pub status: &'a str,
+    pub connected: bool,
+    pub stats: crate::osc::OscStats,
 }
 
 pub fn draw(
@@ -876,6 +887,34 @@ pub fn draw(
                     ));
                 });
             draw_midi(ui, state, &mut metrics.midi, &mut actions);
+            egui::CollapsingHeader::new("OSC input")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("UDP bind");
+                        ui.add_enabled(
+                            !metrics.osc.connected,
+                            egui::TextEdit::singleline(&mut state.osc_bind_address)
+                                .desired_width(170.0),
+                        );
+                        if metrics.osc.connected {
+                            if ui.button("Disconnect").clicked() {
+                                actions.push(UiAction::DisconnectOscInput);
+                            }
+                        } else if ui.button("Listen").clicked() {
+                            actions.push(UiAction::ConnectOscInput);
+                        }
+                        ui.weak(metrics.osc.status);
+                    });
+                    ui.weak(format!(
+                        "packets {} · messages {} · malformed {} · dropped {}",
+                        metrics.osc.stats.packets,
+                        metrics.osc.stats.messages,
+                        metrics.osc.stats.malformed,
+                        metrics.osc.stats.dropped
+                    ));
+                    ui.weak("Routes use /vjx; deck and clip numbers are 1-based.");
+                });
             ui.separator();
 
             ui.horizontal(|ui| {

@@ -1,4 +1,4 @@
-//! Audio and MIDI device lifecycle, and control-update dispatch.
+//! Audio, MIDI and OSC lifecycle, and control-update dispatch.
 
 use std::time::{Duration, Instant};
 
@@ -11,6 +11,7 @@ use oneiroi_media::{ClipAddress, DeckId};
 use oneiroi_session::{CommandOperation, CommandOrigin};
 
 use super::{State, current_control_value, deck_id, set_effect_parameter};
+use crate::osc::{OscAction, OscInput};
 
 impl State {
     pub(crate) fn refresh_audio_inputs(&mut self) {
@@ -148,6 +149,76 @@ impl State {
                 "{device} · {:?} · {} µs",
                 event.message, event.timestamp_micros
             );
+        }
+    }
+
+    pub(crate) fn connect_osc_input(&mut self) {
+        self.osc_input = None;
+        let address = self.ui.osc_bind_address.trim();
+        match OscInput::bind(address) {
+            Ok(input) => {
+                self.ui.osc_bind_address = input.local_address().to_owned();
+                self.osc_stats = input.stats();
+                self.osc_status = format!("Listening on UDP {}", input.local_address());
+                self.osc_input = Some(input);
+            }
+            Err(error) => self.osc_status = format!("OSC bind failed: {error:#}"),
+        }
+    }
+
+    pub(crate) fn disconnect_osc_input(&mut self) {
+        self.osc_input = None;
+        self.osc_status = "OSC input disconnected".to_owned();
+    }
+
+    pub(crate) fn poll_osc(&mut self, now: Instant) {
+        let Some(input) = &self.osc_input else {
+            return;
+        };
+        let events: Vec<_> = input.try_iter().collect();
+        self.osc_stats = input.stats();
+        for event in events {
+            let address = event.message.address.clone();
+            let Some(action) = crate::osc::map_message(&event.message) else {
+                self.osc_status = format!("Ignored {address} from {}", event.peer);
+                continue;
+            };
+            let origin = CommandOrigin::Osc(event.peer.clone());
+            match action {
+                OscAction::Control(update) => self.dispatch_control_update(update, origin, now),
+                OscAction::Tempo(bpm) => {
+                    self.record_show_operation(origin, now, CommandOperation::SetTempo { bpm });
+                    self.ui.bpm = bpm;
+                    self.tempo.set_bpm(
+                        bpm,
+                        now.saturating_duration_since(self.performance_started)
+                            .as_secs_f64(),
+                    );
+                    self.tap_tempo.reset();
+                }
+                OscAction::OutputEnabled(enabled) => {
+                    self.record_show_operation(
+                        origin,
+                        now,
+                        CommandOperation::SetOutputEnabled { enabled },
+                    );
+                    self.ui.output_enabled = enabled;
+                    self.output_window.set_visible(enabled);
+                    if enabled {
+                        self.output_window.request_redraw();
+                    }
+                }
+                OscAction::OutputFullscreen(fullscreen) => {
+                    self.record_show_operation(
+                        origin,
+                        now,
+                        CommandOperation::SetOutputFullscreen { fullscreen },
+                    );
+                    self.ui.output_fullscreen = fullscreen;
+                    self.apply_output_monitor();
+                }
+            }
+            self.osc_status = format!("{address} · {}", event.peer);
         }
     }
 

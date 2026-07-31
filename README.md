@@ -156,6 +156,9 @@ target OS:
 - Labeled timeline markers jump the recovery cursor to exact show times, and
   take journals/checkpoints can be exported or archived into unique folders
   without changing the source session bundle.
+- Bounded OSC 1.0 UDP input accepts mixer, deck, clip, scene, tempo and output
+  routes through the authoritative command gateway, with sender origins and
+  malformed/drop telemetry retained for show diagnostics.
 
 MIDI feedback/clock and arbitrary package-owned texture declarations have not
 landed yet.

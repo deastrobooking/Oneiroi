@@ -43,6 +43,13 @@ controls use the same command gateway. Their origin is retained in the journal,
 so a replay can distinguish an operator gesture from a specific MIDI device or
 keyboard emergency command.
 
+Open **OSC input**, enter a UDP bind address and choose **Listen** to accept
+remote mixer, deck, clip, scene, tempo and output commands. Use loopback
+(`127.0.0.1:9000`) unless the show-control network should reach the app. OSC
+sender addresses are retained as journal origins, and malformed/overflow
+counters are visible beside the listener status. The complete route table is
+in [OSC.md](OSC.md).
+
 Deck transforms, crop/source/blend choices, effect-slot order, LFO and
 modulation routing, master effects/modulation, and accepted media assignments
 are also journaled as stable field commands. Project opening establishes a new

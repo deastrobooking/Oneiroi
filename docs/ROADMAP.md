@@ -272,10 +272,13 @@ Delivered:
 19. First-class labeled timeline markers plus non-destructive take export and
     archive copies. Every copy receives a unique directory and retains both
     the journal and its atomic checkpoint when present.
+20. Bounded OSC 1.0 UDP input with message/bundle decoding, visible malformed
+    and overflow telemetry, and origin-aware command-gateway routes covering
+    mixer, deck, clip, scene, tempo and output control.
 
 Next:
 
-1. Route OSC through the origin-aware gateway.
+1. Add OSC output feedback and bundle-timetag scheduling.
 2. Add marker editing plus portable project/media manifests to exported takes.
 3. Add shadow edit, preview, readiness and quantized commit UI.
 4. Insert inferred color/resolution conversions and expose compiler

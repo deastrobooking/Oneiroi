@@ -17,6 +17,7 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Output | Offscreen preset/custom program target, clean second window, display selection, aspect preservation, enable/fullscreen, calibration overlays and surface-health diagnostics |
 | Effects | Three reorderable deck groups plus two master slots; color/levels, mirror, neon, fractal, jitter, edges, bit reduction, black light, pixelate, luma key, separable blur and persistent feedback/trails |
 | Modulation | Three LFOs and eight bipolar routes per deck across 14 continuous destinations |
+| OSC | Bounded OSC 1.0 UDP input, nested bundles, live health counters and origin-aware routes for mixer, decks, clips, scenes, tempo and output |
 | Musical control | Manual BPM, Tap, half/double, beat/bar phase and synchronized LFO divisions |
 | Audio modulation | Native input capture, bounded queue, RMS/FFT bands, transient, adaptive normalization, live meters and five audio plus beat/bar matrix sources |
 | Persistence | Atomic save, autosave, recovery, asynchronous restore, automatic v1–v4-to-v5 loading, stable project/take identity, deterministic seeds, active graph metadata and missing-media relinking |
@@ -38,6 +39,6 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 ## Not implemented
 
 - Recent-project list and graphical Save As browser
-- OSC, Ableton Link, MIDI clock, NDI, Syphon/Spout and projection mapping
+- OSC output/feedback, Ableton Link, MIDI clock, NDI, Syphon/Spout and projection mapping
 - Application packaging, signing and FFmpeg distribution
 - Graph editor, Score view, Spatial view and compiled GPU node execution

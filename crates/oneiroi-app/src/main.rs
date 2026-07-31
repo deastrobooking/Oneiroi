@@ -4,6 +4,7 @@
 mod devices;
 mod effects;
 mod media;
+mod osc;
 mod output;
 mod playback;
 mod project;
@@ -133,6 +134,9 @@ struct State {
     midi_status: String,
     midi_reconnect: bool,
     last_midi_refresh: Instant,
+    osc_input: Option<osc::OscInput>,
+    osc_stats: osc::OscStats,
+    osc_status: String,
     thumbnails: ThumbnailWorker,
     thumbnail_request_id: u64,
     thumbnail_requests: HashMap<ClipAddress, (u64, PathBuf)>,
@@ -695,6 +699,9 @@ impl State {
             midi_status,
             midi_reconnect: false,
             last_midi_refresh: Instant::now(),
+            osc_input: None,
+            osc_stats: osc::OscStats::default(),
+            osc_status: "OSC input disconnected".to_owned(),
             thumbnails: ThumbnailWorker::new(32),
             thumbnail_request_id: 0,
             thumbnail_requests: HashMap::new(),
@@ -721,6 +728,7 @@ impl State {
         self.poll_thumbnails();
         let now = Instant::now();
         self.poll_midi(now);
+        self.poll_osc(now);
         if now.saturating_duration_since(self.last_display_refresh) >= Duration::from_secs(2) {
             self.refresh_output_displays();
         }
@@ -795,6 +803,11 @@ impl State {
                         connected: self.midi_input.is_some(),
                         stats: self.midi_stats,
                         mapper: &mut self.midi,
+                    },
+                    osc: ui::OscMetrics {
+                        status: &self.osc_status,
+                        connected: self.osc_input.is_some(),
+                        stats: self.osc_stats,
                     },
                     output_displays: &self.output_displays,
                     output_health: ui::OutputHealthMetrics {
@@ -1099,6 +1112,8 @@ impl State {
                     self.connect_midi_input(device_id);
                 }
                 ui::UiAction::DisconnectMidiInput => self.disconnect_midi_input(),
+                ui::UiAction::ConnectOscInput => self.connect_osc_input(),
+                ui::UiAction::DisconnectOscInput => self.disconnect_osc_input(),
                 ui::UiAction::MidiLearn(target) => self.midi.learn(target),
                 ui::UiAction::MidiCancelLearn => self.midi.cancel_learn(),
                 ui::UiAction::MidiClearTarget(target) => self.midi.clear_target(target),
