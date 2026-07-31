@@ -5,23 +5,23 @@ use crate::{
     PortContract, PortType, ProjectGraph, RateDomain, ResolutionPolicy,
 };
 
-const DECK_SOURCE: &str = "oneiroi.deck_source";
-const DECK_EFFECTS: &str = "oneiroi.deck_effects";
-const FOUR_DECK_MIXER: &str = "oneiroi.four_deck_mixer";
-const MASTER_EFFECTS: &str = "oneiroi.master_effects";
-const PROGRAM_OUTPUT: &str = "oneiroi.program_output";
-const FRAME_DELAY: &str = "oneiroi.frame_delay";
+pub const DECK_SOURCE_NODE: &str = "oneiroi.deck_source";
+pub const DECK_EFFECTS_NODE: &str = "oneiroi.deck_effects";
+pub const FOUR_DECK_MIXER_NODE: &str = "oneiroi.four_deck_mixer";
+pub const MASTER_EFFECTS_NODE: &str = "oneiroi.master_effects";
+pub const PROGRAM_OUTPUT_NODE: &str = "oneiroi.program_output";
+pub const FRAME_DELAY_NODE: &str = "oneiroi.frame_delay";
 
 pub fn builtin_registry() -> NodeRegistry {
     let mut registry = NodeRegistry::default();
     for contract in [
         contract(
-            DECK_SOURCE,
+            DECK_SOURCE_NODE,
             vec![PortContract::output("video", PortType::Texture2d)],
             500,
         ),
         contract(
-            DECK_EFFECTS,
+            DECK_EFFECTS_NODE,
             vec![
                 PortContract::input("video", PortType::Texture2d, true),
                 PortContract::output("video", PortType::Texture2d),
@@ -29,7 +29,7 @@ pub fn builtin_registry() -> NodeRegistry {
             900,
         ),
         contract(
-            FOUR_DECK_MIXER,
+            FOUR_DECK_MIXER_NODE,
             vec![
                 PortContract::input("deck_a", PortType::Texture2d, true),
                 PortContract::input("deck_b", PortType::Texture2d, true),
@@ -40,7 +40,7 @@ pub fn builtin_registry() -> NodeRegistry {
             1_200,
         ),
         contract(
-            MASTER_EFFECTS,
+            MASTER_EFFECTS_NODE,
             vec![
                 PortContract::input("video", PortType::Texture2d, true),
                 PortContract::output("video", PortType::Texture2d),
@@ -48,7 +48,7 @@ pub fn builtin_registry() -> NodeRegistry {
             1_500,
         ),
         contract(
-            PROGRAM_OUTPUT,
+            PROGRAM_OUTPUT_NODE,
             vec![PortContract::input("video", PortType::Texture2d, true)],
             300,
         ),
@@ -58,7 +58,7 @@ pub fn builtin_registry() -> NodeRegistry {
             latency_frames: 1,
             fallback: FallbackBehavior::HoldPrevious,
             ..contract(
-                FRAME_DELAY,
+                FRAME_DELAY_NODE,
                 vec![
                     PortContract::input("current", PortType::Texture2d, true),
                     PortContract::output("previous", PortType::Texture2d),
@@ -82,9 +82,13 @@ pub fn four_deck_performance_graph() -> ProjectGraph {
     for deck in 0..4_u64 {
         let source = 1 + deck * 2;
         let effects = source + 1;
-        let mut source_node = NodeInstance::new(source, DECK_SOURCE);
+        let mut source_node = NodeInstance::new(source, DECK_SOURCE_NODE);
         source_node.label = format!("Deck {} source", (b'A' + deck as u8) as char);
-        let mut effects_node = NodeInstance::new(effects, DECK_EFFECTS);
+        source_node.parameters.insert(
+            "deck_index".to_owned(),
+            crate::ParameterValue::Integer(deck as i64),
+        );
+        let mut effects_node = NodeInstance::new(effects, DECK_EFFECTS_NODE);
         effects_node.label = format!("Deck {} effects", (b'A' + deck as u8) as char);
         nodes.extend([source_node, effects_node]);
         edges.push(Edge::new(source, "video", effects, "video"));
@@ -96,9 +100,9 @@ pub fn four_deck_performance_graph() -> ProjectGraph {
         ));
     }
     nodes.extend([
-        NodeInstance::new(20, FOUR_DECK_MIXER),
-        NodeInstance::new(21, MASTER_EFFECTS),
-        NodeInstance::new(22, PROGRAM_OUTPUT),
+        NodeInstance::new(20, FOUR_DECK_MIXER_NODE),
+        NodeInstance::new(21, MASTER_EFFECTS_NODE),
+        NodeInstance::new(22, PROGRAM_OUTPUT_NODE),
     ]);
     edges.extend([
         Edge::new(20, "program", 21, "video"),

@@ -244,23 +244,28 @@ Delivered:
    and named takes.
 9. Runtime recording for graph activation, clip/scene launches, tempo changes
    and output enable changes.
+10. Renderer lowering that validates the compatibility topology and turns the
+    11 logical nodes into authoritative fused-composite, master-effect and
+    program-output stages.
+11. Graph-gated composition resizing and rollback to the previous plan when a
+    candidate cannot be safely lowered.
 
 Next:
 
-1. Lower built-in graph nodes to adapters around the existing renderer.
-2. Make the immutable plan authoritative for live pass execution.
-3. Route every UI, MIDI, audio-analysis and future OSC mutation through
+1. Route every UI, MIDI, audio-analysis and future OSC mutation through
    commands.
-4. Stream commands to a crash-safe journal and persist checkpoint/take
+2. Stream commands to a crash-safe journal and persist checkpoint/take
    metadata.
-5. Add shadow edit, preview, readiness and quantized commit UI.
-6. Insert inferred color/resolution conversions and expose compiler
+3. Add shadow edit, preview, readiness and quantized commit UI.
+4. Insert inferred color/resolution conversions and expose compiler
    diagnostics.
+5. Add delay/rate-adapter executors and independent node passes where fusion
+   is not valid.
 
 Acceptance criteria:
 
 - The current four-deck show renders entirely from the compiled plan without
-  visual or performance regression.
+  visual or performance regression. (implemented through bounded pass fusion)
 - An invalid shadow graph cannot change program output.
 - A recorded take restores the same state and deterministic seeds at any
   checkpoint.

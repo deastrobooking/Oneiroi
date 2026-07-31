@@ -9,10 +9,13 @@ mod compiler;
 mod model;
 mod transaction;
 
-pub use builtin::{builtin_registry, four_deck_performance_graph};
+pub use builtin::{
+    DECK_EFFECTS_NODE, DECK_SOURCE_NODE, FOUR_DECK_MIXER_NODE, FRAME_DELAY_NODE,
+    MASTER_EFFECTS_NODE, PROGRAM_OUTPUT_NODE, builtin_registry, four_deck_performance_graph,
+};
 pub use compiler::{
-    CompileBudget, CompileError, CompiledNode, GraphCompiler, ImplicitRateAdapter, RenderPlan,
-    ResourceAllocation,
+    CompileBudget, CompileError, CompiledEdge, CompiledNode, GraphCompiler, ImplicitRateAdapter,
+    RenderPlan, ResourceAllocation,
 };
 pub use model::{
     ColorSpace, Edge, FallbackBehavior, GraphRevision, NodeContract, NodeId, NodeInstance,
@@ -65,6 +68,7 @@ mod tests {
 
         assert_eq!(plan.revision(), GraphRevision(1));
         assert_eq!(plan.nodes().len(), 11);
+        assert_eq!(plan.edges().len(), 10);
         assert_eq!(plan.nodes().last().unwrap().kind, "oneiroi.program_output");
         assert!(plan.resources().iter().any(|resource| resource.slot == 0));
         assert_eq!(plan.estimated_gpu_us(), 8_600);

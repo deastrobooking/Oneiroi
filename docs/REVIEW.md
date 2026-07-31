@@ -90,6 +90,11 @@ remains before the milestone is stage-certified.
 - Shadow graph preparation cannot replace the active or last-known-good plan
   unless the complete candidate validates and compiles. Ready transactions can
   commit on a frame, beat, bar or timecode boundary.
+- The renderer now lowers the 11-node compatibility plan into three
+  authoritative executable stages. It verifies four independent source/effect
+  branches, linear color and matching extents before reusing the tested
+  compositor, master processor and presenters. Unsupported lowering restores
+  the previous graph plan.
 - Primary launch, tempo and output-enable actions now enter a serializable
   command log with periodic checkpoints. Session state can replay to a target
   time, and takes can branch without rewriting recorded commands.
@@ -98,7 +103,7 @@ remains before the milestone is stage-certified.
 
 - Project values are validated before application.
 - Version-one and version-two projects migrate to the current version-three schema.
-- The workspace currently passes 167 tests and strict Clippy, with one extended
+- The workspace currently passes 171 tests and strict Clippy, with one extended
   decoder soak available as an opt-in ignored test.
 
 ## Stage-critical gaps

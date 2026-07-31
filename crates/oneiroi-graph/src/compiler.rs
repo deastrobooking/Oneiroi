@@ -4,8 +4,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::{
-    ColorSpace, Edge, GraphRevision, NodeContract, NodeId, NodeRegistry, PortDirection, PortType,
-    ProjectGraph, RateDomain, ResolutionPolicy,
+    ColorSpace, Edge, GraphRevision, NodeContract, NodeId, NodeRegistry, PortDirection, PortRef,
+    PortType, ProjectGraph, RateDomain, ResolutionPolicy,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,10 +52,17 @@ pub struct CompiledNode {
     pub color_space: ColorSpace,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompiledEdge {
+    pub from: PortRef,
+    pub to: PortRef,
+}
+
 #[derive(Clone, Debug)]
 struct RenderPlanInner {
     revision: GraphRevision,
     nodes: Arc<[CompiledNode]>,
+    edges: Arc<[CompiledEdge]>,
     rate_adapters: Arc<[ImplicitRateAdapter]>,
     resources: Arc<[ResourceAllocation]>,
     estimated_gpu_us: u64,
@@ -78,6 +85,10 @@ impl RenderPlan {
 
     pub fn rate_adapters(&self) -> &[ImplicitRateAdapter] {
         &self.0.rate_adapters
+    }
+
+    pub fn edges(&self) -> &[CompiledEdge] {
+        &self.0.edges
     }
 
     pub fn resources(&self) -> &[ResourceAllocation] {
@@ -288,6 +299,15 @@ impl<'a> GraphCompiler<'a> {
         Ok(RenderPlan(Arc::new(RenderPlanInner {
             revision: graph.revision,
             nodes: nodes.into(),
+            edges: graph
+                .edges
+                .iter()
+                .map(|edge| CompiledEdge {
+                    from: edge.from.clone(),
+                    to: edge.to.clone(),
+                })
+                .collect::<Vec<_>>()
+                .into(),
             rate_adapters: adapters.into(),
             resources: resources.into(),
             estimated_gpu_us,

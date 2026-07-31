@@ -41,9 +41,11 @@ fixed compositor while GPU node lowering is developed:
 ```text
 ProjectGraph -> validate / schedule / budget -> immutable RenderPlan
       |                                             |
-      +-> shadow GraphTransaction                   +-> active plan
-                                                        |
-UI/controller -> ShowCommand -> SessionEventLog --------+
+      +-> shadow GraphTransaction                   v
+                                            renderer lowering
+                                                   |
+UI/controller -> ShowCommand -> SessionEventLog    v
+                                     fused composite / master / output
 ```
 
 ## Workspace responsibilities
@@ -55,7 +57,7 @@ UI/controller -> ShowCommand -> SessionEventLog --------+
 | `oneiroi-hap-sys` | Pinned Vidvox HAP reference implementation and raw FFI |
 | `oneiroi-hap` | Validated safe HAP decode into BC-compressed planes |
 | `oneiroi-media` | Probe, demux, decode workers, clip bank, transport, scheduling, thumbnails and cameras |
-| `oneiroi-render` | GPU resources, HAP/RGBA upload, effects, LFO resolution and four-deck composition |
+| `oneiroi-render` | Render-plan lowering, GPU resources, HAP/RGBA upload, effects, LFO resolution and four-deck composition |
 | `oneiroi-io` | Versioned project JSON, atomic save and recovery paths |
 | `oneiroi-session` | Serializable show commands, session state, checkpoints, replay, branches and named takes |
 | `oneiroi-app` | Window/event loop, UI and orchestration |

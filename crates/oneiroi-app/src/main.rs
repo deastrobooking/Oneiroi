@@ -31,9 +31,9 @@ use oneiroi_media::{
     crossfade_gains, discover_cameras,
 };
 use oneiroi_render::{
-    DeckEffects, FourDeckCompositor, Gpu, MasterEffectProcessor, MixerBus, MixerParams,
-    PROGRAM_FORMAT, PresentSurface, PresentationOptions, ProgramPresenter, ProgramTarget,
-    SurfaceAcquireStatus, discover_effect_packages,
+    BuiltInRenderStage, DeckEffects, FourDeckCompositor, Gpu, MasterEffectProcessor, MixerBus,
+    MixerParams, PROGRAM_FORMAT, PresentSurface, PresentationOptions, ProgramPresenter,
+    ProgramTarget, SurfaceAcquireStatus, discover_effect_packages,
 };
 use oneiroi_session::{CommandOperation, CommandOrigin, ShowTime};
 use winit::application::ApplicationHandler;
@@ -916,43 +916,78 @@ impl State {
             self.master_effect_processor.reset_history();
         }
         let freeze_program = self.ui.master_freeze && !self.ui.blackout;
+        let render_plan = self.performance_runtime.render_plan().clone();
         if !freeze_program {
-            let composition_target = if master_effects_active {
-                self.program.composition_view()
-            } else {
-                &self.program.view
-            };
-            self.compositor.draw(
-                &self.gpu.device,
-                &self.gpu.queue,
-                &mut encoder,
-                composition_target,
-                MixerParams {
-                    levels: std::array::from_fn(|index| {
-                        let deck = self.mixer.deck(DeckId::ALL[index]);
-                        if matches!(deck.state, DeckState::Ready(_) | DeckState::Live(_)) {
-                            deck.level
+            for stage in render_plan.stages() {
+                match stage {
+                    BuiltInRenderStage::FourDeckComposite { .. } => {
+                        let composition_target = if master_effects_active {
+                            self.program.composition_view()
                         } else {
-                            0.0
-                        }
-                    }),
-                    solo: self.ui.solo,
-                    bypassed: self.ui.bypassed,
-                    buses: std::array::from_fn(|index| {
-                        match self.mixer.deck(DeckId::ALL[index]).bus {
-                            CrossfadeBus::Left => MixerBus::A,
-                            CrossfadeBus::Right => MixerBus::B,
-                        }
-                    }),
-                    crossfade_gains: crossfade_gains(self.ui.crossfader, self.ui.equal_power),
-                    transforms: self.ui.transforms,
-                    blend_modes: self.ui.blend_modes,
-                    output_aspect: self.ui.composition_extent[0] as f32
-                        / self.ui.composition_extent[1].max(1) as f32,
-                    effects: std::array::from_fn(|index| {
+                            &self.program.view
+                        };
                         let audio = self.audio_snapshot.analysis;
-                        self.ui.lfos[index].apply_with_audio(
-                            self.ui.effects[index],
+                        self.compositor.draw(
+                            &self.gpu.device,
+                            &self.gpu.queue,
+                            &mut encoder,
+                            composition_target,
+                            MixerParams {
+                                levels: std::array::from_fn(|index| {
+                                    let deck = self.mixer.deck(DeckId::ALL[index]);
+                                    if matches!(
+                                        deck.state,
+                                        DeckState::Ready(_) | DeckState::Live(_)
+                                    ) {
+                                        deck.level
+                                    } else {
+                                        0.0
+                                    }
+                                }),
+                                solo: self.ui.solo,
+                                bypassed: self.ui.bypassed,
+                                buses: std::array::from_fn(|index| {
+                                    match self.mixer.deck(DeckId::ALL[index]).bus {
+                                        CrossfadeBus::Left => MixerBus::A,
+                                        CrossfadeBus::Right => MixerBus::B,
+                                    }
+                                }),
+                                crossfade_gains: crossfade_gains(
+                                    self.ui.crossfader,
+                                    self.ui.equal_power,
+                                ),
+                                transforms: self.ui.transforms,
+                                blend_modes: self.ui.blend_modes,
+                                output_aspect: self.ui.composition_extent[0] as f32
+                                    / self.ui.composition_extent[1].max(1) as f32,
+                                effects: std::array::from_fn(|index| {
+                                    self.ui.lfos[index].apply_with_audio(
+                                        self.ui.effects[index],
+                                        effect_time,
+                                        beat_position,
+                                        [
+                                            audio.rms,
+                                            audio.bass,
+                                            audio.mid,
+                                            audio.high,
+                                            audio.transient,
+                                        ],
+                                    )
+                                }),
+                                master_opacity: self.ui.master_opacity,
+                                time_seconds: effect_time,
+                                blackout: self.ui.blackout,
+                            },
+                        );
+                    }
+                    BuiltInRenderStage::MasterEffects { .. } if master_effects_active => {
+                        let audio = self.audio_snapshot.analysis;
+                        self.master_effect_processor.draw_modulated_at(
+                            &self.gpu.queue,
+                            &mut encoder,
+                            &self.program,
+                            &self.ui.master_effects,
+                            &self.ui.master_modulation,
                             effect_time,
                             beat_position,
                             [
@@ -962,31 +997,11 @@ impl State {
                                 audio.high,
                                 audio.transient,
                             ],
-                        )
-                    }),
-                    master_opacity: self.ui.master_opacity,
-                    time_seconds: effect_time,
-                    blackout: self.ui.blackout,
-                },
-            );
-            if master_effects_active {
-                let audio = self.audio_snapshot.analysis;
-                self.master_effect_processor.draw_modulated_at(
-                    &self.gpu.queue,
-                    &mut encoder,
-                    &self.program,
-                    &self.ui.master_effects,
-                    &self.ui.master_modulation,
-                    effect_time,
-                    beat_position,
-                    [
-                        audio.rms,
-                        audio.bass,
-                        audio.mid,
-                        audio.high,
-                        audio.transient,
-                    ],
-                );
+                        );
+                    }
+                    BuiltInRenderStage::MasterEffects { .. }
+                    | BuiltInRenderStage::ProgramOutput { .. } => {}
+                }
             }
         }
 
@@ -1008,7 +1023,9 @@ impl State {
             test_card: self.ui.output_test_card,
             identify: self.ui.output_identify,
         };
-        if let Some(frame) = operator_frame.as_ref() {
+        if render_plan.has_program_output()
+            && let Some(frame) = operator_frame.as_ref()
+        {
             let content_view = self.gpu.content_view(&frame.texture);
             let ui_view = self.gpu.surface_view(&frame.texture);
             let (width, height) = self.gpu.size();
@@ -1048,7 +1065,9 @@ impl State {
         } else {
             None
         };
-        if let Some(frame) = output_frame.as_ref() {
+        if render_plan.has_program_output()
+            && let Some(frame) = output_frame.as_ref()
+        {
             let view = self.output_surface.content_view(&frame.texture);
             let (width, height) = self.output_surface.size();
             self.output_presenter.draw(

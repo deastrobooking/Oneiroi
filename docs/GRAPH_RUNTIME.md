@@ -21,10 +21,20 @@ Deck D source -> Deck D effects ----/          |
                                          program output
 ```
 
-That produces an immutable 11-node `RenderPlan`. It is a control-plane
-description today, not a second GPU rendering path. The renderer will move
-behind compiled node executors incrementally; until that lowering exists, the
-fixed compositor remains the authoritative pixel path.
+That produces an immutable 11-node `RenderPlan`. `oneiroi-render` now lowers
+that logical graph into three executable stages:
+
+```text
+four source/effect branches -> fused FourDeckComposite
+                            -> MasterEffects
+                            -> ProgramOutput
+```
+
+The application iterates this lowered schedule to encode composition, master
+effects and presentation. The plan is therefore authoritative for live stage
+ordering while the fixed compositor remains the optimized executor for the
+four deck branches. This is deliberate pass fusion, not a parallel rendering
+path.
 
 ## Typed graph
 
@@ -45,7 +55,25 @@ fixed compositor remains the authoritative pixel path.
 - Texture lifetime analysis and non-overlapping transient slot reuse
 
 Compiler output is immutable and cheaply cloneable. It contains no GPU, media
-or operating-system handles.
+or operating-system handles. The plan retains compiled connections so a
+renderer can verify topology before selecting executors.
+
+## Renderer lowering
+
+The initial lowering accepts only the exact built-in compatibility topology.
+It rejects:
+
+- Unknown node kinds without a renderer executor
+- Rate adapters that the renderer cannot execute yet
+- Missing or duplicated mixer, master or output nodes
+- Shared branches that cannot represent four independent decks
+- Non-linear working color
+- Extent disagreement between mixer, master and output
+
+Composition-size changes recompile and lower the graph before reallocating
+program textures. A plan that exceeds its texture budget leaves the current
+extent active. If a committed graph cannot be lowered, the runtime restores
+the previous graph and immutable plan.
 
 ## Live transactions
 
@@ -88,7 +116,9 @@ apply the remaining commands.
 
 ## Deliberate limitations of this slice
 
-- The compiled plan does not yet lower nodes to `wgpu` pass executors.
+- Deck source and deck-effect nodes are fused into the existing compositor;
+  they are not independently executable passes yet.
+- Node kinds beyond the compatibility graph do not yet have GPU executors.
 - Continuous UI parameters, MIDI/OSC input and transport operations do not all
   route through `ShowCommand` yet.
 - Event logs are serializable in memory but are not yet streamed to a
@@ -103,12 +133,10 @@ while the graph becomes executable one node family at a time.
 
 ## Next implementation slice
 
-1. Add a render-executor trait and lower the built-in compatibility nodes.
-2. Make the compiled plan the source of render-pass scheduling while reusing
-   the existing compositor and master-effect implementations.
-3. Route all operator and controller mutations through `ShowCommand`.
-4. Add an append-only journal writer with periodic atomic checkpoints.
-5. Persist graphs, take metadata and deterministic seeds in a backward-
+1. Route all operator and controller mutations through `ShowCommand`.
+2. Add an append-only journal writer with periodic atomic checkpoints.
+3. Persist graphs, take metadata and deterministic seeds in a backward-
    compatible project migration.
-6. Add the shadow-graph editor and preview/commit controls.
-
+4. Add the shadow-graph editor and preview/commit controls.
+5. Add executors for explicit delay/rate-adapter nodes, then unfuse deck
+   branches where graph editing requires independent passes.

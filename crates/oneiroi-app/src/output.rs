@@ -11,6 +11,15 @@ use super::{State, describe_monitors, monitor_id, monitor_label};
 impl State {
     pub(crate) fn apply_output_settings(&mut self) {
         if self.program.extent() != self.ui.composition_extent {
+            if let Err(error) = self
+                .performance_runtime
+                .set_composition_extent(self.ui.composition_extent)
+            {
+                self.project_status = format!("Output graph rejected: {error:#}");
+                self.ui.composition_extent = self.program.extent();
+                self.ui.custom_composition_extent = self.program.extent();
+                return;
+            }
             self.program = ProgramTarget::new(&self.gpu.device, self.ui.composition_extent);
             self.master_effect_processor =
                 MasterEffectProcessor::new(&self.gpu.device, &self.program);

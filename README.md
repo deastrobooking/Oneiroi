@@ -131,6 +131,9 @@ target OS:
 - An 11-node compatibility graph for the current four-deck pipeline plus
   isolated shadow transactions with frame/beat/bar/timecode commits and
   last-known-good retention.
+- Renderer lowering that validates the graph topology, fuses the four
+  source/effect branches into the proven compositor, then drives master
+  effects and program presentation from the immutable schedule.
 - Serializable show commands, session checkpoints, deterministic replay,
   branching and named performance takes. Clip/scene launches, tempo changes
   and output-enable changes now enter the live event log.

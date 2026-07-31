@@ -9,6 +9,7 @@ rust-version.workspace = true
 oneiroi-hap.workspace = true
 oneiroi-media.workspace = true
 oneiroi-core.workspace = true
+oneiroi-graph.workspace = true
 
 anyhow.workspace = true
 bytemuck.workspace = true

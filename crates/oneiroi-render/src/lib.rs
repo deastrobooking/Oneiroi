@@ -5,6 +5,7 @@
 
 pub mod effect_manifest;
 pub mod gpu;
+pub mod graph_plan;
 pub mod mixer;
 pub mod program;
 pub mod triangle;
@@ -17,6 +18,7 @@ pub use effect_manifest::{
     ValidatedEffectPackage, discover_effect_packages, load_effect_package,
 };
 pub use gpu::{Gpu, PresentSurface, SurfaceAcquireStatus, SurfaceAcquisition};
+pub use graph_plan::{BuiltInRenderStage, FusedDeckNodes, LoweredPlanError, LoweredRenderPlan};
 pub use mixer::{
     DeckEffects, DeckLfos, DeckTransform, EFFECT_SLOTS_PER_DECK, EffectGroup, EffectLfo,
     EffectPreset, EffectSlot, EffectTarget, FourDeckCompositor, LayerBlendMode, LfoWaveform,
