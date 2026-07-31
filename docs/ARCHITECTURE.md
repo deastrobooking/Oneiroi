@@ -48,6 +48,14 @@ UI/controller -> ShowCommand -> SessionEventLog    v
                                      fused composite / master / output
 ```
 
+Device-neutral MIDI, keyboard performance controls and continuous UI control
+targets enter the same record-before-apply gateway. Command origin is retained
+as operator, keyboard, MIDI device, automation, score, OSC or remote identity.
+Editor-owned structures cross an adjacent snapshot/diff boundary: the prior
+state is restored, stable field commands are recorded, then the accepted state
+is applied. Successful asynchronous media probes record clip-slot identity at
+the same acceptance boundary.
+
 ## Workspace responsibilities
 
 | Crate | Responsibility |
@@ -386,7 +394,7 @@ Operator-window resizing does not change composition resolution.
 
 ## Persistence
 
-`.oneiroi` files are versioned JSON. The current schema is version 3 and
+`.oneiroi` files are versioned JSON. The current schema is version 4 and
 version-one/version-two files are migrated on load. Version 3 adds stable
 custom-effect package IDs and named parameter values. Saves write a temporary
 sibling and rename it atomically. Newly introduced fields use explicit Serde

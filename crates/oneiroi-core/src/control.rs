@@ -3,7 +3,9 @@
 //! I/O adapters translate platform MIDI packets into [`MidiMessage`]. The
 //! render thread only consumes normalized [`ControlUpdate`] snapshots.
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum MidiMessageKind {
     Note,
     ControlChange,
@@ -57,7 +59,8 @@ impl MidiMessage {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "target", content = "address")]
 pub enum ControlTarget {
     Crossfader,
     MasterOpacity,

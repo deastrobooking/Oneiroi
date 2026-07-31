@@ -2516,6 +2516,7 @@ name = "oneiroi-core"
 version = "0.1.0"
 dependencies = [
  "rustfft",
+ "serde",
  "thiserror 2.0.19",
 ]
 
@@ -2590,6 +2591,7 @@ dependencies = [
 name = "oneiroi-session"
 version = "0.1.0"
 dependencies = [
+ "oneiroi-core",
  "oneiroi-graph",
  "serde",
  "serde_json",

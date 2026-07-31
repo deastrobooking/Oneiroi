@@ -252,12 +252,24 @@ Delivered:
 12. A bounded background JSONL session journal with versioned headers,
     non-blocking render-thread enqueue, periodic fsync, atomic checkpoint
     replacement, torn-tail recovery and visible health counters.
+13. An origin-aware application command gateway for every device-neutral MIDI
+    target, keyboard emergency/mixer/scene control, semantic clip/transport/
+    output commands and 192 built-in plus dynamic custom-effect UI values.
+14. Record-before-apply structural snapshots for deck transforms, crop/source
+    and blend modes, bus/solo/bypass, effect slots, LFO and modulation routing,
+    master effects/modulation, plus accepted movie/folder/relink assignments.
+15. An operator session-recovery catalog that excludes the active journal,
+    validates checkpoint-plus-tail state, restores concrete controls and
+    structures, and rotates to a fresh baseline journal.
+16. Project schema v4 with stable project/take identities, bounded take
+    metadata, linked journal headers, legacy compatibility and project-aware
+    recovery filtering.
 
 Next:
 
-1. Route every UI, MIDI, audio-analysis and future OSC mutation through
-   commands.
-2. Add an operator recovery/take browser and persist take metadata.
+1. Add explicit operator branch names and persist deterministic seeds/graph
+   metadata.
+2. Route OSC through the origin-aware gateway.
 3. Add shadow edit, preview, readiness and quantized commit UI.
 4. Insert inferred color/resolution conversions and expose compiler
    diagnostics.

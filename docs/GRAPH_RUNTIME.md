@@ -104,11 +104,38 @@ new named take instead of rewriting recorded commands.
 The app currently records:
 
 - Initial graph activation
-- Clip launches
-- Scene launches
-- Tap, half-time and double-time tempo changes
-- Program-output enable changes
+- Clip/scene launches, clip clears, deck ejects and seeks
+- Tap, manual, half-time and double-time tempo changes
+- Program-output enable, fullscreen, display and accepted extent changes
+- All device-neutral MIDI `ControlTarget` updates
+- Keyboard blackout, freeze, crossfader, output and scene commands
+- UI mixer, deck transport, effect, LFO, modulation-matrix and custom-effect
+  parameter changes
+- Camera source assignments
 - Future graph transaction commits
+
+## Authoritative control gateway
+
+MIDI and keyboard updates enter a single application gateway. The gateway:
+
+1. Removes release edges that do not mutate state.
+2. Converts launches and blackout to semantic command variants.
+3. Records and journals the command with its origin and show time.
+4. Applies the concrete mixer, transport or effect mutation.
+
+For continuous egui widgets, the app snapshots 192 built-in performance
+targets plus dynamic custom-effect parameters before drawing. Changed values
+are restored to their prior value and then reapplied through the gateway. This
+keeps mouse drags on the same command path as MIDI and keyboard input rather
+than merely logging already-mutated values.
+
+Editor-owned structures use the same record-before-apply rule through a
+structural snapshot around each UI frame. Deterministic field commands now
+cover deck bus/equal-power selection, transforms and crop/source modes, blend,
+solo/bypass, effect-slot order/group/mix/bypass, mirror, LFO waveform/sync and
+direct routing, deck modulation sources/targets, the full master-effect chain,
+and master modulation. Successful movie imports, folder imports and relinks
+also record the accepted clip-slot media identity.
 
 A complete state checkpoint is retained every 600 rendered frames. Replay can
 start from the latest checkpoint before a target time and deterministically
@@ -141,6 +168,18 @@ non-newline-terminated final journal record is ignored; malformed complete
 records, bad formats, unsupported versions and non-monotonic sequences are
 hard errors.
 
+The operator's **Session recovery** panel scans prior journals while excluding
+the active writer. It shows the take name, reconstructed command count, latest
+show time, checkpoint availability and torn-tail status. Restoring validates
+and replays checkpoint plus tail, applies continuous and structural state to
+the concrete mixer, then opens a fresh journal with an immediate baseline
+checkpoint so command sequences restart monotonically.
+
+Project schema v4 assigns a stable 128-bit identity and stores bounded take
+metadata. New journal headers carry the project and take identities. Recovery
+shows matching and legacy/unlinked journals, while linked journals belonging
+to other projects are hidden.
+
 Journal command/checkpoint counts, queue overruns and the last worker error are
 shown beside graph health in the operator window. A journal failure never
 blocks or stops program output; the in-memory take remains available.
@@ -150,11 +189,13 @@ blocks or stops program output; the in-memory take remains available.
 - Deck source and deck-effect nodes are fused into the existing compositor;
   they are not independently executable passes yet.
 - Node kinds beyond the compatibility graph do not yet have GPU executors.
-- Continuous UI parameters, MIDI/OSC input and transport operations do not all
-  route through `ShowCommand` yet.
-- Journal recovery is a library/runtime foundation; an operator-facing take
-  recovery browser is not yet implemented.
-- Graphs and takes are not yet part of `.oneiroi` project version 3.
+- OSC is not connected, and project open/restore is intentionally treated as
+  baseline state rather than live `ShowCommand` traffic.
+- Recovery still assumes the matching project is loaded so clip indices map to
+  the same media. Journals identify the project but do not embed its asset
+  manifest, and camera/media history is not used to guess a missing baseline.
+- Graph definitions are not yet part of `.oneiroi` project version 4; take
+  identity and journal-file metadata are persisted, not the command log itself.
 - Shadow-graph editing and commit controls do not yet have operator UI.
 - Color and resolution declarations are carried into the plan; full
   edge-by-edge inference and conversion-node insertion remain.
@@ -164,10 +205,10 @@ while the graph becomes executable one node family at a time.
 
 ## Next implementation slice
 
-1. Route all operator and controller mutations through `ShowCommand`.
-2. Add an operator-facing browser for recovered journals and named takes.
-3. Persist graphs, take metadata and deterministic seeds in a backward-
-   compatible project migration.
+1. Persist deterministic seeds and graph metadata in a backward-compatible
+   project migration.
+2. Add OSC transport through the authoritative command gateway.
+3. Add explicit operator branch naming for project-linked takes.
 4. Add the shadow-graph editor and preview/commit controls.
 5. Add executors for explicit delay/rate-adapter nodes, then unfuse deck
    branches where graph editing requires independent passes.

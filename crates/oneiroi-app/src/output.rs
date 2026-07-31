@@ -9,7 +9,7 @@ use winit::window::Fullscreen;
 use super::{State, describe_monitors, monitor_id, monitor_label};
 
 impl State {
-    pub(crate) fn apply_output_settings(&mut self) {
+    pub(crate) fn apply_output_settings(&mut self) -> bool {
         if self.program.extent() != self.ui.composition_extent {
             if let Err(error) = self
                 .performance_runtime
@@ -18,7 +18,7 @@ impl State {
                 self.project_status = format!("Output graph rejected: {error:#}");
                 self.ui.composition_extent = self.program.extent();
                 self.ui.custom_composition_extent = self.program.extent();
-                return;
+                return false;
             }
             self.program = ProgramTarget::new(&self.gpu.device, self.ui.composition_extent);
             self.master_effect_processor =
@@ -37,6 +37,7 @@ impl State {
         }
         self.output_window.set_visible(self.ui.output_enabled);
         self.apply_output_monitor();
+        true
     }
 
     pub(crate) fn apply_output_monitor(&mut self) {

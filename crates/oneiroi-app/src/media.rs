@@ -8,6 +8,7 @@ use oneiroi_media::{
     CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipRestoreRequest, DeckId, DeckState,
     FolderScanRequest, SubmitError, ThumbnailRequest, VideoFramePayload, discover_cameras,
 };
+use oneiroi_session::{CommandOperation, CommandOrigin};
 
 use super::{State, display_path, media_time_from_seconds};
 
@@ -217,6 +218,16 @@ impl State {
                     && slot_generation == generation
                 {
                     let address = ClipAddress { deck, slot };
+                    self.record_show_operation(
+                        CommandOrigin::Operator,
+                        Instant::now(),
+                        CommandOperation::SetParameter {
+                            path: format!("deck.{}.clip.{slot}.media", deck.index()),
+                            value: oneiroi_graph::ParameterValue::Text(
+                                path.to_string_lossy().into_owned(),
+                            ),
+                        },
+                    );
                     self.clips.assign(address, movie);
                     self.clips.activate(address);
                     self.request_thumbnail(address, path.clone());

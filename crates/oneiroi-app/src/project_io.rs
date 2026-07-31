@@ -8,11 +8,25 @@ use oneiroi_io::{
     ProjectFile, autosave_path, load_project, recovery_is_newer, save_project_atomic,
 };
 use oneiroi_media::{ClipAddress, ClipBank, ClipRestoreRequest, DeckId, LaunchQueue};
+use oneiroi_session::{CommandOperation, CommandOrigin};
 
 use super::{State, display_path, project, resolve_project_paths};
 
 impl State {
     pub(crate) fn project_snapshot(&self) -> ProjectFile {
+        let mut takes = self.project_takes.clone();
+        if let Some(active) = self.performance_runtime.take_metadata() {
+            if let Some(existing) = takes.iter_mut().find(|take| take.take_id == active.take_id) {
+                *existing = active;
+            } else {
+                takes.push(active);
+            }
+        }
+        if takes.len() > 256 {
+            takes.sort_by_key(|take| take.created_unix_ms);
+            let remove = takes.len() - 256;
+            takes.drain(..remove);
+        }
         project::snapshot(
             &self.ui,
             &self.mixer,
@@ -20,6 +34,10 @@ impl State {
             &self.transports,
             &self.midi,
             &self.live_configs,
+            project::ProjectSessionMetadata {
+                project_id: &self.project_id,
+                takes,
+            },
         )
     }
 
@@ -91,6 +109,8 @@ impl State {
 
     pub(crate) fn apply_project(&mut self, project_file: ProjectFile, recovered: bool) {
         self.master_effect_processor.reset_history();
+        self.project_id.clone_from(&project_file.project_id);
+        self.project_takes.clone_from(&project_file.takes);
         self.project_epoch = self.project_epoch.wrapping_add(1);
         self.clips = ClipBank::default();
         self.ui.clear_thumbnails();
@@ -105,7 +125,7 @@ impl State {
         self.restore_selected = [0; 4];
         self.restore_transport = [None; 4];
         project::apply_master(&project_file, &mut self.ui);
-        self.apply_output_settings();
+        let _ = self.apply_output_settings();
         self.midi = project::apply_midi(&project_file);
 
         for deck in DeckId::ALL {
@@ -161,6 +181,15 @@ impl State {
             }
         }
 
+        let baseline = self.session_state_snapshot();
+        if let Err(error) = self.performance_runtime.start_project_baseline(
+            baseline,
+            &self.project_id,
+            self.show_time_at(Instant::now()),
+        ) {
+            log::error!("start project-linked take: {error:#}");
+        }
+
         self.last_saved_project = (!recovered).then_some(project_file);
         self.performance_started = Instant::now();
         self.last_autosave = Instant::now();
@@ -184,6 +213,22 @@ impl State {
                 Ok(movie) => {
                     let address = result.address;
                     let duration = movie.duration.map(MediaTime::as_seconds);
+                    if folder_result || relink_result {
+                        self.record_show_operation(
+                            CommandOrigin::Operator,
+                            Instant::now(),
+                            CommandOperation::SetParameter {
+                                path: format!(
+                                    "deck.{}.clip.{}.media",
+                                    address.deck.index(),
+                                    address.slot
+                                ),
+                                value: oneiroi_graph::ParameterValue::Text(
+                                    result.path.to_string_lossy().into_owned(),
+                                ),
+                            },
+                        );
+                    }
                     self.clips.restore(address, movie);
                     self.request_thumbnail(address, result.path.clone());
                     if relink_active

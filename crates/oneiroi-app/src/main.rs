@@ -8,21 +8,25 @@ mod output;
 mod playback;
 mod project;
 mod project_io;
+mod recovery;
 mod runtime;
+mod structural;
 mod ui;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use oneiroi_core::{
-    Clock, ControlTarget, MediaTime, MidiMapper, TapTempo, TempoClock, effect_parameter_key,
+    Clock, ControlTarget, MediaTime, MidiMapper, Quantization, TapTempo, TempoClock,
+    effect_parameter_key,
 };
 use oneiroi_io::{
     AudioInput, AudioInputDevice, AudioInputSnapshot, MidiInputConnection, MidiInputDevice,
-    MidiInputStats, ProjectFile, autosave_path, discover_audio_inputs, discover_midi_inputs,
+    MidiInputStats, ProjectFile, TakeMetadataProject, autosave_path, discover_audio_inputs,
+    discover_midi_inputs, new_project_id,
 };
 use oneiroi_media::{
     CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipRestorer, CrossfadeBus, DeckDecoder,
@@ -36,6 +40,7 @@ use oneiroi_render::{
     ProgramTarget, SurfaceAcquireStatus, discover_effect_packages,
 };
 use oneiroi_session::{CommandOperation, CommandOrigin, ShowTime};
+use structural::StructuralSnapshot;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, WindowEvent};
@@ -90,6 +95,7 @@ struct State {
     launches: LaunchQueue,
     tempo: TempoClock,
     tap_tempo: TapTempo,
+    session_started: Instant,
     performance_started: Instant,
     import_slots: [Option<(u64, usize)>; 4],
     importer: MediaImporter,
@@ -108,6 +114,8 @@ struct State {
     playback_generations: [u64; 4],
     modifiers: ModifiersState,
     project_path: Option<PathBuf>,
+    project_id: String,
+    project_takes: Vec<TakeMetadataProject>,
     last_saved_project: Option<ProjectFile>,
     recovery_path: Option<PathBuf>,
     workspace: PathBuf,
@@ -135,6 +143,8 @@ struct State {
     audio_input: Option<AudioInput>,
     audio_snapshot: AudioInputSnapshot,
     audio_status: String,
+    session_recoveries: Vec<recovery::RecoveryEntry>,
+    session_recovery_status: String,
     performance_runtime: runtime::PerformanceRuntime,
 }
 
@@ -265,6 +275,11 @@ impl ApplicationHandler for App {
         if state.output_window.id() == id {
             match event {
                 WindowEvent::CloseRequested => {
+                    state.record_show_operation(
+                        CommandOrigin::Operator,
+                        Instant::now(),
+                        CommandOperation::SetOutputEnabled { enabled: false },
+                    );
                     state.ui.output_enabled = false;
                     state.output_window.set_visible(false);
                 }
@@ -322,24 +337,98 @@ impl ApplicationHandler for App {
 }
 
 impl State {
+    pub(crate) fn show_time_at(&self, now: Instant) -> ShowTime {
+        let session_elapsed = now
+            .saturating_duration_since(self.session_started)
+            .as_secs_f64();
+        let performance_elapsed = now
+            .saturating_duration_since(self.performance_started)
+            .as_secs_f64();
+        ShowTime {
+            monotonic_ns: (session_elapsed * 1_000_000_000.0).round() as u64,
+            frame_id: self.clock.frame(),
+            beat_ticks: (self.tempo.beat_at(performance_elapsed) * 960.0).round() as i64,
+            timecode: None,
+        }
+    }
+
+    pub(crate) fn record_show_operation(
+        &mut self,
+        origin: CommandOrigin,
+        now: Instant,
+        operation: CommandOperation,
+    ) {
+        let at = self.show_time_at(now);
+        if let Err(error) = self.performance_runtime.record(origin, at, operation) {
+            log::error!("record show command: {error:#}");
+        }
+    }
+
     fn handle_key(&mut self, code: KeyCode) {
+        let now = Instant::now();
         match code {
-            KeyCode::KeyB => self.ui.blackout = !self.ui.blackout,
-            KeyCode::Space => self.ui.master_freeze = !self.ui.master_freeze,
+            KeyCode::KeyB => self.dispatch_control_update(
+                oneiroi_core::ControlUpdate {
+                    target: ControlTarget::MasterBlackout,
+                    value: f32::from(!self.ui.blackout),
+                },
+                CommandOrigin::Keyboard,
+                now,
+            ),
+            KeyCode::Space => self.dispatch_control_update(
+                oneiroi_core::ControlUpdate {
+                    target: ControlTarget::MasterFreeze,
+                    value: f32::from(!self.ui.master_freeze),
+                },
+                CommandOrigin::Keyboard,
+                now,
+            ),
             KeyCode::ArrowLeft => {
-                self.ui.crossfader = (self.ui.crossfader - 0.05).max(0.0);
+                self.dispatch_control_update(
+                    oneiroi_core::ControlUpdate {
+                        target: ControlTarget::Crossfader,
+                        value: (self.ui.crossfader - 0.05).max(0.0),
+                    },
+                    CommandOrigin::Keyboard,
+                    now,
+                );
             }
             KeyCode::ArrowRight => {
-                self.ui.crossfader = (self.ui.crossfader + 0.05).min(1.0);
+                self.dispatch_control_update(
+                    oneiroi_core::ControlUpdate {
+                        target: ControlTarget::Crossfader,
+                        value: (self.ui.crossfader + 0.05).min(1.0),
+                    },
+                    CommandOrigin::Keyboard,
+                    now,
+                );
             }
-            KeyCode::Home => self.ui.crossfader = 0.5,
+            KeyCode::Home => self.dispatch_control_update(
+                oneiroi_core::ControlUpdate {
+                    target: ControlTarget::Crossfader,
+                    value: 0.5,
+                },
+                CommandOrigin::Keyboard,
+                now,
+            ),
             KeyCode::Escape if self.ui.output_fullscreen => {
+                self.record_show_operation(
+                    CommandOrigin::Keyboard,
+                    now,
+                    CommandOperation::SetOutputFullscreen { fullscreen: false },
+                );
                 self.ui.output_fullscreen = false;
                 self.output_window.set_fullscreen(None);
             }
             KeyCode::KeyO if !self.modifiers.control_key() && !self.modifiers.super_key() => {
-                self.ui.output_enabled = !self.ui.output_enabled;
-                self.output_window.set_visible(self.ui.output_enabled);
+                let enabled = !self.ui.output_enabled;
+                self.record_show_operation(
+                    CommandOrigin::Keyboard,
+                    now,
+                    CommandOperation::SetOutputEnabled { enabled },
+                );
+                self.ui.output_enabled = enabled;
+                self.output_window.set_visible(enabled);
             }
             KeyCode::KeyS if self.modifiers.control_key() || self.modifiers.super_key() => {
                 self.save_project_from_ui();
@@ -366,10 +455,14 @@ impl State {
                     KeyCode::Digit8 => 7,
                     _ => unreachable!(),
                 };
-                let now = Instant::now();
-                for deck in DeckId::ALL {
-                    self.queue_clip(ClipAddress { deck, slot }, now);
-                }
+                self.dispatch_control_update(
+                    oneiroi_core::ControlUpdate {
+                        target: ControlTarget::SceneLaunch(slot as u8),
+                        value: 1.0,
+                    },
+                    CommandOrigin::Keyboard,
+                    now,
+                );
             }
             _ => return,
         }
@@ -461,8 +554,10 @@ impl State {
         } else {
             "no BC textures"
         };
+        let project_id = new_project_id();
         let mut performance_runtime = runtime::PerformanceRuntime::new(ui.composition_extent)?;
-        if let Err(error) = performance_runtime.enable_journal(&workspace.join(".oneiroi/session"))
+        if let Err(error) =
+            performance_runtime.enable_journal(&workspace.join(".oneiroi/session"), &project_id)
         {
             log::error!("session journal disabled: {error:#}");
         }
@@ -531,6 +626,7 @@ impl State {
             ui.midi_device_id = device.id.clone();
         }
 
+        let started = Instant::now();
         Ok(Self {
             window,
             output_window,
@@ -556,7 +652,8 @@ impl State {
             launches: LaunchQueue::default(),
             tempo: TempoClock::default(),
             tap_tempo: TapTempo::default(),
-            performance_started: Instant::now(),
+            session_started: started,
+            performance_started: started,
             import_slots: [None; 4],
             importer: MediaImporter::new(8),
             folder_scanner: FolderScanner::new(),
@@ -579,6 +676,8 @@ impl State {
             playback_generations: [0; 4],
             modifiers: ModifiersState::empty(),
             project_path: None,
+            project_id,
+            project_takes: Vec::new(),
             last_saved_project: None,
             recovery_path,
             workspace,
@@ -606,6 +705,8 @@ impl State {
             audio_input: None,
             audio_snapshot: AudioInputSnapshot::default(),
             audio_status,
+            session_recoveries: Vec::new(),
+            session_recovery_status: "Session recovery catalog not scanned".to_owned(),
             performance_runtime,
         })
     }
@@ -638,10 +739,8 @@ impl State {
         }
         let time = self.clock.tick(now);
         let show_time = ShowTime {
-            monotonic_ns: (time.elapsed * 1_000_000_000.0).round() as u64,
             frame_id: time.frame,
-            beat_ticks: (self.tempo.beat_at(time.elapsed) * 960.0).round() as i64,
-            timecode: None,
+            ..self.show_time_at(now)
         };
         if let Err(error) = self.performance_runtime.tick(show_time) {
             log::error!("performance runtime: {error:#}");
@@ -652,6 +751,10 @@ impl State {
         // --- UI pass: pure CPU, produces geometry for the GPU pass below.
         let ctx = self.egui_state.egui_ctx().clone();
         let raw_input = self.egui_state.take_egui_input(&self.window);
+        let controls_before = performance_control_snapshot(&self.ui, &self.mixer, &self.transports);
+        let structure_before = StructuralSnapshot::capture(&self.ui, &self.mixer);
+        let bpm_before = self.ui.bpm;
+        let quantization_before = self.ui.quantization;
         let mut actions = Vec::new();
         let output = ctx.run_ui(raw_input, |ui| {
             actions = ui::draw(
@@ -677,6 +780,8 @@ impl State {
                     project_status: &self.project_status,
                     folder_status: &self.folder_status,
                     recovery_available: self.recovery_path.is_some(),
+                    session_recoveries: &self.session_recoveries,
+                    session_recovery_status: &self.session_recovery_status,
                     cameras: &self.cameras,
                     camera_status: &self.camera_status,
                     audio_inputs: &self.audio_inputs,
@@ -710,37 +815,120 @@ impl State {
                 },
             );
         });
+        let structure_after = StructuralSnapshot::capture(&self.ui, &self.mixer);
+        structure_before.apply(&mut self.ui, &mut self.mixer);
+        for command in structure_before.commands_to(&structure_after) {
+            self.record_show_operation(CommandOrigin::Operator, now, command);
+        }
+        structure_after.apply(&mut self.ui, &mut self.mixer);
+        let controls_after = performance_control_snapshot(&self.ui, &self.mixer, &self.transports);
+        for (target, value) in controls_after {
+            let Some(previous) = controls_before.get(&target).copied() else {
+                continue;
+            };
+            if value.to_bits() == previous.to_bits() {
+                continue;
+            }
+            self.apply_control_update_unrecorded(
+                oneiroi_core::ControlUpdate {
+                    target,
+                    value: previous,
+                },
+                now,
+            );
+            self.dispatch_control_update(
+                oneiroi_core::ControlUpdate { target, value },
+                CommandOrigin::Operator,
+                now,
+            );
+        }
+        if self.ui.bpm.to_bits() != bpm_before.to_bits() {
+            let bpm = self.ui.bpm.clamp(20.0, 400.0);
+            self.ui.bpm = bpm_before;
+            self.record_show_operation(
+                CommandOrigin::Operator,
+                now,
+                CommandOperation::SetTempo { bpm },
+            );
+            self.ui.bpm = bpm;
+            self.tempo.set_bpm(
+                bpm,
+                now.saturating_duration_since(self.performance_started)
+                    .as_secs_f64(),
+            );
+        }
+        if self.ui.quantization != quantization_before {
+            self.record_show_operation(
+                CommandOrigin::Operator,
+                now,
+                CommandOperation::SetParameter {
+                    path: "launch.quantization".to_owned(),
+                    value: oneiroi_graph::ParameterValue::Text(
+                        match self.ui.quantization {
+                            Quantization::Immediate => "immediate",
+                            Quantization::Beat => "beat",
+                            Quantization::Bar => "bar",
+                        }
+                        .to_owned(),
+                    ),
+                },
+            );
+        }
         for action in actions {
             match action {
-                ui::UiAction::Restart(deck) | ui::UiAction::Seek(deck) => {
+                ui::UiAction::Restart(deck) => {
+                    self.dispatch_control_update(
+                        oneiroi_core::ControlUpdate {
+                            target: ControlTarget::DeckRestart(deck.index() as u8),
+                            value: 1.0,
+                        },
+                        CommandOrigin::Operator,
+                        now,
+                    );
+                }
+                ui::UiAction::Seek(deck) => {
+                    self.record_show_operation(
+                        CommandOrigin::Operator,
+                        now,
+                        CommandOperation::SeekDeck {
+                            deck: deck.index() as u8,
+                            position_seconds: self.transports[deck.index()].position,
+                        },
+                    );
                     self.seek_deck(deck);
                 }
                 ui::UiAction::Launch(address) => {
-                    if let Err(error) = self.performance_runtime.record(
+                    self.dispatch_control_update(
+                        oneiroi_core::ControlUpdate {
+                            target: ControlTarget::ClipLaunch {
+                                deck: address.deck.index() as u8,
+                                slot: address.slot as u8,
+                            },
+                            value: 1.0,
+                        },
                         CommandOrigin::Operator,
-                        show_time,
-                        CommandOperation::LaunchClip {
+                        now,
+                    );
+                }
+                ui::UiAction::LaunchScene(slot) => {
+                    self.dispatch_control_update(
+                        oneiroi_core::ControlUpdate {
+                            target: ControlTarget::SceneLaunch(slot as u8),
+                            value: 1.0,
+                        },
+                        CommandOrigin::Operator,
+                        now,
+                    );
+                }
+                ui::UiAction::ClearSlot(address) => {
+                    self.record_show_operation(
+                        CommandOrigin::Operator,
+                        now,
+                        CommandOperation::ClearClip {
                             deck: address.deck.index() as u8,
                             slot: address.slot as u8,
                         },
-                    ) {
-                        log::error!("record clip launch: {error:#}");
-                    }
-                    self.queue_clip(address, now);
-                }
-                ui::UiAction::LaunchScene(slot) => {
-                    if let Err(error) = self.performance_runtime.record(
-                        CommandOrigin::Operator,
-                        show_time,
-                        CommandOperation::LaunchScene { slot: slot as u8 },
-                    ) {
-                        log::error!("record scene launch: {error:#}");
-                    }
-                    for deck in DeckId::ALL {
-                        self.queue_clip(ClipAddress { deck, slot }, now);
-                    }
-                }
-                ui::UiAction::ClearSlot(address) => {
+                    );
                     if self.clips.active(address.deck) == Some(address.slot) {
                         self.master_effect_processor.reset_history();
                     }
@@ -753,6 +941,13 @@ impl State {
                 }
                 ui::UiAction::BrowseRelink(address) => self.browse_relink(address),
                 ui::UiAction::Eject(deck) => {
+                    self.record_show_operation(
+                        CommandOrigin::Operator,
+                        now,
+                        CommandOperation::EjectDeck {
+                            deck: deck.index() as u8,
+                        },
+                    );
                     self.master_effect_processor.reset_history();
                     self.clips
                         .remember_position(deck, self.transports[deck.index()].position);
@@ -770,19 +965,22 @@ impl State {
                         .saturating_duration_since(self.performance_started)
                         .as_secs_f64();
                     if let Some(bpm) = self.tap_tempo.tap(elapsed) {
+                        self.record_show_operation(
+                            CommandOrigin::Operator,
+                            now,
+                            CommandOperation::SetTempo { bpm },
+                        );
                         self.ui.bpm = bpm;
                         self.tempo.set_bpm(bpm, elapsed);
-                        if let Err(error) = self.performance_runtime.record(
-                            CommandOrigin::Operator,
-                            show_time,
-                            CommandOperation::SetTempo { bpm },
-                        ) {
-                            log::error!("record tempo: {error:#}");
-                        }
                     }
                 }
                 ui::UiAction::HalfTempo => {
                     let bpm = (self.ui.bpm * 0.5).clamp(20.0, 400.0);
+                    self.record_show_operation(
+                        CommandOrigin::Operator,
+                        now,
+                        CommandOperation::SetTempo { bpm },
+                    );
                     self.ui.bpm = bpm;
                     self.tempo.set_bpm(
                         bpm,
@@ -790,16 +988,14 @@ impl State {
                             .as_secs_f64(),
                     );
                     self.tap_tempo.reset();
-                    if let Err(error) = self.performance_runtime.record(
-                        CommandOrigin::Operator,
-                        show_time,
-                        CommandOperation::SetTempo { bpm },
-                    ) {
-                        log::error!("record tempo: {error:#}");
-                    }
                 }
                 ui::UiAction::DoubleTempo => {
                     let bpm = (self.ui.bpm * 2.0).clamp(20.0, 400.0);
+                    self.record_show_operation(
+                        CommandOrigin::Operator,
+                        now,
+                        CommandOperation::SetTempo { bpm },
+                    );
                     self.ui.bpm = bpm;
                     self.tempo.set_bpm(
                         bpm,
@@ -807,39 +1003,49 @@ impl State {
                             .as_secs_f64(),
                     );
                     self.tap_tempo.reset();
-                    if let Err(error) = self.performance_runtime.record(
-                        CommandOrigin::Operator,
-                        show_time,
-                        CommandOperation::SetTempo { bpm },
-                    ) {
-                        log::error!("record tempo: {error:#}");
-                    }
                 }
                 ui::UiAction::SetOutputEnabled(enabled) => {
-                    if let Err(error) = self.performance_runtime.record(
+                    self.record_show_operation(
                         CommandOrigin::Operator,
-                        show_time,
+                        now,
                         CommandOperation::SetOutputEnabled { enabled },
-                    ) {
-                        log::error!("record output state: {error:#}");
-                    }
+                    );
                     self.output_window.set_visible(enabled);
                     if enabled {
                         self.output_window.request_redraw();
                     }
                 }
                 ui::UiAction::SetOutputFullscreen(fullscreen) => {
+                    self.record_show_operation(
+                        CommandOrigin::Operator,
+                        now,
+                        CommandOperation::SetOutputFullscreen { fullscreen },
+                    );
                     self.ui.output_fullscreen = fullscreen;
                     self.apply_output_monitor();
                 }
                 ui::UiAction::SetOutputDisplay(id) => {
+                    self.record_show_operation(
+                        CommandOrigin::Operator,
+                        now,
+                        CommandOperation::SetParameter {
+                            path: "output.display_id".to_owned(),
+                            value: oneiroi_graph::ParameterValue::Text(id.clone()),
+                        },
+                    );
                     self.ui.output_display_id = id;
                     self.apply_output_monitor();
                 }
                 ui::UiAction::SetCompositionExtent(extent) => {
                     self.ui.composition_extent = extent;
                     self.ui.custom_composition_extent = extent;
-                    self.apply_output_settings();
+                    if self.apply_output_settings() {
+                        self.record_show_operation(
+                            CommandOrigin::Operator,
+                            now,
+                            CommandOperation::SetOutputExtent { extent },
+                        );
+                    }
                 }
                 ui::UiAction::WatchEffectManifest => self.watch_effect_manifest(),
                 ui::UiAction::ReloadEffectManifest => {
@@ -853,6 +1059,10 @@ impl State {
                     if let Some(path) = self.recovery_path.clone() {
                         self.open_project(path, true);
                     }
+                }
+                ui::UiAction::RefreshSessionRecoveries => self.refresh_session_recoveries(),
+                ui::UiAction::RestoreSessionRecovery(index) => {
+                    self.restore_session_recovery(index, now);
                 }
                 ui::UiAction::RefreshCameras => self.refresh_cameras(),
                 ui::UiAction::RefreshAudioInputs => self.refresh_audio_inputs(),
@@ -879,7 +1089,20 @@ impl State {
                     label,
                     extent,
                     fps,
-                } => self.connect_camera(deck, device_id, label, extent, fps),
+                } => {
+                    self.record_show_operation(
+                        CommandOrigin::Operator,
+                        now,
+                        CommandOperation::SetParameter {
+                            path: format!("deck.{}.camera", deck.index()),
+                            value: oneiroi_graph::ParameterValue::Text(format!(
+                                "{device_id}|{}x{}@{fps}",
+                                extent[0], extent[1]
+                            )),
+                        },
+                    );
+                    self.connect_camera(deck, device_id, label, extent, fps);
+                }
             }
         }
         self.egui_state
@@ -1190,6 +1413,65 @@ fn current_control_value(
     }
 }
 
+fn performance_control_snapshot(
+    ui: &ui::UiState,
+    mixer: &FourDeckMixer,
+    transports: &[DeckTransport; 4],
+) -> BTreeMap<ControlTarget, f32> {
+    let mut targets = vec![
+        ControlTarget::Crossfader,
+        ControlTarget::MasterOpacity,
+        ControlTarget::MasterBlackout,
+        ControlTarget::MasterFreeze,
+    ];
+    for deck in 0..4_u8 {
+        targets.extend([
+            ControlTarget::DeckLevel(deck),
+            ControlTarget::DeckPlay(deck),
+            ControlTarget::DeckFreeze(deck),
+            ControlTarget::DeckSpeed(deck),
+            ControlTarget::DeckSelect(deck),
+        ]);
+        for effect in 0..14_u8 {
+            targets.push(ControlTarget::EffectParameter {
+                deck,
+                effect,
+                parameter: 0,
+            });
+        }
+        for lfo in 0..3_u8 {
+            for parameter in 0..4_u8 {
+                targets.push(ControlTarget::LfoParameter {
+                    deck,
+                    lfo,
+                    parameter,
+                });
+            }
+        }
+        for route in 0..8_u8 {
+            for parameter in 0..2_u8 {
+                targets.push(ControlTarget::ModRouteParameter {
+                    deck,
+                    route,
+                    parameter,
+                });
+            }
+        }
+    }
+    for (slot, effect) in ui.master_effects.slots.iter().enumerate() {
+        for parameter in &effect.parameters {
+            targets.push(ControlTarget::MasterEffectParameter {
+                slot: slot as u8,
+                parameter_key: effect_parameter_key(&effect.package_id, &parameter.id),
+            });
+        }
+    }
+    targets
+        .into_iter()
+        .map(|target| (target, current_control_value(ui, mixer, transports, target)))
+        .collect()
+}
+
 fn effect_parameter(effects: DeckEffects, effect: u8) -> f32 {
     match effect {
         0 => effects.hue,
@@ -1314,5 +1596,27 @@ mod output_health_tests {
         assert_eq!(health.skipped, 0);
         assert_eq!(health.reconfigurations, 1);
         assert!(health.awaiting_recovery);
+    }
+
+    #[test]
+    fn performance_snapshot_covers_mixer_deck_effect_lfo_and_matrix_controls() {
+        let ui = ui::UiState::default();
+        let mixer = FourDeckMixer::default();
+        let transports = [DeckTransport::default(); 4];
+
+        let snapshot = performance_control_snapshot(&ui, &mixer, &transports);
+
+        assert_eq!(snapshot.len(), 192);
+        assert!(snapshot.contains_key(&ControlTarget::Crossfader));
+        assert!(snapshot.contains_key(&ControlTarget::EffectParameter {
+            deck: 3,
+            effect: 13,
+            parameter: 0,
+        }));
+        assert!(snapshot.contains_key(&ControlTarget::ModRouteParameter {
+            deck: 3,
+            route: 7,
+            parameter: 1,
+        }));
     }
 }

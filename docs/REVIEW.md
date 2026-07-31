@@ -102,12 +102,26 @@ remains before the milestone is stage-certified.
   versioned JSONL stream and atomically replaced checkpoint recover after a
   torn final write without putting file I/O on the render thread. Queue
   overruns and worker errors are visible in the operator UI.
+- MIDI and keyboard performance mutations now pass through one origin-aware
+  command gateway before concrete application. Continuous UI controls are
+  snapshotted, reverted and reapplied through that gateway, covering 192 fixed
+  mixer/transport/effect/LFO/matrix targets plus dynamic custom-effect values.
+  Launch, clear, eject, seek, tempo and output operations use typed semantic
+  commands for deterministic replay.
+- Structural UI edits are captured before/after each editor frame, restored,
+  journaled as deterministic field commands, and only then accepted. This
+  covers deck transforms/crop/source/blend, effect-slot and LFO/modulation
+  structure, master effects/modulation, and successful media assignments.
+- The operator can scan prior session journals, inspect recovery metadata and
+  restore checkpoint-plus-tail state into concrete mixer/output/effect state.
+  Recovery excludes the active writer and continues in a new baseline journal.
 
 ### Compatibility and validation
 
 - Project values are validated before application.
-- Version-one and version-two projects migrate to the current version-three schema.
-- The workspace currently passes 175 tests and strict Clippy, with one extended
+- Version-one through version-three projects migrate to the current
+  version-four schema with stable project identity and bounded take metadata.
+- The workspace currently passes 187 tests and strict Clippy, with one extended
   decoder soak available as an opt-in ignored test.
 
 ## Stage-critical gaps

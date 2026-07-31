@@ -25,6 +25,11 @@ use oneiroi_render::{
 
 use crate::ui::UiState;
 
+pub struct ProjectSessionMetadata<'a> {
+    pub project_id: &'a str,
+    pub takes: Vec<oneiroi_io::TakeMetadataProject>,
+}
+
 pub fn snapshot(
     ui: &UiState,
     mixer: &FourDeckMixer,
@@ -32,8 +37,11 @@ pub fn snapshot(
     transports: &[DeckTransport; 4],
     midi: &MidiMapper,
     live_configs: &[Option<CameraConfig>; 4],
+    session: ProjectSessionMetadata<'_>,
 ) -> ProjectFile {
     ProjectFile {
+        project_id: session.project_id.to_owned(),
+        takes: session.takes,
         settings: ProjectSettings {
             bpm: ui.bpm,
             quantization: quantization_to_project(ui.quantization),
@@ -171,12 +179,22 @@ pub fn apply_midi(project: &ProjectFile) -> MidiMapper {
 
 pub fn is_dirty(current: &ProjectFile, saved: Option<&ProjectFile>) -> bool {
     let Some(saved) = saved else {
-        return current != &ProjectFile::default();
+        let mut current = semantic(current.clone());
+        current.project_id.clear();
+        current.takes.clear();
+        let mut baseline = semantic(ProjectFile::default());
+        baseline.project_id.clear();
+        baseline.takes.clear();
+        return current != baseline;
     };
     semantic(current.clone()) != semantic(saved.clone())
 }
 
 fn semantic(mut project: ProjectFile) -> ProjectFile {
+    // Take catalog changes are operational history. They are folded into the
+    // next explicit/autosave write but do not make an otherwise unchanged
+    // project appear edited on every new run.
+    project.takes.clear();
     for deck in &mut project.decks {
         // The moving playhead is recovery state, not an edit.
         deck.transport.position = 0.0;

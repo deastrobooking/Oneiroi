@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -6,6 +6,7 @@ use oneiroi_graph::{
     CompileBudget, GraphCompiler, TimelinePosition, TransactionManager, builtin_registry,
     four_deck_performance_graph,
 };
+use oneiroi_io::{TakeMetadataProject, new_project_id};
 use oneiroi_render::LoweredRenderPlan;
 use oneiroi_session::{
     CommandOperation, CommandOrigin, JournalWriter, SessionEventLog, SessionState, ShowTime,
@@ -18,6 +19,10 @@ pub(crate) struct PerformanceRuntime {
     state: SessionState,
     next_checkpoint_frame: u64,
     journal: Option<JournalWriter>,
+    journal_directory: Option<PathBuf>,
+    project_id: Option<String>,
+    take_id: String,
+    take_created_unix_ms: u64,
 }
 
 impl PerformanceRuntime {
@@ -44,6 +49,10 @@ impl PerformanceRuntime {
             state: SessionState::default(),
             next_checkpoint_frame: 600,
             journal: None,
+            journal_directory: None,
+            project_id: None,
+            take_id: new_project_id(),
+            take_created_unix_ms: unix_millis(),
         };
         runtime.record(
             CommandOrigin::Automation("startup".to_owned()),
@@ -78,23 +87,127 @@ impl PerformanceRuntime {
         }
     }
 
-    pub(crate) fn enable_journal(&mut self, directory: &Path) -> Result<()> {
+    pub(crate) fn enable_journal(&mut self, directory: &Path, project_id: &str) -> Result<()> {
+        self.project_id = Some(project_id.to_owned());
+        let writer = self.open_journal(
+            directory,
+            &self.event_log.active_take().name,
+            project_id,
+            &self.take_id,
+        )?;
+        for command in self.event_log.active_take().commands().iter().cloned() {
+            writer.try_append(command).context("seed session journal")?;
+        }
+        self.journal = Some(writer);
+        self.journal_directory = Some(directory.to_owned());
+        Ok(())
+    }
+
+    fn open_journal(
+        &self,
+        directory: &Path,
+        take_name: &str,
+        project_id: &str,
+        take_id: &str,
+    ) -> Result<JournalWriter> {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .context("system clock is before the Unix epoch")?
             .as_nanos();
         let stem = format!("session-{}-{unique}", std::process::id());
-        let writer = JournalWriter::open(
+        let writer = JournalWriter::open_linked(
             directory.join(format!("{stem}.jsonl")),
             directory.join(format!("{stem}.checkpoint.json")),
-            self.event_log.active_take().name.clone(),
+            take_name,
+            Some(project_id.to_owned()),
+            Some(take_id.to_owned()),
             4_096,
         )
         .context("open session journal")?;
-        for command in self.event_log.active_take().commands().iter().cloned() {
-            writer.try_append(command).context("seed session journal")?;
+        Ok(writer)
+    }
+
+    pub(crate) fn journal_path(&self) -> Option<&Path> {
+        self.journal.as_ref().map(JournalWriter::journal_path)
+    }
+
+    pub(crate) fn take_metadata(&self) -> Option<TakeMetadataProject> {
+        let journal_file = self
+            .journal_path()?
+            .file_name()?
+            .to_string_lossy()
+            .into_owned();
+        Some(TakeMetadataProject {
+            take_id: self.take_id.clone(),
+            name: self.event_log.active_take().name.clone(),
+            journal_file,
+            created_unix_ms: self.take_created_unix_ms,
+        })
+    }
+
+    /// Adopt a recovered state as the baseline of a fresh take. A new journal
+    /// is opened before the current writer is replaced, and the baseline is
+    /// checkpointed immediately so future sequence numbers restart safely.
+    pub(crate) fn restore_baseline(
+        &mut self,
+        state: SessionState,
+        take_name: &str,
+        at: ShowTime,
+    ) -> Result<()> {
+        let project_id = self
+            .project_id
+            .clone()
+            .context("session journal has no project identity")?;
+        self.replace_baseline(state, &project_id, take_name, at)
+    }
+
+    pub(crate) fn start_project_baseline(
+        &mut self,
+        state: SessionState,
+        project_id: &str,
+        at: ShowTime,
+    ) -> Result<()> {
+        self.replace_baseline(state, project_id, "Live", at)
+    }
+
+    fn replace_baseline(
+        &mut self,
+        mut state: SessionState,
+        project_id: &str,
+        take_name: &str,
+        at: ShowTime,
+    ) -> Result<()> {
+        state.graph_revision = self.transactions.active_plan().revision();
+        state.last_sequence = None;
+        let new_name = if take_name == "Live" {
+            take_name.to_owned()
+        } else {
+            format!("Recovered · {take_name}")
+        };
+        let new_take_id = new_project_id();
+        let replacement = self
+            .journal_directory
+            .as_deref()
+            .map(|directory| self.open_journal(directory, &new_name, project_id, &new_take_id))
+            .transpose()?;
+        if let Some(writer) = &replacement {
+            writer
+                .try_checkpoint(oneiroi_session::StateCheckpoint {
+                    after_sequence: None,
+                    at,
+                    state: state.clone(),
+                })
+                .context("checkpoint recovered session baseline")?;
         }
-        self.journal = Some(writer);
+        self.event_log = SessionEventLog::new(new_name);
+        self.state = state;
+        self.project_id = Some(project_id.to_owned());
+        self.take_id = new_take_id;
+        self.take_created_unix_ms = unix_millis();
+        self.next_checkpoint_frame = at.frame_id.saturating_add(600);
+        if replacement.is_some() {
+            self.journal = replacement;
+        }
         Ok(())
     }
 
@@ -193,6 +306,14 @@ impl PerformanceRuntime {
     }
 }
 
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -221,7 +342,9 @@ mod tests {
             .as_nanos();
         let directory = std::env::temp_dir().join(format!("oneiroi-runtime-journal-{unique}"));
         let mut runtime = PerformanceRuntime::new([1920, 1080]).unwrap();
-        runtime.enable_journal(&directory).unwrap();
+        runtime
+            .enable_journal(&directory, &new_project_id())
+            .unwrap();
         runtime
             .record(
                 CommandOrigin::Operator,
@@ -247,5 +370,40 @@ mod tests {
         let recovered = recover_journal(journal_path, checkpoint_path).unwrap();
         assert_eq!(recovered.checkpoint.unwrap().state.bpm, 128.0);
         assert!(recovered.commands.is_empty());
+    }
+
+    #[test]
+    fn restored_baseline_restarts_command_sequence_in_a_fresh_take() {
+        let mut runtime = PerformanceRuntime::new([1920, 1080]).unwrap();
+        runtime.project_id = Some(new_project_id());
+        runtime
+            .restore_baseline(
+                SessionState {
+                    bpm: 144.0,
+                    last_sequence: Some(900),
+                    ..SessionState::default()
+                },
+                "Recovered",
+                ShowTime {
+                    frame_id: 1_200,
+                    ..ShowTime::default()
+                },
+            )
+            .unwrap();
+
+        runtime
+            .record(
+                CommandOrigin::Operator,
+                ShowTime {
+                    frame_id: 1_201,
+                    ..ShowTime::default()
+                },
+                CommandOperation::SetBlackout { enabled: true },
+            )
+            .unwrap();
+
+        assert_eq!(runtime.event_log.active_take().commands()[0].sequence, 0);
+        assert_eq!(runtime.state.bpm, 144.0);
+        assert!(runtime.state.blackout);
     }
 }

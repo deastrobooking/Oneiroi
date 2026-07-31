@@ -4,6 +4,7 @@ mod journal;
 
 use std::collections::BTreeMap;
 
+use oneiroi_core::ControlTarget;
 use oneiroi_graph::{GraphRevision, ParameterValue};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -34,6 +35,7 @@ pub struct ShowTime {
 #[serde(rename_all = "snake_case", tag = "kind", content = "id")]
 pub enum CommandOrigin {
     Operator,
+    Keyboard,
     Midi(String),
     Osc(String),
     Score,
@@ -52,6 +54,17 @@ pub enum CommandOperation {
     LaunchScene {
         slot: u8,
     },
+    ClearClip {
+        deck: u8,
+        slot: u8,
+    },
+    EjectDeck {
+        deck: u8,
+    },
+    SeekDeck {
+        deck: u8,
+        position_seconds: f64,
+    },
     SetParameter {
         path: String,
         value: ParameterValue,
@@ -62,8 +75,18 @@ pub enum CommandOperation {
     SetOutputEnabled {
         enabled: bool,
     },
+    SetOutputFullscreen {
+        fullscreen: bool,
+    },
+    SetOutputExtent {
+        extent: [u32; 2],
+    },
     SetBlackout {
         enabled: bool,
+    },
+    ControlValue {
+        target: ControlTarget,
+        value: f32,
     },
     SetRandomSeed {
         scope: String,
@@ -92,8 +115,11 @@ pub struct SessionState {
     pub graph_revision: GraphRevision,
     pub bpm: f64,
     pub output_enabled: bool,
+    pub output_fullscreen: bool,
+    pub output_extent: [u32; 2],
     pub blackout: bool,
     pub active_clips: [Option<u8>; 4],
+    pub deck_positions: [f64; 4],
     pub parameters: BTreeMap<String, ParameterValue>,
     pub random_seeds: BTreeMap<String, u64>,
     pub last_sequence: Option<u64>,
@@ -105,8 +131,11 @@ impl Default for SessionState {
             graph_revision: GraphRevision(1),
             bpm: 120.0,
             output_enabled: false,
+            output_fullscreen: false,
+            output_extent: [1920, 1080],
             blackout: false,
             active_clips: [None; 4],
+            deck_positions: [0.0; 4],
             parameters: BTreeMap::new(),
             random_seeds: BTreeMap::new(),
             last_sequence: None,
@@ -134,6 +163,35 @@ impl SessionState {
                 *active = Some(*slot);
             }
             CommandOperation::LaunchScene { slot } => self.active_clips.fill(Some(*slot)),
+            CommandOperation::ClearClip { deck, slot } => {
+                let active = self
+                    .active_clips
+                    .get_mut(usize::from(*deck))
+                    .ok_or(SessionError::InvalidDeck(*deck))?;
+                if *active == Some(*slot) {
+                    *active = None;
+                }
+            }
+            CommandOperation::EjectDeck { deck } => {
+                let active = self
+                    .active_clips
+                    .get_mut(usize::from(*deck))
+                    .ok_or(SessionError::InvalidDeck(*deck))?;
+                *active = None;
+            }
+            CommandOperation::SeekDeck {
+                deck,
+                position_seconds,
+            } if position_seconds.is_finite() && *position_seconds >= 0.0 => {
+                let position = self
+                    .deck_positions
+                    .get_mut(usize::from(*deck))
+                    .ok_or(SessionError::InvalidDeck(*deck))?;
+                *position = *position_seconds;
+            }
+            CommandOperation::SeekDeck {
+                position_seconds, ..
+            } => return Err(SessionError::InvalidPosition(*position_seconds)),
             CommandOperation::SetParameter { path, value } => {
                 self.parameters.insert(path.clone(), value.clone());
             }
@@ -144,7 +202,25 @@ impl SessionState {
             }
             CommandOperation::SetTempo { bpm } => return Err(SessionError::InvalidTempo(*bpm)),
             CommandOperation::SetOutputEnabled { enabled } => self.output_enabled = *enabled,
+            CommandOperation::SetOutputFullscreen { fullscreen } => {
+                self.output_fullscreen = *fullscreen;
+            }
+            CommandOperation::SetOutputExtent { extent } if extent[0] > 0 && extent[1] > 0 => {
+                self.output_extent = *extent;
+            }
+            CommandOperation::SetOutputExtent { extent } => {
+                return Err(SessionError::InvalidOutputExtent(*extent));
+            }
             CommandOperation::SetBlackout { enabled } => self.blackout = *enabled,
+            CommandOperation::ControlValue { target, value } if value.is_finite() => {
+                self.parameters.insert(
+                    control_parameter_path(*target),
+                    ParameterValue::Scalar(f64::from(*value)),
+                );
+            }
+            CommandOperation::ControlValue { value, .. } => {
+                return Err(SessionError::InvalidControlValue(*value));
+            }
             CommandOperation::SetRandomSeed { scope, seed } => {
                 self.random_seeds.insert(scope.clone(), *seed);
             }
@@ -356,6 +432,49 @@ pub enum SessionError {
     InvalidTempo(f64),
     #[error("performance take index {0} does not exist")]
     InvalidTake(usize),
+    #[error("control value {0} is not finite")]
+    InvalidControlValue(f32),
+    #[error("deck position {0} is invalid")]
+    InvalidPosition(f64),
+    #[error("output extent {0:?} is invalid")]
+    InvalidOutputExtent([u32; 2]),
+}
+
+pub fn control_parameter_path(target: ControlTarget) -> String {
+    match target {
+        ControlTarget::Crossfader => "mixer.crossfader".to_owned(),
+        ControlTarget::MasterOpacity => "master.opacity".to_owned(),
+        ControlTarget::MasterBlackout => "master.blackout".to_owned(),
+        ControlTarget::MasterFreeze => "master.freeze".to_owned(),
+        ControlTarget::TapTempo => "tempo.tap".to_owned(),
+        ControlTarget::DeckLevel(deck) => format!("deck.{deck}.level"),
+        ControlTarget::DeckPlay(deck) => format!("deck.{deck}.play"),
+        ControlTarget::DeckFreeze(deck) => format!("deck.{deck}.freeze"),
+        ControlTarget::DeckSpeed(deck) => format!("deck.{deck}.speed"),
+        ControlTarget::DeckSelect(deck) => format!("deck.{deck}.select"),
+        ControlTarget::DeckRestart(deck) => format!("deck.{deck}.restart"),
+        ControlTarget::ClipLaunch { deck, slot } => format!("deck.{deck}.clip.{slot}.launch"),
+        ControlTarget::SceneLaunch(slot) => format!("scene.{slot}.launch"),
+        ControlTarget::EffectParameter {
+            deck,
+            effect,
+            parameter,
+        } => format!("deck.{deck}.effect.{effect}.parameter.{parameter}"),
+        ControlTarget::LfoParameter {
+            deck,
+            lfo,
+            parameter,
+        } => format!("deck.{deck}.lfo.{lfo}.parameter.{parameter}"),
+        ControlTarget::ModRouteParameter {
+            deck,
+            route,
+            parameter,
+        } => format!("deck.{deck}.mod_route.{route}.parameter.{parameter}"),
+        ControlTarget::MasterEffectParameter {
+            slot,
+            parameter_key,
+        } => format!("master.effect.{slot}.parameter.{parameter_key:016x}"),
+    }
 }
 
 #[cfg(test)]
@@ -486,5 +605,65 @@ mod tests {
         log.select_take(0).unwrap();
         assert_eq!(log.active_take().name, "rehearsal");
         assert_eq!(log.select_take(99), Err(SessionError::InvalidTake(99)));
+    }
+
+    #[test]
+    fn control_commands_round_trip_and_replay_by_stable_target_path() {
+        let mut take = PerformanceTake::new("controller pass");
+        take.record(
+            CommandOrigin::Midi("launchpad".to_owned()),
+            time(1),
+            CommandOperation::ControlValue {
+                target: ControlTarget::EffectParameter {
+                    deck: 2,
+                    effect: 10,
+                    parameter: 0,
+                },
+                value: 0.75,
+            },
+        );
+        let json = serde_json::to_string(&take).unwrap();
+        let decoded: PerformanceTake = serde_json::from_str(&json).unwrap();
+        let replayed = decoded.replay_until(time(1)).unwrap();
+
+        assert_eq!(
+            replayed.parameters["deck.2.effect.10.parameter.0"],
+            ParameterValue::Scalar(0.75)
+        );
+    }
+
+    #[test]
+    fn semantic_transport_and_output_commands_replay_into_typed_state() {
+        let mut take = PerformanceTake::new("output rehearsal");
+        take.record(
+            CommandOrigin::Keyboard,
+            time(1),
+            CommandOperation::LaunchClip { deck: 1, slot: 4 },
+        );
+        take.record(
+            CommandOrigin::Operator,
+            time(2),
+            CommandOperation::SeekDeck {
+                deck: 1,
+                position_seconds: 12.5,
+            },
+        );
+        take.record(
+            CommandOrigin::Operator,
+            time(3),
+            CommandOperation::SetOutputExtent {
+                extent: [3840, 2160],
+            },
+        );
+        take.record(
+            CommandOrigin::Operator,
+            time(4),
+            CommandOperation::EjectDeck { deck: 1 },
+        );
+
+        let replayed = take.replay_until(time(4)).unwrap();
+        assert_eq!(replayed.active_clips[1], None);
+        assert_eq!(replayed.deck_positions[1], 12.5);
+        assert_eq!(replayed.output_extent, [3840, 2160]);
     }
 }

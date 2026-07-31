@@ -8,6 +8,7 @@ use oneiroi_io::{
     discover_midi_inputs,
 };
 use oneiroi_media::{ClipAddress, DeckId};
+use oneiroi_session::{CommandOperation, CommandOrigin};
 
 use super::{State, current_control_value, deck_id, set_effect_parameter};
 
@@ -141,7 +142,7 @@ impl State {
                 })
             };
             for update in updates {
-                self.apply_control_update(update, now);
+                self.dispatch_control_update(update, CommandOrigin::Midi(device.clone()), now);
             }
             self.midi_status = format!(
                 "{device} · {:?} · {} µs",
@@ -150,7 +151,33 @@ impl State {
         }
     }
 
-    pub(crate) fn apply_control_update(&mut self, update: ControlUpdate, now: Instant) {
+    pub(crate) fn dispatch_control_update(
+        &mut self,
+        update: ControlUpdate,
+        origin: CommandOrigin,
+        now: Instant,
+    ) {
+        if update.target == ControlTarget::TapTempo {
+            if update.value >= 0.5 {
+                let elapsed = now
+                    .saturating_duration_since(self.performance_started)
+                    .as_secs_f64();
+                if let Some(bpm) = self.tap_tempo.tap(elapsed) {
+                    self.record_show_operation(origin, now, CommandOperation::SetTempo { bpm });
+                    self.ui.bpm = bpm;
+                    self.tempo.set_bpm(bpm, elapsed);
+                }
+            }
+            return;
+        }
+        let Some(operation) = command_for_control(update) else {
+            return;
+        };
+        self.record_show_operation(origin, now, operation);
+        self.apply_control_update_unrecorded(update, now);
+    }
+
+    pub(crate) fn apply_control_update_unrecorded(&mut self, update: ControlUpdate, now: Instant) {
         match update.target {
             ControlTarget::Crossfader => self.ui.crossfader = update.value.clamp(0.0, 1.0),
             ControlTarget::MasterOpacity => {
@@ -158,17 +185,7 @@ impl State {
             }
             ControlTarget::MasterBlackout => self.ui.blackout = update.value >= 0.5,
             ControlTarget::MasterFreeze => self.ui.master_freeze = update.value >= 0.5,
-            ControlTarget::TapTempo => {
-                if update.value >= 0.5 {
-                    let elapsed = now
-                        .saturating_duration_since(self.performance_started)
-                        .as_secs_f64();
-                    if let Some(bpm) = self.tap_tempo.tap(elapsed) {
-                        self.ui.bpm = bpm;
-                        self.tempo.set_bpm(bpm, elapsed);
-                    }
-                }
-            }
+            ControlTarget::TapTempo => unreachable!("tap tempo is handled by the gateway"),
             ControlTarget::DeckLevel(deck) => {
                 if let Some(deck) = deck_id(deck) {
                     self.mixer.deck_mut(deck).level = update.value.clamp(0.0, 1.0);
@@ -288,5 +305,64 @@ impl State {
                 }
             }
         }
+    }
+}
+
+fn command_for_control(update: ControlUpdate) -> Option<CommandOperation> {
+    if update.value < 0.5
+        && matches!(
+            update.target,
+            ControlTarget::DeckSelect(_)
+                | ControlTarget::DeckRestart(_)
+                | ControlTarget::ClipLaunch { .. }
+                | ControlTarget::SceneLaunch(_)
+        )
+    {
+        return None;
+    }
+    Some(match update.target {
+        ControlTarget::ClipLaunch { deck, slot } => CommandOperation::LaunchClip { deck, slot },
+        ControlTarget::SceneLaunch(slot) => CommandOperation::LaunchScene { slot },
+        ControlTarget::MasterBlackout => CommandOperation::SetBlackout {
+            enabled: update.value >= 0.5,
+        },
+        _ => CommandOperation::ControlValue {
+            target: update.target,
+            value: update.value,
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gateway_maps_semantic_launch_and_emergency_commands() {
+        assert_eq!(
+            command_for_control(ControlUpdate {
+                target: ControlTarget::ClipLaunch { deck: 2, slot: 7 },
+                value: 1.0,
+            }),
+            Some(CommandOperation::LaunchClip { deck: 2, slot: 7 })
+        );
+        assert_eq!(
+            command_for_control(ControlUpdate {
+                target: ControlTarget::MasterBlackout,
+                value: 0.8,
+            }),
+            Some(CommandOperation::SetBlackout { enabled: true })
+        );
+    }
+
+    #[test]
+    fn gateway_does_not_record_release_edges_that_do_not_mutate_state() {
+        assert_eq!(
+            command_for_control(ControlUpdate {
+                target: ControlTarget::SceneLaunch(3),
+                value: 0.0,
+            }),
+            None
+        );
     }
 }

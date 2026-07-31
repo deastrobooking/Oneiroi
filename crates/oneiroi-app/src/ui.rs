@@ -69,6 +69,7 @@ pub struct UiState {
     pub audio_analysis: AudioAnalysisSettings,
     pub midi_device_id: String,
     pub midi_target: ControlTarget,
+    pub session_recovery_selected: usize,
     thumbnails: HashMap<ClipAddress, CachedThumbnail>,
     thumbnail_failures: HashMap<ClipAddress, (PathBuf, String)>,
     fps: FpsMeter,
@@ -112,6 +113,7 @@ impl Default for UiState {
             audio_analysis: AudioAnalysisSettings::default(),
             midi_device_id: String::new(),
             midi_target: ControlTarget::Crossfader,
+            session_recovery_selected: 0,
             thumbnails: HashMap::new(),
             thumbnail_failures: HashMap::new(),
             fps: FpsMeter::default(),
@@ -235,6 +237,8 @@ pub enum UiAction {
     SaveProject,
     OpenProject,
     RecoverProject,
+    RefreshSessionRecoveries,
+    RestoreSessionRecovery(usize),
     TapTempo,
     HalfTempo,
     DoubleTempo,
@@ -298,6 +302,8 @@ pub struct PerformanceMetrics<'a> {
     pub project_status: &'a str,
     pub folder_status: &'a str,
     pub recovery_available: bool,
+    pub session_recoveries: &'a [crate::recovery::RecoveryEntry],
+    pub session_recovery_status: &'a str,
     pub cameras: &'a [CameraDevice],
     pub camera_status: &'a str,
     pub audio_inputs: &'a [AudioInputDevice],
@@ -494,6 +500,68 @@ pub fn draw(
                     ui.weak(metrics.project_status);
                 }
             });
+            egui::CollapsingHeader::new("Session recovery")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Scan journals").clicked() {
+                            actions.push(UiAction::RefreshSessionRecoveries);
+                        }
+                        if !metrics.session_recoveries.is_empty() {
+                            let selected = state
+                                .session_recovery_selected
+                                .min(metrics.session_recoveries.len() - 1);
+                            state.session_recovery_selected = selected;
+                            egui::ComboBox::from_id_salt("session-recovery-select")
+                                .selected_text(metrics.session_recoveries[selected].file_name())
+                                .show_ui(ui, |ui| {
+                                    for (index, entry) in
+                                        metrics.session_recoveries.iter().enumerate()
+                                    {
+                                        ui.selectable_value(
+                                            &mut state.session_recovery_selected,
+                                            index,
+                                            entry.file_name(),
+                                        );
+                                    }
+                                });
+                            if ui.button("Restore take").clicked() {
+                                actions.push(UiAction::RestoreSessionRecovery(
+                                    state.session_recovery_selected,
+                                ));
+                            }
+                        }
+                    });
+                    if let Some(entry) = metrics
+                        .session_recoveries
+                        .get(state.session_recovery_selected)
+                    {
+                        ui.label(format!(
+                            "{} · {} command(s) · {:.1}s{}{}{}",
+                            entry.take_name,
+                            entry.command_count,
+                            entry.latest_time.monotonic_ns as f64 / 1_000_000_000.0,
+                            if entry.checkpointed { " · checkpoint" } else { "" },
+                            if entry.ignored_partial_tail {
+                                " · torn tail ignored"
+                            } else {
+                                ""
+                            },
+                            if entry.project_linked {
+                                " · project linked"
+                            } else {
+                                " · legacy/unlinked"
+                            }
+                        ));
+                    }
+                    ui.weak(metrics.session_recovery_status);
+                    ui.weak(
+                        "Restore starts a fresh journal and applies recovered mixer, output, effect and modulation state.",
+                    );
+                    ui.weak(
+                        "Load the matching project first so recovered clip launches resolve against the same media slots.",
+                    );
+                });
             ui.horizontal(|ui| {
                 ui.label("Camera");
                 egui::ComboBox::from_id_salt("camera-device")

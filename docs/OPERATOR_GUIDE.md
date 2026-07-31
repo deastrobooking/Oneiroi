@@ -9,8 +9,28 @@ journaled command and checkpoint counts, queue overruns and persistence errors.
 Journal writing is bounded and asynchronous. If storage stalls or fails,
 program output continues and the in-memory performance take remains active.
 The runtime creates an atomically replaced recovery checkpoint every 600
-rendered frames. Recovery APIs are implemented; browsing and restoring a take
-from the operator UI is the next session-runtime milestone.
+rendered frames.
+
+Open **Session recovery**, select **Scan journals**, choose a prior take and
+select **Restore take**. The active journal is never offered as a recovery
+candidate. The panel reports checkpoints and safely ignored torn tails. Load
+the matching `.oneiroi` project first so recovered clip launches resolve to the
+same media slots. Restore applies mixer, transport, output, effect, LFO and
+modulation state, then continues recording in a fresh journal.
+
+Version-four projects carry a stable project identity and a bounded catalog of
+take names, IDs, journal filenames and creation times. The recovery scan hides
+journals linked to another project and labels older journals as unlinked.
+
+MIDI mappings, performance keyboard shortcuts and continuous mixer/effect/LFO
+controls use the same command gateway. Their origin is retained in the journal,
+so a replay can distinguish an operator gesture from a specific MIDI device or
+keyboard emergency command.
+
+Deck transforms, crop/source/blend choices, effect-slot order, LFO and
+modulation routing, master effects/modulation, and accepted media assignments
+are also journaled as stable field commands. Project opening establishes a new
+baseline and is not recorded as live performance traffic.
 
 Oneiroi is a four-deck live video mixer. Each deck can play a clip or receive a
 live camera/capture-card feed, run its own effects and modulation, and feed the

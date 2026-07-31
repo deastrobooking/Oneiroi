@@ -1,13 +1,14 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const PROJECT_FORMAT: &str = "oneiroi-project";
-pub const PROJECT_VERSION: u32 = 3;
+pub const PROJECT_VERSION: u32 = 4;
 const MINIMUM_PROJECT_VERSION: u32 = 1;
 pub const DECK_COUNT: usize = 4;
 pub const CLIPS_PER_DECK: usize = 8;
@@ -16,6 +17,10 @@ pub const CLIPS_PER_DECK: usize = 8;
 pub struct ProjectFile {
     pub format: String,
     pub version: u32,
+    #[serde(default)]
+    pub project_id: String,
+    #[serde(default)]
+    pub takes: Vec<TakeMetadataProject>,
     pub settings: ProjectSettings,
     pub decks: Vec<DeckProject>,
     #[serde(default)]
@@ -27,6 +32,8 @@ impl Default for ProjectFile {
         Self {
             format: PROJECT_FORMAT.to_owned(),
             version: PROJECT_VERSION,
+            project_id: new_project_id(),
+            takes: Vec::new(),
             settings: ProjectSettings::default(),
             decks: (0..DECK_COUNT)
                 .map(|index| DeckProject {
@@ -50,6 +57,23 @@ impl ProjectFile {
         }
         if !(MINIMUM_PROJECT_VERSION..=PROJECT_VERSION).contains(&self.version) {
             return Err(ProjectError::UnsupportedVersion(self.version));
+        }
+        if (self.version >= 4 && !valid_identity(&self.project_id))
+            || self.takes.len() > 256
+            || self.takes.iter().any(|take| {
+                !valid_identity(&take.take_id)
+                    || take.name.is_empty()
+                    || take.name.len() > 128
+                    || take.journal_file.is_empty()
+                    || take.journal_file.len() > 255
+                    || Path::new(&take.journal_file)
+                        .file_name()
+                        .is_none_or(|file_name| file_name.to_string_lossy() != take.journal_file)
+            })
+        {
+            return Err(ProjectError::InvalidValue(
+                "project or take identity is invalid".to_owned(),
+            ));
         }
         if self.decks.len() != DECK_COUNT {
             return Err(ProjectError::InvalidShape(format!(
@@ -188,6 +212,29 @@ impl ProjectFile {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TakeMetadataProject {
+    pub take_id: String,
+    pub name: String,
+    pub journal_file: String,
+    pub created_unix_ms: u64,
+}
+
+static NEXT_PROJECT_ID: AtomicU64 = AtomicU64::new(1);
+
+pub fn new_project_id() -> String {
+    let time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let sequence = u128::from(NEXT_PROJECT_ID.fetch_add(1, Ordering::Relaxed));
+    let process = u128::from(std::process::id());
+    format!("{:032x}", time ^ (process << 64) ^ sequence)
+}
+
+fn valid_identity(value: &str) -> bool {
+    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn unit(value: f32) -> bool {
@@ -1007,6 +1054,9 @@ pub fn load_project(path: impl AsRef<Path>) -> Result<ProjectFile, ProjectError>
     })?;
     let mut project: ProjectFile = serde_json::from_reader(BufReader::new(file))?;
     project.validate()?;
+    if project.project_id.is_empty() {
+        project.project_id = new_project_id();
+    }
     project.version = PROJECT_VERSION;
     Ok(project)
 }
@@ -1108,6 +1158,12 @@ mod tests {
     fn atomically_round_trips_versioned_project() {
         let path = test_path("roundtrip.oneiroi");
         let mut project = ProjectFile::default();
+        project.takes.push(TakeMetadataProject {
+            take_id: new_project_id(),
+            name: "Opening take".to_owned(),
+            journal_file: "session-opening.jsonl".to_owned(),
+            created_unix_ms: 123,
+        });
         project.decks[3].clips[7] = Some(PathBuf::from("/show/clip.mov"));
         project.decks[3].active_slot = Some(7);
         project.decks[2].camera = Some(CameraProject {
@@ -1228,6 +1284,21 @@ mod tests {
         assert!(matches!(
             project.validate(),
             Err(ProjectError::InvalidShape(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_take_identity_and_non_file_journal_paths() {
+        let mut project = ProjectFile::default();
+        project.takes.push(TakeMetadataProject {
+            take_id: "not-an-identity".to_owned(),
+            name: "Take".to_owned(),
+            journal_file: "nested/take.jsonl".to_owned(),
+            created_unix_ms: 0,
+        });
+        assert!(matches!(
+            project.validate(),
+            Err(ProjectError::InvalidValue(_))
         ));
     }
 
@@ -1578,10 +1649,13 @@ mod tests {
             version: 1,
             ..ProjectFile::default()
         };
+        project.project_id.clear();
+        project.takes.clear();
         project.settings.output = OutputProject::default();
         save_project_atomic(&path, &project).unwrap();
         let loaded = load_project(&path).unwrap();
         assert_eq!(loaded.version, PROJECT_VERSION);
+        assert!(valid_identity(&loaded.project_id));
         assert_eq!(loaded.settings.output, OutputProject::default());
         fs::remove_file(path).unwrap();
     }

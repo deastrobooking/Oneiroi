@@ -9,7 +9,7 @@ use std::thread::{self, JoinHandle};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{ShowCommand, StateCheckpoint};
+use crate::{SessionError, SessionState, ShowCommand, ShowTime, StateCheckpoint};
 
 pub const JOURNAL_FORMAT: &str = "oneiroi-session-journal";
 pub const JOURNAL_VERSION: u32 = 1;
@@ -21,6 +21,10 @@ pub enum JournalRecord {
         format: String,
         version: u32,
         take_name: String,
+        #[serde(default)]
+        project_id: Option<String>,
+        #[serde(default)]
+        take_id: Option<String>,
     },
     Command {
         command: ShowCommand,
@@ -75,9 +79,29 @@ impl JournalWriter {
         take_name: impl Into<String>,
         queue_capacity: usize,
     ) -> Result<Self, JournalError> {
+        Self::open_linked(
+            journal_path,
+            checkpoint_path,
+            take_name,
+            None,
+            None,
+            queue_capacity,
+        )
+    }
+
+    pub fn open_linked(
+        journal_path: impl Into<PathBuf>,
+        checkpoint_path: impl Into<PathBuf>,
+        take_name: impl Into<String>,
+        project_id: Option<String>,
+        take_id: Option<String>,
+        queue_capacity: usize,
+    ) -> Result<Self, JournalError> {
         if queue_capacity == 0 {
             return Err(JournalError::InvalidQueueCapacity);
         }
+        validate_optional_identity(project_id.as_deref())?;
+        validate_optional_identity(take_id.as_deref())?;
         let journal_path = journal_path.into();
         let checkpoint_path = checkpoint_path.into();
         if let Some(parent) = journal_path.parent() {
@@ -106,6 +130,8 @@ impl JournalWriter {
                 format: JOURNAL_FORMAT.to_owned(),
                 version: JOURNAL_VERSION,
                 take_name: take_name.into(),
+                project_id,
+                take_id,
             },
         )
         .map_err(|source| JournalError::Io {
@@ -292,9 +318,35 @@ fn write_checkpoint_atomic(path: &Path, checkpoint: &StateCheckpoint) -> std::io
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct JournalRecovery {
     pub take_name: String,
+    pub project_id: Option<String>,
+    pub take_id: Option<String>,
     pub checkpoint: Option<StateCheckpoint>,
     pub commands: Vec<ShowCommand>,
     pub ignored_partial_tail: bool,
+}
+
+impl JournalRecovery {
+    /// Reconstruct the latest valid state from the atomic checkpoint and the
+    /// strictly later commands retained from the journal.
+    pub fn replay_state(&self) -> Result<SessionState, SessionError> {
+        let mut state = self
+            .checkpoint
+            .as_ref()
+            .map(|checkpoint| checkpoint.state.clone())
+            .unwrap_or_default();
+        for command in &self.commands {
+            state.apply(command)?;
+        }
+        Ok(state)
+    }
+
+    pub fn latest_time(&self) -> ShowTime {
+        self.commands
+            .last()
+            .map(|command| command.execute_at)
+            .or_else(|| self.checkpoint.as_ref().map(|checkpoint| checkpoint.at))
+            .unwrap_or_default()
+    }
 }
 
 pub fn recover_journal(
@@ -357,9 +409,15 @@ pub fn recover_journal(
                 format,
                 version,
                 take_name,
+                project_id,
+                take_id,
             } if !saw_header => {
                 validate_identity(&format, version)?;
+                validate_optional_identity(project_id.as_deref())?;
+                validate_optional_identity(take_id.as_deref())?;
                 recovery.take_name = take_name;
+                recovery.project_id = project_id;
+                recovery.take_id = take_id;
                 saw_header = true;
             }
             JournalRecord::Header { .. } => return Err(JournalError::DuplicateHeader),
@@ -396,6 +454,15 @@ fn validate_identity(format: &str, version: u32) -> Result<(), JournalError> {
     }
     if version != JOURNAL_VERSION {
         return Err(JournalError::UnsupportedVersion(version));
+    }
+    Ok(())
+}
+
+fn validate_optional_identity(identity: Option<&str>) -> Result<(), JournalError> {
+    if identity.is_some_and(|identity| {
+        identity.len() != 32 || !identity.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }) {
+        return Err(JournalError::InvalidIdentity);
     }
     Ok(())
 }
@@ -447,6 +514,8 @@ pub enum JournalError {
     DuplicateHeader,
     #[error("journal sequence moved backward from {previous} to {next}")]
     NonMonotonicSequence { previous: u64, next: u64 },
+    #[error("journal project or take identity is invalid")]
+    InvalidIdentity,
 }
 
 #[cfg(test)]
@@ -523,6 +592,24 @@ mod tests {
         let recovered = recover_journal(&journal, &checkpoint).unwrap();
         assert!(recovered.ignored_partial_tail);
         assert!(recovered.commands.is_empty());
+    }
+
+    #[test]
+    fn legacy_header_without_project_identity_remains_readable() {
+        let record: JournalRecord = serde_json::from_str(
+            r#"{"record":"header","format":"oneiroi-session-journal","version":1,"take_name":"Legacy"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            record,
+            JournalRecord::Header {
+                format: JOURNAL_FORMAT.to_owned(),
+                version: JOURNAL_VERSION,
+                take_name: "Legacy".to_owned(),
+                project_id: None,
+                take_id: None,
+            }
+        );
     }
 
     #[test]

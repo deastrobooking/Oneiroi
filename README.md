@@ -140,6 +140,17 @@ target OS:
 - A bounded background session-journal writer with versioned JSONL records,
   atomic 600-frame checkpoints, torn-tail recovery and live health reporting;
   disk I/O never runs on the render thread.
+- A record-before-apply control gateway shared by MIDI, keyboard and continuous
+  UI performance values, preserving operator/device origin while mapping clip,
+  transport, tempo, blackout and output operations to typed replay commands.
+- Deterministic structural field capture for transforms/crop/source/blend,
+  effect-slot and LFO/modulation routing, master effects/modulation, and
+  successful movie, folder and relink assignments.
+- An operator session-recovery browser that validates prior journals, restores
+  checkpoint-plus-tail state and continues safely in a fresh baseline journal.
+- Version-four projects persist stable project/take identities and bounded take
+  metadata; recovery hides journals linked to a different project while
+  retaining compatibility with legacy unlinked journals.
 
 MIDI feedback/clock and arbitrary package-owned texture declarations have not
 landed yet.
