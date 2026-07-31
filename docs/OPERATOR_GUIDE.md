@@ -1,5 +1,17 @@
 # Oneiroi operator guide
 
+## Session journal
+
+Every app run records its supported performance commands under
+`.oneiroi/session/` in the current workspace. The operator header reports
+journaled command and checkpoint counts, queue overruns and persistence errors.
+
+Journal writing is bounded and asynchronous. If storage stalls or fails,
+program output continues and the in-memory performance take remains active.
+The runtime creates an atomically replaced recovery checkpoint every 600
+rendered frames. Recovery APIs are implemented; browsing and restoring a take
+from the operator UI is the next session-runtime milestone.
+
 Oneiroi is a four-deck live video mixer. Each deck can play a clip or receive a
 live camera/capture-card feed, run its own effects and modulation, and feed the
 A/B crossfader.

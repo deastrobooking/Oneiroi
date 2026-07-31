@@ -98,12 +98,16 @@ remains before the milestone is stage-certified.
 - Primary launch, tempo and output-enable actions now enter a serializable
   command log with periodic checkpoints. Session state can replay to a target
   time, and takes can branch without rewriting recorded commands.
+- The live take is also persisted through a bounded background writer. Its
+  versioned JSONL stream and atomically replaced checkpoint recover after a
+  torn final write without putting file I/O on the render thread. Queue
+  overruns and worker errors are visible in the operator UI.
 
 ### Compatibility and validation
 
 - Project values are validated before application.
 - Version-one and version-two projects migrate to the current version-three schema.
-- The workspace currently passes 171 tests and strict Clippy, with one extended
+- The workspace currently passes 175 tests and strict Clippy, with one extended
   decoder soak available as an opt-in ignored test.
 
 ## Stage-critical gaps

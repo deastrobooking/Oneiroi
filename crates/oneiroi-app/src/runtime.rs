@@ -1,10 +1,15 @@
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use anyhow::{Context, Result};
 use oneiroi_graph::{
     CompileBudget, GraphCompiler, TimelinePosition, TransactionManager, builtin_registry,
     four_deck_performance_graph,
 };
 use oneiroi_render::LoweredRenderPlan;
-use oneiroi_session::{CommandOperation, CommandOrigin, SessionEventLog, SessionState, ShowTime};
+use oneiroi_session::{
+    CommandOperation, CommandOrigin, JournalWriter, SessionEventLog, SessionState, ShowTime,
+};
 
 pub(crate) struct PerformanceRuntime {
     transactions: TransactionManager,
@@ -12,6 +17,7 @@ pub(crate) struct PerformanceRuntime {
     event_log: SessionEventLog,
     state: SessionState,
     next_checkpoint_frame: u64,
+    journal: Option<JournalWriter>,
 }
 
 impl PerformanceRuntime {
@@ -37,6 +43,7 @@ impl PerformanceRuntime {
             event_log: SessionEventLog::new("Live"),
             state: SessionState::default(),
             next_checkpoint_frame: 600,
+            journal: None,
         };
         runtime.record(
             CommandOrigin::Automation("startup".to_owned()),
@@ -50,13 +57,45 @@ impl PerformanceRuntime {
 
     pub(crate) fn status(&self) -> String {
         let plan = self.transactions.active_plan();
-        format!(
+        let graph = format!(
             "graph r{} · {} nodes · {:.2} ms budget · {:.1} MiB transient",
             plan.revision().0,
             plan.nodes().len(),
             plan.estimated_gpu_us() as f64 / 1_000.0,
             plan.estimated_texture_bytes() as f64 / (1024.0 * 1024.0),
+        );
+        let Some(journal) = &self.journal else {
+            return format!("{graph} · journal disabled");
+        };
+        let health = journal.health();
+        if let Some(error) = health.last_error {
+            format!("{graph} · journal error: {error}")
+        } else {
+            format!(
+                "{graph} · journal {} commands / {} checkpoints / {} overruns",
+                health.commands_written, health.checkpoints_written, health.queue_overruns
+            )
+        }
+    }
+
+    pub(crate) fn enable_journal(&mut self, directory: &Path) -> Result<()> {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock is before the Unix epoch")?
+            .as_nanos();
+        let stem = format!("session-{}-{unique}", std::process::id());
+        let writer = JournalWriter::open(
+            directory.join(format!("{stem}.jsonl")),
+            directory.join(format!("{stem}.checkpoint.json")),
+            self.event_log.active_take().name.clone(),
+            4_096,
         )
+        .context("open session journal")?;
+        for command in self.event_log.active_take().commands().iter().cloned() {
+            writer.try_append(command).context("seed session journal")?;
+        }
+        self.journal = Some(writer);
+        Ok(())
     }
 
     pub(crate) fn render_plan(&self) -> &LoweredRenderPlan {
@@ -91,10 +130,17 @@ impl PerformanceRuntime {
         at: ShowTime,
         operation: CommandOperation,
     ) -> Result<()> {
-        self.event_log
+        let command = self
+            .event_log
             .active_take_mut()
             .record_and_apply(&mut self.state, origin, at, operation)
-            .context("record and apply show command")?;
+            .context("record and apply show command")?
+            .clone();
+        if let Some(journal) = &self.journal {
+            journal
+                .try_append(command)
+                .context("enqueue show command in session journal")?;
+        }
         Ok(())
     }
 
@@ -131,8 +177,17 @@ impl PerformanceRuntime {
             )?;
         }
         if at.frame_id >= self.next_checkpoint_frame {
-            self.event_log.active_take_mut().checkpoint(at, &self.state);
+            let checkpoint = self
+                .event_log
+                .active_take_mut()
+                .checkpoint(at, &self.state)
+                .clone();
             self.next_checkpoint_frame = at.frame_id.saturating_add(600);
+            if let Some(journal) = &self.journal {
+                journal
+                    .try_checkpoint(checkpoint)
+                    .context("enqueue session checkpoint")?;
+            }
         }
         Ok(())
     }
@@ -140,6 +195,10 @@ impl PerformanceRuntime {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use oneiroi_session::recover_journal;
+
     use super::*;
 
     #[test]
@@ -152,5 +211,41 @@ mod tests {
         let error = runtime.set_composition_extent([7680, 4320]).unwrap_err();
         assert!(format!("{error:#}").contains("texture"));
         assert_eq!(runtime.render_plan().extent(), [1280, 720]);
+    }
+
+    #[test]
+    fn persistent_runtime_journals_commands_and_checkpoints_off_thread() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("oneiroi-runtime-journal-{unique}"));
+        let mut runtime = PerformanceRuntime::new([1920, 1080]).unwrap();
+        runtime.enable_journal(&directory).unwrap();
+        runtime
+            .record(
+                CommandOrigin::Operator,
+                ShowTime {
+                    frame_id: 10,
+                    ..ShowTime::default()
+                },
+                CommandOperation::SetTempo { bpm: 128.0 },
+            )
+            .unwrap();
+        runtime
+            .tick(ShowTime {
+                frame_id: 600,
+                monotonic_ns: 10_000_000_000,
+                ..ShowTime::default()
+            })
+            .unwrap();
+        let journal = runtime.journal.as_ref().unwrap();
+        journal.flush().unwrap();
+        let journal_path = journal.journal_path().to_owned();
+        let checkpoint_path = journal.checkpoint_path().to_owned();
+
+        let recovered = recover_journal(journal_path, checkpoint_path).unwrap();
+        assert_eq!(recovered.checkpoint.unwrap().state.bpm, 128.0);
+        assert!(recovered.commands.is_empty());
     }
 }

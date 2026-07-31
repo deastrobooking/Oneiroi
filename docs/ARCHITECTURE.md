@@ -59,7 +59,7 @@ UI/controller -> ShowCommand -> SessionEventLog    v
 | `oneiroi-media` | Probe, demux, decode workers, clip bank, transport, scheduling, thumbnails and cameras |
 | `oneiroi-render` | Render-plan lowering, GPU resources, HAP/RGBA upload, effects, LFO resolution and four-deck composition |
 | `oneiroi-io` | Versioned project JSON, atomic save and recovery paths |
-| `oneiroi-session` | Serializable show commands, session state, checkpoints, replay, branches and named takes |
+| `oneiroi-session` | Serializable show commands, session state, checkpoints, replay, branches, named takes and bounded crash-safe journal persistence |
 | `oneiroi-app` | Window/event loop, UI and orchestration |
 
 The graph and session crates remain device-neutral. See

@@ -1,10 +1,17 @@
 //! Event-sourced show commands, checkpoints, takes, and deterministic replay.
 
+mod journal;
+
 use std::collections::BTreeMap;
 
 use oneiroi_graph::{GraphRevision, ParameterValue};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub use journal::{
+    JOURNAL_FORMAT, JOURNAL_VERSION, JournalEnqueueError, JournalError, JournalHealth,
+    JournalRecord, JournalRecovery, JournalWriter, recover_journal,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SmpteTime {
@@ -277,12 +284,13 @@ impl PerformanceTake {
         Ok(self.commands.last().expect("command was appended"))
     }
 
-    pub fn checkpoint(&mut self, at: ShowTime, state: &SessionState) {
+    pub fn checkpoint(&mut self, at: ShowTime, state: &SessionState) -> &StateCheckpoint {
         self.checkpoints.push(StateCheckpoint {
             after_sequence: state.last_sequence,
             at,
             state: state.clone(),
         });
+        self.checkpoints.last().expect("checkpoint was appended")
     }
 
     pub fn replay_until(&self, time: ShowTime) -> Result<SessionState, SessionError> {

@@ -137,6 +137,9 @@ target OS:
 - Serializable show commands, session checkpoints, deterministic replay,
   branching and named performance takes. Clip/scene launches, tempo changes
   and output-enable changes now enter the live event log.
+- A bounded background session-journal writer with versioned JSONL records,
+  atomic 600-frame checkpoints, torn-tail recovery and live health reporting;
+  disk I/O never runs on the render thread.
 
 MIDI feedback/clock and arbitrary package-owned texture declarations have not
 landed yet.

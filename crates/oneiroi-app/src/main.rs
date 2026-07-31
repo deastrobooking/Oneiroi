@@ -461,13 +461,12 @@ impl State {
         } else {
             "no BC textures"
         };
-        let performance_runtime = runtime::PerformanceRuntime::new(ui.composition_extent)?;
-        let gpu_info = format!(
-            "{} · {:?} · {bc_support} · {}",
-            info.name,
-            info.backend,
-            performance_runtime.status()
-        );
+        let mut performance_runtime = runtime::PerformanceRuntime::new(ui.composition_extent)?;
+        if let Err(error) = performance_runtime.enable_journal(&workspace.join(".oneiroi/session"))
+        {
+            log::error!("session journal disabled: {error:#}");
+        }
+        let gpu_info = format!("{} · {:?} · {bc_support}", info.name, info.backend);
 
         let compositor = FourDeckCompositor::new(&gpu.device, &gpu.queue, PROGRAM_FORMAT);
 
@@ -647,6 +646,7 @@ impl State {
         if let Err(error) = self.performance_runtime.tick(show_time) {
             log::error!("performance runtime: {error:#}");
         }
+        let runtime_status = self.performance_runtime.status();
         let project_dirty = self.project_dirty();
 
         // --- UI pass: pure CPU, produces geometry for the GPU pass below.
@@ -672,6 +672,7 @@ impl State {
                     }),
                     frame_time: &time,
                     gpu_info: &self.gpu_info,
+                    runtime_status: &runtime_status,
                     project_dirty,
                     project_status: &self.project_status,
                     folder_status: &self.folder_status,

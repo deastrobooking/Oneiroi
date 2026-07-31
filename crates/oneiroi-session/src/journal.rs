@@ -1,0 +1,542 @@
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::{ShowCommand, StateCheckpoint};
+
+pub const JOURNAL_FORMAT: &str = "oneiroi-session-journal";
+pub const JOURNAL_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "record")]
+pub enum JournalRecord {
+    Header {
+        format: String,
+        version: u32,
+        take_name: String,
+    },
+    Command {
+        command: ShowCommand,
+    },
+    Checkpoint {
+        checkpoint: StateCheckpoint,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct CheckpointFile {
+    format: String,
+    version: u32,
+    checkpoint: StateCheckpoint,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct JournalHealth {
+    pub commands_written: u64,
+    pub checkpoints_written: u64,
+    pub queue_overruns: u64,
+    pub last_error: Option<String>,
+}
+
+#[derive(Default)]
+struct SharedHealth {
+    commands_written: AtomicU64,
+    checkpoints_written: AtomicU64,
+    queue_overruns: AtomicU64,
+    last_error: Mutex<Option<String>>,
+}
+
+enum WriterCommand {
+    Append(ShowCommand),
+    Checkpoint(StateCheckpoint),
+    Flush(mpsc::Sender<Result<(), String>>),
+    Shutdown(mpsc::Sender<Result<(), String>>),
+}
+
+pub struct JournalWriter {
+    sender: SyncSender<WriterCommand>,
+    health: Arc<SharedHealth>,
+    worker: Option<JoinHandle<()>>,
+    journal_path: PathBuf,
+    checkpoint_path: PathBuf,
+}
+
+impl JournalWriter {
+    pub fn open(
+        journal_path: impl Into<PathBuf>,
+        checkpoint_path: impl Into<PathBuf>,
+        take_name: impl Into<String>,
+        queue_capacity: usize,
+    ) -> Result<Self, JournalError> {
+        if queue_capacity == 0 {
+            return Err(JournalError::InvalidQueueCapacity);
+        }
+        let journal_path = journal_path.into();
+        let checkpoint_path = checkpoint_path.into();
+        if let Some(parent) = journal_path.parent() {
+            fs::create_dir_all(parent).map_err(|source| JournalError::Io {
+                path: parent.to_owned(),
+                source,
+            })?;
+        }
+        if let Some(parent) = checkpoint_path.parent() {
+            fs::create_dir_all(parent).map_err(|source| JournalError::Io {
+                path: parent.to_owned(),
+                source,
+            })?;
+        }
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .open(&journal_path)
+            .map_err(|source| JournalError::Io {
+                path: journal_path.clone(),
+                source,
+            })?;
+        write_record(
+            &mut file,
+            &JournalRecord::Header {
+                format: JOURNAL_FORMAT.to_owned(),
+                version: JOURNAL_VERSION,
+                take_name: take_name.into(),
+            },
+        )
+        .map_err(|source| JournalError::Io {
+            path: journal_path.clone(),
+            source,
+        })?;
+        file.sync_data().map_err(|source| JournalError::Io {
+            path: journal_path.clone(),
+            source,
+        })?;
+
+        let (sender, receiver) = mpsc::sync_channel(queue_capacity);
+        let health = Arc::new(SharedHealth::default());
+        let worker_health = health.clone();
+        let worker_checkpoint = checkpoint_path.clone();
+        let worker = thread::Builder::new()
+            .name("oneiroi-session-journal".to_owned())
+            .spawn(move || writer_loop(file, receiver, &worker_checkpoint, &worker_health))
+            .map_err(JournalError::Spawn)?;
+        Ok(Self {
+            sender,
+            health,
+            worker: Some(worker),
+            journal_path,
+            checkpoint_path,
+        })
+    }
+
+    pub fn journal_path(&self) -> &Path {
+        &self.journal_path
+    }
+
+    pub fn checkpoint_path(&self) -> &Path {
+        &self.checkpoint_path
+    }
+
+    pub fn try_append(&self, command: ShowCommand) -> Result<(), JournalEnqueueError> {
+        self.try_send(WriterCommand::Append(command))
+    }
+
+    pub fn try_checkpoint(&self, checkpoint: StateCheckpoint) -> Result<(), JournalEnqueueError> {
+        self.try_send(WriterCommand::Checkpoint(checkpoint))
+    }
+
+    pub fn health(&self) -> JournalHealth {
+        JournalHealth {
+            commands_written: self.health.commands_written.load(Ordering::Relaxed),
+            checkpoints_written: self.health.checkpoints_written.load(Ordering::Relaxed),
+            queue_overruns: self.health.queue_overruns.load(Ordering::Relaxed),
+            last_error: self
+                .health
+                .last_error
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone(),
+        }
+    }
+
+    pub fn flush(&self) -> Result<(), JournalError> {
+        let (sender, receiver) = mpsc::channel();
+        self.sender
+            .send(WriterCommand::Flush(sender))
+            .map_err(|_| JournalError::WorkerDisconnected)?;
+        receiver
+            .recv()
+            .map_err(|_| JournalError::WorkerDisconnected)?
+            .map_err(JournalError::Worker)
+    }
+
+    fn try_send(&self, command: WriterCommand) -> Result<(), JournalEnqueueError> {
+        match self.sender.try_send(command) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                self.health.queue_overruns.fetch_add(1, Ordering::Relaxed);
+                Err(JournalEnqueueError::QueueFull)
+            }
+            Err(TrySendError::Disconnected(_)) => Err(JournalEnqueueError::Disconnected),
+        }
+    }
+}
+
+impl Drop for JournalWriter {
+    fn drop(&mut self) {
+        let (sender, receiver) = mpsc::channel();
+        if self.sender.send(WriterCommand::Shutdown(sender)).is_ok() {
+            let _ = receiver.recv();
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn writer_loop(
+    mut file: File,
+    receiver: Receiver<WriterCommand>,
+    checkpoint_path: &Path,
+    health: &SharedHealth,
+) {
+    while let Ok(command) = receiver.recv() {
+        match command {
+            WriterCommand::Append(command) => {
+                let result = write_record(&mut file, &JournalRecord::Command { command });
+                observe(result, health, &health.commands_written, "append command");
+            }
+            WriterCommand::Checkpoint(checkpoint) => {
+                let result = write_record(
+                    &mut file,
+                    &JournalRecord::Checkpoint {
+                        checkpoint: checkpoint.clone(),
+                    },
+                )
+                .and_then(|()| file.sync_data())
+                .and_then(|()| write_checkpoint_atomic(checkpoint_path, &checkpoint));
+                observe(
+                    result,
+                    health,
+                    &health.checkpoints_written,
+                    "write checkpoint",
+                );
+            }
+            WriterCommand::Flush(response) => {
+                let result = file.sync_data().map_err(|error| error.to_string());
+                if let Err(error) = &result {
+                    set_error(health, format!("flush journal: {error}"));
+                }
+                let _ = response.send(result);
+            }
+            WriterCommand::Shutdown(response) => {
+                let result = file.sync_data().map_err(|error| error.to_string());
+                let _ = response.send(result);
+                break;
+            }
+        }
+    }
+}
+
+fn observe(
+    result: std::io::Result<()>,
+    health: &SharedHealth,
+    counter: &AtomicU64,
+    operation: &str,
+) {
+    match result {
+        Ok(()) => {
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
+        Err(error) => set_error(health, format!("{operation}: {error}")),
+    }
+}
+
+fn set_error(health: &SharedHealth, error: String) {
+    *health
+        .last_error
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
+}
+
+fn write_record(file: &mut File, record: &JournalRecord) -> std::io::Result<()> {
+    let mut bytes = serde_json::to_vec(record).map_err(std::io::Error::other)?;
+    bytes.push(b'\n');
+    file.write_all(&bytes)
+}
+
+fn write_checkpoint_atomic(path: &Path, checkpoint: &StateCheckpoint) -> std::io::Result<()> {
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    let file = File::create(&temporary)?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer(
+        &mut writer,
+        &CheckpointFile {
+            format: JOURNAL_FORMAT.to_owned(),
+            version: JOURNAL_VERSION,
+            checkpoint: checkpoint.clone(),
+        },
+    )
+    .map_err(std::io::Error::other)?;
+    writer.write_all(b"\n")?;
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    fs::rename(temporary, path)
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct JournalRecovery {
+    pub take_name: String,
+    pub checkpoint: Option<StateCheckpoint>,
+    pub commands: Vec<ShowCommand>,
+    pub ignored_partial_tail: bool,
+}
+
+pub fn recover_journal(
+    journal_path: impl AsRef<Path>,
+    checkpoint_path: impl AsRef<Path>,
+) -> Result<JournalRecovery, JournalError> {
+    let journal_path = journal_path.as_ref();
+    let checkpoint_path = checkpoint_path.as_ref();
+    let checkpoint = if checkpoint_path.exists() {
+        let file = File::open(checkpoint_path).map_err(|source| JournalError::Io {
+            path: checkpoint_path.to_owned(),
+            source,
+        })?;
+        let envelope: CheckpointFile =
+            serde_json::from_reader(BufReader::new(file)).map_err(|source| JournalError::Json {
+                path: checkpoint_path.to_owned(),
+                source,
+            })?;
+        validate_identity(&envelope.format, envelope.version)?;
+        Some(envelope.checkpoint)
+    } else {
+        None
+    };
+    let file = File::open(journal_path).map_err(|source| JournalError::Io {
+        path: journal_path.to_owned(),
+        source,
+    })?;
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+    let mut line_number = 0_usize;
+    let mut recovery = JournalRecovery {
+        checkpoint,
+        ..JournalRecovery::default()
+    };
+    let mut saw_header = false;
+    loop {
+        line.clear();
+        let bytes = reader
+            .read_until(b'\n', &mut line)
+            .map_err(|source| JournalError::Io {
+                path: journal_path.to_owned(),
+                source,
+            })?;
+        if bytes == 0 {
+            break;
+        }
+        line_number += 1;
+        if !line.ends_with(b"\n") {
+            recovery.ignored_partial_tail = true;
+            break;
+        }
+        let record: JournalRecord =
+            serde_json::from_slice(&line).map_err(|source| JournalError::JsonLine {
+                path: journal_path.to_owned(),
+                line: line_number,
+                source,
+            })?;
+        match record {
+            JournalRecord::Header {
+                format,
+                version,
+                take_name,
+            } if !saw_header => {
+                validate_identity(&format, version)?;
+                recovery.take_name = take_name;
+                saw_header = true;
+            }
+            JournalRecord::Header { .. } => return Err(JournalError::DuplicateHeader),
+            JournalRecord::Command { command } if saw_header => {
+                let after = recovery
+                    .checkpoint
+                    .as_ref()
+                    .and_then(|checkpoint| checkpoint.after_sequence);
+                if after.is_none_or(|sequence| command.sequence > sequence) {
+                    if let Some(previous) = recovery.commands.last()
+                        && command.sequence <= previous.sequence
+                    {
+                        return Err(JournalError::NonMonotonicSequence {
+                            previous: previous.sequence,
+                            next: command.sequence,
+                        });
+                    }
+                    recovery.commands.push(command);
+                }
+            }
+            JournalRecord::Checkpoint { .. } if saw_header => {}
+            _ => return Err(JournalError::MissingHeader),
+        }
+    }
+    if !saw_header {
+        return Err(JournalError::MissingHeader);
+    }
+    Ok(recovery)
+}
+
+fn validate_identity(format: &str, version: u32) -> Result<(), JournalError> {
+    if format != JOURNAL_FORMAT {
+        return Err(JournalError::WrongFormat(format.to_owned()));
+    }
+    if version != JOURNAL_VERSION {
+        return Err(JournalError::UnsupportedVersion(version));
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum JournalEnqueueError {
+    #[error("session journal queue is full")]
+    QueueFull,
+    #[error("session journal worker disconnected")]
+    Disconnected,
+}
+
+#[derive(Debug, Error)]
+pub enum JournalError {
+    #[error("journal queue capacity must be greater than zero")]
+    InvalidQueueCapacity,
+    #[error("journal I/O failed at {path}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("journal JSON failed at {path}: {source}")]
+    Json {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("journal JSON failed at {path} line {line}: {source}")]
+    JsonLine {
+        path: PathBuf,
+        line: usize,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("journal worker could not start: {0}")]
+    Spawn(std::io::Error),
+    #[error("journal worker disconnected")]
+    WorkerDisconnected,
+    #[error("journal worker failed: {0}")]
+    Worker(String),
+    #[error("wrong journal format {0}")]
+    WrongFormat(String),
+    #[error("unsupported journal version {0}")]
+    UnsupportedVersion(u32),
+    #[error("journal is missing its header")]
+    MissingHeader,
+    #[error("journal contains more than one header")]
+    DuplicateHeader,
+    #[error("journal sequence moved backward from {previous} to {next}")]
+    NonMonotonicSequence { previous: u64, next: u64 },
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::{CommandOperation, CommandOrigin, SessionState, ShowTime, StateCheckpoint};
+
+    use super::*;
+
+    fn temporary_paths(name: &str) -> (PathBuf, PathBuf) {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("oneiroi-journal-{name}-{unique}"));
+        (
+            directory.join("take.jsonl"),
+            directory.join("checkpoint.json"),
+        )
+    }
+
+    fn command(sequence: u64) -> ShowCommand {
+        ShowCommand {
+            sequence,
+            command_id: sequence + 1,
+            origin: CommandOrigin::Operator,
+            execute_at: ShowTime {
+                frame_id: sequence,
+                ..ShowTime::default()
+            },
+            operation: CommandOperation::SetBlackout {
+                enabled: sequence.is_multiple_of(2),
+            },
+        }
+    }
+
+    #[test]
+    fn background_writer_round_trips_commands_and_atomic_checkpoint() {
+        let (journal, checkpoint_path) = temporary_paths("roundtrip");
+        let writer = JournalWriter::open(&journal, &checkpoint_path, "show", 8).unwrap();
+        writer.try_append(command(0)).unwrap();
+        let checkpoint = StateCheckpoint {
+            after_sequence: Some(0),
+            at: ShowTime::default(),
+            state: SessionState {
+                last_sequence: Some(0),
+                ..SessionState::default()
+            },
+        };
+        writer.try_checkpoint(checkpoint.clone()).unwrap();
+        writer.try_append(command(1)).unwrap();
+        writer.flush().unwrap();
+        assert_eq!(writer.health().commands_written, 2);
+        drop(writer);
+
+        let recovered = recover_journal(&journal, &checkpoint_path).unwrap();
+        assert_eq!(recovered.take_name, "show");
+        assert_eq!(recovered.checkpoint, Some(checkpoint));
+        assert_eq!(recovered.commands, vec![command(1)]);
+    }
+
+    #[test]
+    fn recovery_ignores_an_incomplete_final_record() {
+        let (journal, checkpoint) = temporary_paths("partial");
+        let writer = JournalWriter::open(&journal, &checkpoint, "show", 2).unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+        let mut file = OpenOptions::new().append(true).open(&journal).unwrap();
+        file.write_all(br#"{"record":"command","command":"#)
+            .unwrap();
+        file.sync_all().unwrap();
+
+        let recovered = recover_journal(&journal, &checkpoint).unwrap();
+        assert!(recovered.ignored_partial_tail);
+        assert!(recovered.commands.is_empty());
+    }
+
+    #[test]
+    fn complete_malformed_record_is_not_silently_ignored() {
+        let (journal, checkpoint) = temporary_paths("malformed");
+        let writer = JournalWriter::open(&journal, &checkpoint, "show", 2).unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+        let mut file = OpenOptions::new().append(true).open(&journal).unwrap();
+        file.write_all(b"not-json\n").unwrap();
+
+        assert!(matches!(
+            recover_journal(&journal, &checkpoint),
+            Err(JournalError::JsonLine { line: 2, .. })
+        ));
+    }
+}

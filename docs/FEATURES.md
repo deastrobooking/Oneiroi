@@ -33,7 +33,7 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Performance | Bounded workers, reusable CPU RGBA frame leases, 29.5 MB maximum first-frame cache, capped keyframe indexes, deterministic decoder faults and accelerated/extended soak coverage | Physical-media and show-machine soak certification |
 | Typed graph runtime | Versioned typed node contracts, six rate domains, validation, explicit feedback rules, deterministic scheduling, immutable plans, resource lifetime reuse and GPU/memory budgets; the 11-node four-deck graph lowers to authoritative fused-composite, master-effect and output stages | Add executors beyond the compatibility graph, complete color/resolution inference and independently execute nodes that cannot be fused |
 | Live transactions | Isolated shadow graphs, all-or-nothing preparation, last-known-good retention and frame/beat/bar/timecode commit scheduling | Graph editor/preview UI, prewarming and live operator commit controls |
-| Performance replay | Serializable show commands, session state, 600-frame checkpoints, deterministic replay, branching and named in-memory takes; primary launch/tempo/output actions are recorded | Route every mutation and external input through commands, then add crash-safe journal and project persistence |
+| Performance replay | Serializable show commands, session state, 600-frame atomic checkpoints, deterministic replay, branching, named takes and a versioned background JSONL journal with torn-tail recovery and operator health metrics | Route every mutation and external input through commands, add the recovery browser, then persist take metadata with projects |
 
 ## Not implemented
 

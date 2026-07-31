@@ -293,6 +293,7 @@ pub struct PerformanceMetrics<'a> {
     pub frame_pool_stats: [oneiroi_media::FramePoolStats; 4],
     pub frame_time: &'a FrameTime,
     pub gpu_info: &'a str,
+    pub runtime_status: &'a str,
     pub project_dirty: bool,
     pub project_status: &'a str,
     pub folder_status: &'a str,
@@ -354,6 +355,7 @@ pub fn draw(
                     actions.push(UiAction::SetOutputFullscreen(state.output_fullscreen));
                 }
             });
+            ui.weak(metrics.runtime_status);
             ui.horizontal(|ui| {
                 ui.label("Output");
                 let display_label = metrics

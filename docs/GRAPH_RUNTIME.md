@@ -114,6 +114,37 @@ A complete state checkpoint is retained every 600 rendered frames. Replay can
 start from the latest checkpoint before a target time and deterministically
 apply the remaining commands.
 
+## Crash-safe session journal
+
+The in-memory take now feeds a bounded 4,096-record background writer. The
+render thread only performs `try_send`; file serialization, writes and syncing
+run on `oneiroi-session-journal`.
+
+Each run creates:
+
+```text
+.oneiroi/session/session-<process>-<time>.jsonl
+.oneiroi/session/session-<process>-<time>.checkpoint.json
+```
+
+The JSONL stream begins with a versioned format header and contains tagged
+command and checkpoint records. Checkpoints:
+
+1. Enter the journal in command order.
+2. Sync preceding journal data.
+3. Serialize to a temporary checkpoint file.
+4. Flush and sync the temporary file.
+5. Atomically rename it over the prior checkpoint.
+
+Recovery loads the atomic checkpoint and returns only later commands. A torn,
+non-newline-terminated final journal record is ignored; malformed complete
+records, bad formats, unsupported versions and non-monotonic sequences are
+hard errors.
+
+Journal command/checkpoint counts, queue overruns and the last worker error are
+shown beside graph health in the operator window. A journal failure never
+blocks or stops program output; the in-memory take remains available.
+
 ## Deliberate limitations of this slice
 
 - Deck source and deck-effect nodes are fused into the existing compositor;
@@ -121,8 +152,8 @@ apply the remaining commands.
 - Node kinds beyond the compatibility graph do not yet have GPU executors.
 - Continuous UI parameters, MIDI/OSC input and transport operations do not all
   route through `ShowCommand` yet.
-- Event logs are serializable in memory but are not yet streamed to a
-  crash-safe on-disk journal.
+- Journal recovery is a library/runtime foundation; an operator-facing take
+  recovery browser is not yet implemented.
 - Graphs and takes are not yet part of `.oneiroi` project version 3.
 - Shadow-graph editing and commit controls do not yet have operator UI.
 - Color and resolution declarations are carried into the plan; full
@@ -134,7 +165,7 @@ while the graph becomes executable one node family at a time.
 ## Next implementation slice
 
 1. Route all operator and controller mutations through `ShowCommand`.
-2. Add an append-only journal writer with periodic atomic checkpoints.
+2. Add an operator-facing browser for recovered journals and named takes.
 3. Persist graphs, take metadata and deterministic seeds in a backward-
    compatible project migration.
 4. Add the shadow-graph editor and preview/commit controls.

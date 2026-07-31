@@ -249,13 +249,15 @@ Delivered:
     program-output stages.
 11. Graph-gated composition resizing and rollback to the previous plan when a
     candidate cannot be safely lowered.
+12. A bounded background JSONL session journal with versioned headers,
+    non-blocking render-thread enqueue, periodic fsync, atomic checkpoint
+    replacement, torn-tail recovery and visible health counters.
 
 Next:
 
 1. Route every UI, MIDI, audio-analysis and future OSC mutation through
    commands.
-2. Stream commands to a crash-safe journal and persist checkpoint/take
-   metadata.
+2. Add an operator recovery/take browser and persist take metadata.
 3. Add shadow edit, preview, readiness and quantized commit UI.
 4. Insert inferred color/resolution conversions and expose compiler
    diagnostics.
