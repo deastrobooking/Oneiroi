@@ -394,7 +394,7 @@ Operator-window resizing does not change composition resolution.
 
 ## Persistence
 
-`.oneiroi` files are versioned JSON. The current schema is version 4 and
+`.oneiroi` files are versioned JSON. The current schema is version 5 and
 version-one/version-two files are migrated on load. Version 3 adds stable
 custom-effect package IDs and named parameter values. Saves write a temporary
 sibling and rename it atomically. Newly introduced fields use explicit Serde

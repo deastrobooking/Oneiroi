@@ -19,7 +19,7 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Modulation | Three LFOs and eight bipolar routes per deck across 14 continuous destinations |
 | Musical control | Manual BPM, Tap, half/double, beat/bar phase and synchronized LFO divisions |
 | Audio modulation | Native input capture, bounded queue, RMS/FFT bands, transient, adaptive normalization, live meters and five audio plus beat/bar matrix sources |
-| Persistence | Atomic save, autosave, recovery, asynchronous restore, automatic v1/v2/v3-to-v4 loading, stable project identity, take metadata and per-slot missing-media relinking |
+| Persistence | Atomic save, autosave, recovery, asynchronous restore, automatic v1–v4-to-v5 loading, stable project/take identity, deterministic seeds, active graph metadata and missing-media relinking |
 | Diagnostics | FPS, decoder drop/repeat/late counters, RGBA allocation/reuse/live/discard telemetry, output surface state, presentation skips/recovery and display-topology changes |
 
 ## Partial foundations
@@ -33,7 +33,7 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Performance | Bounded workers, reusable CPU RGBA frame leases, 29.5 MB maximum first-frame cache, capped keyframe indexes, deterministic decoder faults and accelerated/extended soak coverage | Physical-media and show-machine soak certification |
 | Typed graph runtime | Versioned typed node contracts, six rate domains, validation, explicit feedback rules, deterministic scheduling, immutable plans, resource lifetime reuse and GPU/memory budgets; the 11-node four-deck graph lowers to authoritative fused-composite, master-effect and output stages | Add executors beyond the compatibility graph, complete color/resolution inference and independently execute nodes that cannot be fused |
 | Live transactions | Isolated shadow graphs, all-or-nothing preparation, last-known-good retention and frame/beat/bar/timecode commit scheduling | Graph editor/preview UI, prewarming and live operator commit controls |
-| Performance replay | Serializable show commands, session state, 600-frame atomic checkpoints, deterministic replay, branching, named takes and a versioned background JSONL journal; structural edits produce stable field commands; v4 projects persist identity/take metadata and journal headers filter recovery to matching or legacy sessions | Add explicit branch naming and deterministic-seed editing |
+| Performance replay | Serializable show commands, session state, checkpoints, deterministic replay and a versioned JSONL journal; operators can start named takes, restore as a named branch and edit scoped deterministic seeds; project-linked recovery filters matching/legacy sessions | Add take catalog management and timeline scrubbing |
 
 ## Not implemented
 

@@ -4,11 +4,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use oneiroi_graph::ProjectGraph;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const PROJECT_FORMAT: &str = "oneiroi-project";
-pub const PROJECT_VERSION: u32 = 4;
+pub const PROJECT_VERSION: u32 = 5;
 const MINIMUM_PROJECT_VERSION: u32 = 1;
 pub const DECK_COUNT: usize = 4;
 pub const CLIPS_PER_DECK: usize = 8;
@@ -21,6 +22,10 @@ pub struct ProjectFile {
     pub project_id: String,
     #[serde(default)]
     pub takes: Vec<TakeMetadataProject>,
+    #[serde(default)]
+    pub graph: Option<ProjectGraph>,
+    #[serde(default)]
+    pub random_seeds: std::collections::BTreeMap<String, u64>,
     pub settings: ProjectSettings,
     pub decks: Vec<DeckProject>,
     #[serde(default)]
@@ -34,6 +39,8 @@ impl Default for ProjectFile {
             version: PROJECT_VERSION,
             project_id: new_project_id(),
             takes: Vec::new(),
+            graph: None,
+            random_seeds: std::collections::BTreeMap::new(),
             settings: ProjectSettings::default(),
             decks: (0..DECK_COUNT)
                 .map(|index| DeckProject {
@@ -60,6 +67,18 @@ impl ProjectFile {
         }
         if (self.version >= 4 && !valid_identity(&self.project_id))
             || self.takes.len() > 256
+            || self.random_seeds.len() > 256
+            || self.random_seeds.keys().any(|scope| {
+                scope.is_empty() || scope.len() > 128 || scope.chars().any(char::is_control)
+            })
+            || self.graph.as_ref().is_some_and(|graph| {
+                graph.nodes.len() > 1_024
+                    || graph.edges.len() > 4_096
+                    || graph
+                        .nodes
+                        .iter()
+                        .any(|node| node.label.len() > 128 || node.parameters.len() > 256)
+            })
             || self.takes.iter().any(|take| {
                 !valid_identity(&take.take_id)
                     || take.name.is_empty()
@@ -1054,8 +1073,12 @@ pub fn load_project(path: impl AsRef<Path>) -> Result<ProjectFile, ProjectError>
     })?;
     let mut project: ProjectFile = serde_json::from_reader(BufReader::new(file))?;
     project.validate()?;
+    let source_version = project.version;
     if project.project_id.is_empty() {
         project.project_id = new_project_id();
+    }
+    if source_version < 5 && project.graph.is_none() {
+        project.graph = Some(oneiroi_graph::four_deck_performance_graph());
     }
     project.version = PROJECT_VERSION;
     Ok(project)
@@ -1157,7 +1180,11 @@ mod tests {
     #[test]
     fn atomically_round_trips_versioned_project() {
         let path = test_path("roundtrip.oneiroi");
-        let mut project = ProjectFile::default();
+        let mut project = ProjectFile {
+            graph: Some(oneiroi_graph::four_deck_performance_graph()),
+            ..ProjectFile::default()
+        };
+        project.random_seeds.insert("particles".to_owned(), 42);
         project.takes.push(TakeMetadataProject {
             take_id: new_project_id(),
             name: "Opening take".to_owned(),
@@ -1656,6 +1683,7 @@ mod tests {
         let loaded = load_project(&path).unwrap();
         assert_eq!(loaded.version, PROJECT_VERSION);
         assert!(valid_identity(&loaded.project_id));
+        assert!(loaded.graph.is_some());
         assert_eq!(loaded.settings.output, OutputProject::default());
         fs::remove_file(path).unwrap();
     }

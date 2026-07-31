@@ -28,6 +28,8 @@ use crate::ui::UiState;
 pub struct ProjectSessionMetadata<'a> {
     pub project_id: &'a str,
     pub takes: Vec<oneiroi_io::TakeMetadataProject>,
+    pub graph: oneiroi_graph::ProjectGraph,
+    pub random_seeds: std::collections::BTreeMap<String, u64>,
 }
 
 pub fn snapshot(
@@ -42,6 +44,8 @@ pub fn snapshot(
     ProjectFile {
         project_id: session.project_id.to_owned(),
         takes: session.takes,
+        graph: Some(session.graph),
+        random_seeds: session.random_seeds,
         settings: ProjectSettings {
             bpm: ui.bpm,
             quantization: quantization_to_project(ui.quantization),
@@ -182,9 +186,11 @@ pub fn is_dirty(current: &ProjectFile, saved: Option<&ProjectFile>) -> bool {
         let mut current = semantic(current.clone());
         current.project_id.clear();
         current.takes.clear();
+        current.graph = None;
         let mut baseline = semantic(ProjectFile::default());
         baseline.project_id.clear();
         baseline.takes.clear();
+        baseline.graph = None;
         return current != baseline;
     };
     semantic(current.clone()) != semantic(saved.clone())

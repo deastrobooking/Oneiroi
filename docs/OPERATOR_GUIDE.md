@@ -18,9 +18,12 @@ the matching `.oneiroi` project first so recovered clip launches resolve to the
 same media slots. Restore applies mixer, transport, output, effect, LFO and
 modulation state, then continues recording in a fresh journal.
 
-Version-four projects carry a stable project identity and a bounded catalog of
+Version-five projects carry a stable project identity and a bounded catalog of
 take names, IDs, journal filenames and creation times. The recovery scan hides
 journals linked to another project and labels older journals as unlinked.
+Enter a printable name before **Start named take** or **Restore as named
+branch**. Scoped deterministic seeds can be edited in the same panel. Seeds
+and the active typed graph are saved with the project.
 
 MIDI mappings, performance keyboard shortcuts and continuous mixer/effect/LFO
 controls use the same command gateway. Their origin is retained in the journal,

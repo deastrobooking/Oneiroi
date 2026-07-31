@@ -1064,6 +1064,20 @@ impl State {
                 ui::UiAction::RestoreSessionRecovery(index) => {
                     self.restore_session_recovery(index, now);
                 }
+                ui::UiAction::StartNamedTake => self.start_named_take(now),
+                ui::UiAction::SetRandomSeed => {
+                    let scope = self.ui.random_seed_scope.trim().to_owned();
+                    if !scope.is_empty() && scope.len() <= 128 {
+                        self.record_show_operation(
+                            CommandOrigin::Operator,
+                            now,
+                            CommandOperation::SetRandomSeed {
+                                scope,
+                                seed: self.ui.random_seed_value,
+                            },
+                        );
+                    }
+                }
                 ui::UiAction::RefreshCameras => self.refresh_cameras(),
                 ui::UiAction::RefreshAudioInputs => self.refresh_audio_inputs(),
                 ui::UiAction::ConnectAudioInput(device_id) => {

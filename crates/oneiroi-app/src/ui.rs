@@ -70,6 +70,9 @@ pub struct UiState {
     pub midi_device_id: String,
     pub midi_target: ControlTarget,
     pub session_recovery_selected: usize,
+    pub take_name_input: String,
+    pub random_seed_scope: String,
+    pub random_seed_value: u64,
     thumbnails: HashMap<ClipAddress, CachedThumbnail>,
     thumbnail_failures: HashMap<ClipAddress, (PathBuf, String)>,
     fps: FpsMeter,
@@ -114,6 +117,9 @@ impl Default for UiState {
             midi_device_id: String::new(),
             midi_target: ControlTarget::Crossfader,
             session_recovery_selected: 0,
+            take_name_input: "Take 1".to_owned(),
+            random_seed_scope: "visuals".to_owned(),
+            random_seed_value: 1,
             thumbnails: HashMap::new(),
             thumbnail_failures: HashMap::new(),
             fps: FpsMeter::default(),
@@ -239,6 +245,8 @@ pub enum UiAction {
     RecoverProject,
     RefreshSessionRecoveries,
     RestoreSessionRecovery(usize),
+    StartNamedTake,
+    SetRandomSeed,
     TapTempo,
     HalfTempo,
     DoubleTempo,
@@ -525,11 +533,26 @@ pub fn draw(
                                         );
                                     }
                                 });
-                            if ui.button("Restore take").clicked() {
+                            if ui.button("Restore as named branch").clicked() {
                                 actions.push(UiAction::RestoreSessionRecovery(
                                     state.session_recovery_selected,
                                 ));
                             }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Take / branch name");
+                        ui.text_edit_singleline(&mut state.take_name_input);
+                        if ui.button("Start named take").clicked() {
+                            actions.push(UiAction::StartNamedTake);
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Deterministic seed");
+                        ui.text_edit_singleline(&mut state.random_seed_scope);
+                        ui.add(egui::DragValue::new(&mut state.random_seed_value));
+                        if ui.button("Set seed").clicked() {
+                            actions.push(UiAction::SetRandomSeed);
                         }
                     });
                     if let Some(entry) = metrics

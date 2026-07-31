@@ -264,11 +264,13 @@ Delivered:
 16. Project schema v4 with stable project/take identities, bounded take
     metadata, linked journal headers, legacy compatibility and project-aware
     recovery filtering.
+17. Project schema v5 with persisted typed graph and deterministic seed maps,
+    compile-before-accept restoration, operator named takes and named recovery
+    branches.
 
 Next:
 
-1. Add explicit operator branch names and persist deterministic seeds/graph
-   metadata.
+1. Add take catalog management and replay timeline scrubbing.
 2. Route OSC through the origin-aware gateway.
 3. Add shadow edit, preview, readiness and quantized commit UI.
 4. Insert inferred color/resolution conversions and expose compiler

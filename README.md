@@ -148,9 +148,9 @@ target OS:
   successful movie, folder and relink assignments.
 - An operator session-recovery browser that validates prior journals, restores
   checkpoint-plus-tail state and continues safely in a fresh baseline journal.
-- Version-four projects persist stable project/take identities and bounded take
-  metadata; recovery hides journals linked to a different project while
-  retaining compatibility with legacy unlinked journals.
+- Version-five projects persist stable project/take identities, bounded take
+  metadata, deterministic seed maps and the active typed graph. Operators can
+  start named takes or restore a prior session as a named branch.
 
 MIDI feedback/clock and arbitrary package-owned texture declarations have not
 landed yet.

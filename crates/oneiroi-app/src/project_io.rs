@@ -37,6 +37,8 @@ impl State {
             project::ProjectSessionMetadata {
                 project_id: &self.project_id,
                 takes,
+                graph: self.performance_runtime.active_graph().clone(),
+                random_seeds: self.performance_runtime.random_seeds().clone(),
             },
         )
     }
@@ -88,6 +90,17 @@ impl State {
             Ok(mut project_file) => {
                 let base = path.parent().unwrap_or(&self.workspace);
                 resolve_project_paths(&mut project_file, base);
+                let graph = project_file
+                    .graph
+                    .clone()
+                    .unwrap_or_else(oneiroi_graph::four_deck_performance_graph);
+                if let Err(error) = self
+                    .performance_runtime
+                    .set_project_graph(graph, project_file.settings.output.composition_extent)
+                {
+                    self.project_status = format!("Project graph rejected: {error:#}");
+                    return;
+                }
                 self.apply_project(project_file, recovered);
                 if recovered {
                     self.project_path = None;
@@ -181,7 +194,8 @@ impl State {
             }
         }
 
-        let baseline = self.session_state_snapshot();
+        let mut baseline = self.session_state_snapshot();
+        baseline.random_seeds.clone_from(&project_file.random_seeds);
         if let Err(error) = self.performance_runtime.start_project_baseline(
             baseline,
             &self.project_id,

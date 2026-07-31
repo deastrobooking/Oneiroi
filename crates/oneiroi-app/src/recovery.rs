@@ -68,7 +68,8 @@ impl State {
             self.session_recovery_status = "Select a recoverable session first".to_owned();
             return;
         };
-        match self.apply_recovered_session(&entry, now) {
+        let branch_name = valid_take_name(&self.ui.take_name_input).map(ToOwned::to_owned);
+        match self.apply_recovered_session(&entry, branch_name.as_deref(), now) {
             Ok(()) => {
                 self.refresh_session_recoveries();
                 self.session_recovery_status = format!(
@@ -82,18 +83,32 @@ impl State {
         }
     }
 
-    fn apply_recovered_session(&mut self, entry: &RecoveryEntry, now: Instant) -> Result<()> {
+    fn apply_recovered_session(
+        &mut self,
+        entry: &RecoveryEntry,
+        branch_name: Option<&str>,
+        now: Instant,
+    ) -> Result<()> {
         let state = &entry.state;
         let previous_extent = self.performance_runtime.render_plan().extent();
         self.performance_runtime
             .set_composition_extent(state.output_extent)
             .context("validate recovered composition extent")?;
         self.remember_active_take();
-        if let Err(error) = self.performance_runtime.restore_baseline(
-            state.clone(),
-            &entry.take_name,
-            self.show_time_at(now),
-        ) {
+        let restore = if let Some(name) = branch_name {
+            self.performance_runtime.start_named_baseline(
+                state.clone(),
+                name,
+                self.show_time_at(now),
+            )
+        } else {
+            self.performance_runtime.restore_baseline(
+                state.clone(),
+                &entry.take_name,
+                self.show_time_at(now),
+            )
+        };
+        if let Err(error) = restore {
             if let Err(rollback_error) = self
                 .performance_runtime
                 .set_composition_extent(previous_extent)
@@ -183,6 +198,28 @@ impl State {
         Ok(())
     }
 
+    pub(crate) fn start_named_take(&mut self, now: Instant) {
+        let Some(name) = valid_take_name(&self.ui.take_name_input).map(ToOwned::to_owned) else {
+            self.session_recovery_status =
+                "Take name must be 1–128 printable characters".to_owned();
+            return;
+        };
+        self.remember_active_take();
+        let state = self.session_state_snapshot();
+        match self
+            .performance_runtime
+            .start_named_baseline(state, &name, self.show_time_at(now))
+        {
+            Ok(()) => {
+                self.refresh_session_recoveries();
+                self.session_recovery_status = format!("Recording named take · {name}");
+            }
+            Err(error) => {
+                self.session_recovery_status = format!("Start take failed: {error:#}");
+            }
+        }
+    }
+
     pub(crate) fn session_state_snapshot(&self) -> SessionState {
         let mut parameters = structural::session_parameters(&self.ui, &self.mixer);
         for (target, value) in performance_control_snapshot(&self.ui, &self.mixer, &self.transports)
@@ -220,6 +257,7 @@ impl State {
             }),
             deck_positions: self.transports.map(|transport| transport.position),
             parameters,
+            random_seeds: self.performance_runtime.random_seeds().clone(),
             ..SessionState::default()
         }
     }
@@ -242,6 +280,12 @@ impl State {
             self.project_takes.drain(..remove);
         }
     }
+}
+
+fn valid_take_name(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_control))
+        .then_some(value)
 }
 
 fn discover_recoveries(
@@ -390,5 +434,13 @@ mod tests {
                 .iter()
                 .any(|entry| entry.take_name == "Linked" && entry.project_linked)
         );
+    }
+
+    #[test]
+    fn take_names_reject_empty_control_or_oversized_values() {
+        assert_eq!(valid_take_name("  Finale  "), Some("Finale"));
+        assert_eq!(valid_take_name(""), None);
+        assert_eq!(valid_take_name("bad\nname"), None);
+        assert_eq!(valid_take_name(&"x".repeat(129)), None);
     }
 }

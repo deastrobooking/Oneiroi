@@ -158,7 +158,7 @@ impl PerformanceRuntime {
             .project_id
             .clone()
             .context("session journal has no project identity")?;
-        self.replace_baseline(state, &project_id, take_name, at)
+        self.replace_baseline(state, &project_id, &format!("Recovered · {take_name}"), at)
     }
 
     pub(crate) fn start_project_baseline(
@@ -170,6 +170,49 @@ impl PerformanceRuntime {
         self.replace_baseline(state, project_id, "Live", at)
     }
 
+    pub(crate) fn start_named_baseline(
+        &mut self,
+        state: SessionState,
+        name: &str,
+        at: ShowTime,
+    ) -> Result<()> {
+        let project_id = self
+            .project_id
+            .clone()
+            .context("missing project identity")?;
+        self.replace_baseline(state, &project_id, name, at)
+    }
+
+    pub(crate) fn active_graph(&self) -> &oneiroi_graph::ProjectGraph {
+        self.transactions.active_graph()
+    }
+
+    pub(crate) fn random_seeds(&self) -> &std::collections::BTreeMap<String, u64> {
+        &self.state.random_seeds
+    }
+
+    pub(crate) fn set_project_graph(
+        &mut self,
+        graph: oneiroi_graph::ProjectGraph,
+        extent: [u32; 2],
+    ) -> Result<()> {
+        let registry = builtin_registry();
+        let plan = GraphCompiler::new(
+            &registry,
+            CompileBudget {
+                composition_extent: extent,
+                ..CompileBudget::default()
+            },
+        )
+        .compile(&graph)
+        .context("compile persisted project graph")?;
+        let render_plan =
+            LoweredRenderPlan::lower(&plan).context("lower persisted project graph")?;
+        self.transactions = TransactionManager::new(graph, plan);
+        self.render_plan = render_plan;
+        Ok(())
+    }
+
     fn replace_baseline(
         &mut self,
         mut state: SessionState,
@@ -179,11 +222,7 @@ impl PerformanceRuntime {
     ) -> Result<()> {
         state.graph_revision = self.transactions.active_plan().revision();
         state.last_sequence = None;
-        let new_name = if take_name == "Live" {
-            take_name.to_owned()
-        } else {
-            format!("Recovered · {take_name}")
-        };
+        let new_name = take_name.to_owned();
         let new_take_id = new_project_id();
         let replacement = self
             .journal_directory
@@ -405,5 +444,21 @@ mod tests {
         assert_eq!(runtime.event_log.active_take().commands()[0].sequence, 0);
         assert_eq!(runtime.state.bpm, 144.0);
         assert!(runtime.state.blackout);
+    }
+
+    #[test]
+    fn named_baseline_updates_take_metadata() {
+        let mut runtime = PerformanceRuntime::new([1920, 1080]).unwrap();
+        let project_id = new_project_id();
+        runtime.project_id = Some(project_id);
+        runtime
+            .start_named_baseline(
+                SessionState::default(),
+                "Finale branch",
+                ShowTime::default(),
+            )
+            .unwrap();
+        assert_eq!(runtime.event_log.active_take().name, "Finale branch");
+        assert_eq!(runtime.take_id.len(), 32);
     }
 }
