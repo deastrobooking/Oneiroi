@@ -2,11 +2,13 @@
 resolver = "3"
 members = [
     "crates/oneiroi-core",
+    "crates/oneiroi-graph",
     "crates/oneiroi-hap",
     "crates/oneiroi-hap-sys",
     "crates/oneiroi-media",
     "crates/oneiroi-render",
     "crates/oneiroi-io",
+    "crates/oneiroi-session",
     "crates/oneiroi-app",
 ]
 
@@ -18,11 +20,13 @@ rust-version = "1.95"
 
 [workspace.dependencies]
 oneiroi-core = { path = "crates/oneiroi-core" }
+oneiroi-graph = { path = "crates/oneiroi-graph" }
 oneiroi-hap = { path = "crates/oneiroi-hap" }
 oneiroi-hap-sys = { path = "crates/oneiroi-hap-sys" }
 oneiroi-media = { path = "crates/oneiroi-media" }
 oneiroi-render = { path = "crates/oneiroi-render" }
 oneiroi-io = { path = "crates/oneiroi-io" }
+oneiroi-session = { path = "crates/oneiroi-session" }
 
 # wgpu is pinned to 29 because egui-wgpu 0.35 depends on wgpu 29.0.
 # Bumping wgpu ahead of egui-wgpu puts two incompatible wgpu versions in the

@@ -2500,9 +2500,11 @@ dependencies = [
  "env_logger",
  "log",
  "oneiroi-core",
+ "oneiroi-graph",
  "oneiroi-io",
  "oneiroi-media",
  "oneiroi-render",
+ "oneiroi-session",
  "pollster",
  "rfd",
  "wgpu",
@@ -2514,6 +2516,14 @@ name = "oneiroi-core"
 version = "0.1.0"
 dependencies = [
  "rustfft",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "oneiroi-graph"
+version = "0.1.0"
+dependencies = [
+ "serde",
  "thiserror 2.0.19",
 ]
 
@@ -2573,6 +2583,16 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "wgpu",
+]
+
+[[package]]
+name = "oneiroi-session"
+version = "0.1.0"
+dependencies = [
+ "oneiroi-graph",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

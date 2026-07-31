@@ -31,9 +31,13 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Effects system | Three persisted deck slots, two persisted master slots, common bypass/dry-wet/reset, four deck presets, bounded ping-pong blur, reset-safe feedback history, registry-discovered custom master effects, named persistence, last-known-good hot reload, three master LFOs, eight custom-parameter routes, generated MIDI learn, atomic one/two-pass graphs and optional fixed per-slot custom history | Arbitrary package-owned texture declarations |
 | Output routing | Shared operator/output presentation, connected-display selection, persisted descriptor, topology polling and surface recovery diagnostics | Stronger identity across display topology changes and show-machine soak testing |
 | Performance | Bounded workers, reusable CPU RGBA frame leases, 29.5 MB maximum first-frame cache, capped keyframe indexes, deterministic decoder faults and accelerated/extended soak coverage | Physical-media and show-machine soak certification |
+| Typed graph runtime | Versioned typed node contracts, six rate domains, validation, explicit feedback rules, deterministic scheduling, immutable plans, resource lifetime reuse and GPU/memory budgets; the current four-deck topology compiles as an 11-node compatibility macro | Lower compiled nodes to the existing GPU executors, complete color/resolution inference and make the plan authoritative for pixels |
+| Live transactions | Isolated shadow graphs, all-or-nothing preparation, last-known-good retention and frame/beat/bar/timecode commit scheduling | Graph editor/preview UI, prewarming and live operator commit controls |
+| Performance replay | Serializable show commands, session state, 600-frame checkpoints, deterministic replay, branching and named in-memory takes; primary launch/tempo/output actions are recorded | Route every mutation and external input through commands, then add crash-safe journal and project persistence |
 
 ## Not implemented
 
 - Recent-project list and graphical Save As browser
 - OSC, Ableton Link, MIDI clock, NDI, Syphon/Spout and projection mapping
 - Application packaging, signing and FFmpeg distribution
+- Graph editor, Score view, Spatial view and compiled GPU node execution

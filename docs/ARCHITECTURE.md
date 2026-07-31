@@ -34,17 +34,35 @@ clip metadata                    bounded frame schedulers
               + egui               surface
 ```
 
+The live pixel path is now described by a typed compatibility graph at
+startup. Its immutable plan and event-sourced session run beside the proven
+fixed compositor while GPU node lowering is developed:
+
+```text
+ProjectGraph -> validate / schedule / budget -> immutable RenderPlan
+      |                                             |
+      +-> shadow GraphTransaction                   +-> active plan
+                                                        |
+UI/controller -> ShowCommand -> SessionEventLog --------+
+```
+
 ## Workspace responsibilities
 
 | Crate | Responsibility |
 |---|---|
 | `oneiroi-core` | Exact media time, frame clock, tempo/tap tempo and device-neutral control mapping |
+| `oneiroi-graph` | Typed ports and node contracts, graph validation, immutable plan compilation, resource lifetimes and shadow transactions |
 | `oneiroi-hap-sys` | Pinned Vidvox HAP reference implementation and raw FFI |
 | `oneiroi-hap` | Validated safe HAP decode into BC-compressed planes |
 | `oneiroi-media` | Probe, demux, decode workers, clip bank, transport, scheduling, thumbnails and cameras |
 | `oneiroi-render` | GPU resources, HAP/RGBA upload, effects, LFO resolution and four-deck composition |
 | `oneiroi-io` | Versioned project JSON, atomic save and recovery paths |
+| `oneiroi-session` | Serializable show commands, session state, checkpoints, replay, branches and named takes |
 | `oneiroi-app` | Window/event loop, UI and orchestration |
+
+The graph and session crates remain device-neutral. See
+[Graph and session runtime](GRAPH_RUNTIME.md) for the compatibility boundary
+and the next lowering steps.
 
 ## Media paths
 

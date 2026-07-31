@@ -11,9 +11,11 @@ path = "src/main.rs"
 
 [dependencies]
 oneiroi-core.workspace = true
+oneiroi-graph.workspace = true
 oneiroi-io.workspace = true
 oneiroi-media.workspace = true
 oneiroi-render.workspace = true
+oneiroi-session.workspace = true
 
 anyhow.workspace = true
 egui.workspace = true

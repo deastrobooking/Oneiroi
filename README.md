@@ -125,6 +125,15 @@ target OS:
   render backpressure instead of accumulating camera delay.
 - Camera-aware deck controls and project persistence; saved live inputs
   reconnect when a project is restored.
+- A typed, device-neutral audiovisual `ProjectGraph` with versioned contracts,
+  explicit rate domains and feedback boundaries, deterministic pass ordering,
+  hard GPU/memory estimates and immutable compiled plans.
+- An 11-node compatibility graph for the current four-deck pipeline plus
+  isolated shadow transactions with frame/beat/bar/timecode commits and
+  last-known-good retention.
+- Serializable show commands, session checkpoints, deterministic replay,
+  branching and named performance takes. Clip/scene launches, tempo changes
+  and output-enable changes now enter the live event log.
 
 MIDI feedback/clock and arbitrary package-owned texture declarations have not
 landed yet.
@@ -169,6 +178,7 @@ freeze holds the most recent rendered frame.
 - [Application review](docs/REVIEW.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Effect package authoring](docs/EFFECT_PACKAGES.md)
+- [Graph and session runtime](docs/GRAPH_RUNTIME.md)
 - [Prioritized roadmap](docs/ROADMAP.md)
 
 ## Layout
@@ -176,11 +186,13 @@ freeze holds the most recent rendered frame.
 | Crate | Owns |
 |---|---|
 | `oneiroi-core` | Clock, parameters, modulation, scene graph. No GPU, no I/O — testable headless. |
+| `oneiroi-graph` | Typed node contracts, validation, plan compilation, transient resource scheduling and graph transactions. |
 | `oneiroi-hap-sys` | Pinned Vidvox HAP C reference source and raw bindings. |
 | `oneiroi-hap` | Bounded safe HAP decode to GPU-native BC planes. |
 | `oneiroi-media` | Demux, codec dispatch, frame queues and scheduling. |
 | `oneiroi-render` | wgpu device, surface, render passes. Knows nothing about winit or egui. |
 | `oneiroi-io` | Versioned project persistence plus bounded native MIDI and audio input adapters. |
+| `oneiroi-session` | Event-sourced commands, state checkpoints, replay, branches and performance takes. |
 | `oneiroi-app` | Windowing, UI, wiring. |
 
 ## Decisions already locked in

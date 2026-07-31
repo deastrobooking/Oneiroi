@@ -223,8 +223,52 @@ Acceptance criteria:
 6. Run show-machine soak, suspend/resume, display reconnect and storage-failure
    tests.
 
+## Phase 8: typed graph and deterministic session runtime
+
+Status: foundation implemented; GPU lowering and complete command routing are
+next.
+
+Delivered:
+
+1. Device-neutral typed `ProjectGraph` and versioned node contracts.
+2. Video, audio, control, event, async and external rate domains.
+3. Port/type/required-input validation and explicit temporal cycle breaks.
+4. Deterministic scheduling, rate-adapter insertion, resource lifetime reuse
+   and hard GPU/texture budget checks.
+5. Immutable `RenderPlan` with a compiled 11-node four-deck compatibility
+   macro.
+6. Shadow graph preparation that cannot mutate the active or last-known-good
+   plan on failure.
+7. Frame, beat, bar, exact-frame and timecode transaction scheduling.
+8. Serializable `ShowCommand`, session state, checkpoints, replay, branches
+   and named takes.
+9. Runtime recording for graph activation, clip/scene launches, tempo changes
+   and output enable changes.
+
+Next:
+
+1. Lower built-in graph nodes to adapters around the existing renderer.
+2. Make the immutable plan authoritative for live pass execution.
+3. Route every UI, MIDI, audio-analysis and future OSC mutation through
+   commands.
+4. Stream commands to a crash-safe journal and persist checkpoint/take
+   metadata.
+5. Add shadow edit, preview, readiness and quantized commit UI.
+6. Insert inferred color/resolution conversions and expose compiler
+   diagnostics.
+
+Acceptance criteria:
+
+- The current four-deck show renders entirely from the compiled plan without
+  visual or performance regression.
+- An invalid shadow graph cannot change program output.
+- A recorded take restores the same state and deterministic seeds at any
+  checkpoint.
+- Every live mutation has a sequence number, origin and execution time.
+
 ## Deferred beyond the focused release
 
 Projection warping, multiple simultaneous program outputs, edge blending, ISF
 import, generative sources, NDI, Syphon/Spout, OSC, Ableton Link, DMX, Art-Net,
-timelines and redundant show-machine operation remain outside the focused MVP.
+the visual score, spatial engine and redundant render cluster remain beyond
+the current graph-foundation slice.

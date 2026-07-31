@@ -82,12 +82,23 @@ remains before the milestone is stage-certified.
 - Scene launch, quantization, tempo, transport, effects, LFOs and modulation
   routes form a coherent playable instrument.
 - Save, autosave, recovery and asynchronous restoration are already integrated.
+- The first deterministic-runtime spine is now present. Versioned typed node
+  contracts compile the current four-deck topology into an immutable,
+  budget-checked 11-node plan. Illegal implicit feedback is rejected, explicit
+  delay nodes break temporal cycles, cross-rate edges receive adapter records,
+  and non-overlapping transient texture lifetimes can share slots.
+- Shadow graph preparation cannot replace the active or last-known-good plan
+  unless the complete candidate validates and compiles. Ready transactions can
+  commit on a frame, beat, bar or timecode boundary.
+- Primary launch, tempo and output-enable actions now enter a serializable
+  command log with periodic checkpoints. Session state can replay to a target
+  time, and takes can branch without rewriting recorded commands.
 
 ### Compatibility and validation
 
 - Project values are validated before application.
 - Version-one and version-two projects migrate to the current version-three schema.
-- The workspace currently passes 154 tests and strict Clippy, with one extended
+- The workspace currently passes 167 tests and strict Clippy, with one extended
   decoder soak available as an opt-in ignored test.
 
 ## Stage-critical gaps

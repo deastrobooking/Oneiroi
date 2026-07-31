@@ -8,6 +8,7 @@ mod output;
 mod playback;
 mod project;
 mod project_io;
+mod runtime;
 mod ui;
 
 use std::collections::{HashMap, HashSet};
@@ -34,6 +35,7 @@ use oneiroi_render::{
     PROGRAM_FORMAT, PresentSurface, PresentationOptions, ProgramPresenter, ProgramTarget,
     SurfaceAcquireStatus, discover_effect_packages,
 };
+use oneiroi_session::{CommandOperation, CommandOrigin, ShowTime};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, WindowEvent};
@@ -133,6 +135,7 @@ struct State {
     audio_input: Option<AudioInput>,
     audio_snapshot: AudioInputSnapshot,
     audio_status: String,
+    performance_runtime: runtime::PerformanceRuntime,
 }
 
 struct OutputMonitor {
@@ -458,7 +461,13 @@ impl State {
         } else {
             "no BC textures"
         };
-        let gpu_info = format!("{} · {:?} · {bc_support}", info.name, info.backend);
+        let performance_runtime = runtime::PerformanceRuntime::new(ui.composition_extent)?;
+        let gpu_info = format!(
+            "{} · {:?} · {bc_support} · {}",
+            info.name,
+            info.backend,
+            performance_runtime.status()
+        );
 
         let compositor = FourDeckCompositor::new(&gpu.device, &gpu.queue, PROGRAM_FORMAT);
 
@@ -598,6 +607,7 @@ impl State {
             audio_input: None,
             audio_snapshot: AudioInputSnapshot::default(),
             audio_status,
+            performance_runtime,
         })
     }
 
@@ -628,6 +638,15 @@ impl State {
             }
         }
         let time = self.clock.tick(now);
+        let show_time = ShowTime {
+            monotonic_ns: (time.elapsed * 1_000_000_000.0).round() as u64,
+            frame_id: time.frame,
+            beat_ticks: (self.tempo.beat_at(time.elapsed) * 960.0).round() as i64,
+            timecode: None,
+        };
+        if let Err(error) = self.performance_runtime.tick(show_time) {
+            log::error!("performance runtime: {error:#}");
+        }
         let project_dirty = self.project_dirty();
 
         // --- UI pass: pure CPU, produces geometry for the GPU pass below.
@@ -695,8 +714,27 @@ impl State {
                 ui::UiAction::Restart(deck) | ui::UiAction::Seek(deck) => {
                     self.seek_deck(deck);
                 }
-                ui::UiAction::Launch(address) => self.queue_clip(address, now),
+                ui::UiAction::Launch(address) => {
+                    if let Err(error) = self.performance_runtime.record(
+                        CommandOrigin::Operator,
+                        show_time,
+                        CommandOperation::LaunchClip {
+                            deck: address.deck.index() as u8,
+                            slot: address.slot as u8,
+                        },
+                    ) {
+                        log::error!("record clip launch: {error:#}");
+                    }
+                    self.queue_clip(address, now);
+                }
                 ui::UiAction::LaunchScene(slot) => {
+                    if let Err(error) = self.performance_runtime.record(
+                        CommandOrigin::Operator,
+                        show_time,
+                        CommandOperation::LaunchScene { slot: slot as u8 },
+                    ) {
+                        log::error!("record scene launch: {error:#}");
+                    }
                     for deck in DeckId::ALL {
                         self.queue_clip(ClipAddress { deck, slot }, now);
                     }
@@ -733,6 +771,13 @@ impl State {
                     if let Some(bpm) = self.tap_tempo.tap(elapsed) {
                         self.ui.bpm = bpm;
                         self.tempo.set_bpm(bpm, elapsed);
+                        if let Err(error) = self.performance_runtime.record(
+                            CommandOrigin::Operator,
+                            show_time,
+                            CommandOperation::SetTempo { bpm },
+                        ) {
+                            log::error!("record tempo: {error:#}");
+                        }
                     }
                 }
                 ui::UiAction::HalfTempo => {
@@ -744,6 +789,13 @@ impl State {
                             .as_secs_f64(),
                     );
                     self.tap_tempo.reset();
+                    if let Err(error) = self.performance_runtime.record(
+                        CommandOrigin::Operator,
+                        show_time,
+                        CommandOperation::SetTempo { bpm },
+                    ) {
+                        log::error!("record tempo: {error:#}");
+                    }
                 }
                 ui::UiAction::DoubleTempo => {
                     let bpm = (self.ui.bpm * 2.0).clamp(20.0, 400.0);
@@ -754,8 +806,22 @@ impl State {
                             .as_secs_f64(),
                     );
                     self.tap_tempo.reset();
+                    if let Err(error) = self.performance_runtime.record(
+                        CommandOrigin::Operator,
+                        show_time,
+                        CommandOperation::SetTempo { bpm },
+                    ) {
+                        log::error!("record tempo: {error:#}");
+                    }
                 }
                 ui::UiAction::SetOutputEnabled(enabled) => {
+                    if let Err(error) = self.performance_runtime.record(
+                        CommandOrigin::Operator,
+                        show_time,
+                        CommandOperation::SetOutputEnabled { enabled },
+                    ) {
+                        log::error!("record output state: {error:#}");
+                    }
                     self.output_window.set_visible(enabled);
                     if enabled {
                         self.output_window.request_redraw();
