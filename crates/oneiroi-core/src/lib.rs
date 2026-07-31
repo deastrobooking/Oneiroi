@@ -13,7 +13,7 @@ pub use audio::{AUDIO_ANALYSIS_SIZE, AudioAnalysisSettings, AudioAnalyzer, Audio
 pub use clock::{Clock, FrameTime};
 pub use control::{
     ControlTarget, ControlUpdate, MappingMode, MidiBinding, MidiMapper, MidiMessage,
-    MidiMessageKind,
+    MidiMessageKind, effect_parameter_key,
 };
 pub use media_time::{MediaTime, MediaTimeError};
 pub use tempo::{Quantization, TapTempo, TempoClock};

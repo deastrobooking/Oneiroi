@@ -61,6 +61,14 @@ target OS:
 - Registry-discovered custom master effects with schema-generated sliders,
   named parameter persistence and neutral pass-through when a saved package is
   unavailable. The bundled Chromatic Split package is the reference example.
+- Three master LFOs and eight stable-ID custom-parameter routes with audio,
+  beat and bar sources, plus generated per-parameter MIDI Learn/Clear controls.
+- Declarative one- or two-pass custom packages compiled and installed
+  atomically, reusing the fixed master scratch/ping graph. Spectral Echo is the
+  bundled two-pass reference.
+- An optional fixed previous-slot-output history resource for custom packages,
+  with validity signaling and deterministic lifecycle resets. Temporal Melt is
+  the bundled temporal reference.
 - Per-deck hue, contrast, saturation, black/white levels and gamma grading,
   plus three assignable LFO lanes with sine, triangle, saw-up, saw-down and
   square waves.
@@ -118,8 +126,8 @@ target OS:
 - Camera-aware deck controls and project persistence; saved live inputs
   reconnect when a project is restored.
 
-MIDI feedback/clock, custom-effect modulation routing and multipass package
-graphs have not landed yet.
+MIDI feedback/clock and arbitrary package-owned texture declarations have not
+landed yet.
 
 ```sh
 cargo run          # the app; select a deck and drop movies

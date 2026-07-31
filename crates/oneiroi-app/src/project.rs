@@ -7,9 +7,10 @@ use oneiroi_io::{
     ClipPlaybackProject, ControlTargetProject, CrossfadeBusProject, DeckProject,
     EffectGroupProject, EffectParameterValueProject, EffectProject, EffectSlotProject,
     EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject,
-    MasterEffectKindProject, MasterEffectSlotProject, MasterEffectsProject, MidiMappingProject,
-    MidiMessageProject, ModRouteProject, OutputProject, ProjectFile, ProjectSettings,
-    QuantizationProject, SourceModeProject, TransformProject, TransportProject,
+    MasterEffectKindProject, MasterEffectSlotProject, MasterEffectsProject, MasterLfoProject,
+    MasterModulationProject, MasterModulationRouteProject, MidiMappingProject, MidiMessageProject,
+    ModRouteProject, OutputProject, ProjectFile, ProjectSettings, QuantizationProject,
+    SourceModeProject, TransformProject, TransportProject,
 };
 use oneiroi_media::{
     CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipLaunchMode,
@@ -18,7 +19,8 @@ use oneiroi_media::{
 use oneiroi_render::{
     DeckEffects, DeckLfos, DeckTransform, EffectGroup, EffectLfo, EffectParameterValue, EffectSlot,
     EffectTarget, LayerBlendMode, LfoWaveform, MasterEffectChain, MasterEffectKind,
-    MasterEffectSlot, ModulationRoute, SourceMode,
+    MasterEffectSlot, MasterLfo, MasterModulation, MasterModulationRoute, ModulationRoute,
+    SourceMode,
 };
 
 use crate::ui::UiState;
@@ -48,6 +50,7 @@ pub fn snapshot(
             },
             audio_analysis: audio_analysis_to_project(ui.audio_analysis),
             master_effects: master_effects_to_project(&ui.master_effects),
+            master_modulation: master_modulation_to_project(ui.master_modulation),
         },
         decks: DeckId::ALL
             .into_iter()
@@ -196,6 +199,7 @@ pub fn apply_master(project: &ProjectFile, ui: &mut UiState) {
     ui.custom_composition_extent = project.settings.output.composition_extent;
     ui.audio_analysis = audio_analysis_from_project(project.settings.audio_analysis);
     ui.master_effects = master_effects_from_project(&project.settings.master_effects);
+    ui.master_modulation = master_modulation_from_project(&project.settings.master_modulation);
     ui.blackout = false;
     ui.master_freeze = false;
 }
@@ -256,6 +260,80 @@ fn master_effects_from_project(effects: &MasterEffectsProject) -> MasterEffectCh
         };
     }
     result.sanitized()
+}
+
+fn master_modulation_to_project(modulation: MasterModulation) -> MasterModulationProject {
+    MasterModulationProject {
+        lfos: modulation
+            .lfos
+            .into_iter()
+            .map(|lfo| MasterLfoProject {
+                enabled: lfo.enabled,
+                waveform: waveform_to_project(lfo.waveform),
+                rate_hz: lfo.rate_hz,
+                tempo_sync: lfo.tempo_sync,
+                beats_per_cycle: lfo.beats_per_cycle,
+                depth: lfo.depth,
+                phase: lfo.phase,
+            })
+            .collect(),
+        routes: modulation
+            .routes
+            .into_iter()
+            .map(|route| MasterModulationRouteProject {
+                enabled: route.enabled,
+                source: route.source,
+                target_slot: route.target_slot,
+                parameter_key: route.parameter_key,
+                amount: route.amount,
+            })
+            .collect(),
+    }
+}
+
+fn master_modulation_from_project(project: &MasterModulationProject) -> MasterModulation {
+    let mut modulation = MasterModulation::default();
+    for (destination, source) in modulation.lfos.iter_mut().zip(&project.lfos) {
+        *destination = MasterLfo {
+            enabled: source.enabled,
+            waveform: waveform_from_project(source.waveform),
+            rate_hz: source.rate_hz,
+            tempo_sync: source.tempo_sync,
+            beats_per_cycle: source.beats_per_cycle,
+            depth: source.depth,
+            phase: source.phase,
+        };
+    }
+    for (destination, source) in modulation.routes.iter_mut().zip(&project.routes) {
+        *destination = MasterModulationRoute {
+            enabled: source.enabled,
+            source: source.source,
+            target_slot: source.target_slot,
+            parameter_key: source.parameter_key,
+            amount: source.amount,
+        };
+    }
+    modulation
+}
+
+fn waveform_to_project(waveform: LfoWaveform) -> LfoWaveformProject {
+    match waveform {
+        LfoWaveform::Sine => LfoWaveformProject::Sine,
+        LfoWaveform::Triangle => LfoWaveformProject::Triangle,
+        LfoWaveform::Saw => LfoWaveformProject::Saw,
+        LfoWaveform::SawDown => LfoWaveformProject::SawDown,
+        LfoWaveform::Square => LfoWaveformProject::Square,
+    }
+}
+
+fn waveform_from_project(waveform: LfoWaveformProject) -> LfoWaveform {
+    match waveform {
+        LfoWaveformProject::Sine => LfoWaveform::Sine,
+        LfoWaveformProject::Triangle => LfoWaveform::Triangle,
+        LfoWaveformProject::Saw => LfoWaveform::Saw,
+        LfoWaveformProject::SawDown => LfoWaveform::SawDown,
+        LfoWaveformProject::Square => LfoWaveform::Square,
+    }
 }
 
 pub fn apply_deck(
@@ -666,6 +744,13 @@ fn target_to_project(target: ControlTarget) -> ControlTargetProject {
             route,
             parameter,
         },
+        ControlTarget::MasterEffectParameter {
+            slot,
+            parameter_key,
+        } => ControlTargetProject::MasterEffectParameter {
+            slot,
+            parameter_key,
+        },
     }
 }
 
@@ -710,6 +795,13 @@ fn target_from_project(target: ControlTargetProject) -> ControlTarget {
             deck,
             route,
             parameter,
+        },
+        ControlTargetProject::MasterEffectParameter {
+            slot,
+            parameter_key,
+        } => ControlTarget::MasterEffectParameter {
+            slot,
+            parameter_key,
         },
     }
 }
@@ -783,6 +875,25 @@ mod tests {
         assert_eq!(
             master_effects_from_project(&master_effects_to_project(&chain)),
             chain
+        );
+
+        let mut modulation = MasterModulation::default();
+        modulation.lfos[0] = MasterLfo {
+            enabled: true,
+            tempo_sync: true,
+            beats_per_cycle: 2.0,
+            ..MasterLfo::default()
+        };
+        modulation.routes[0] = MasterModulationRoute {
+            enabled: true,
+            source: 0,
+            target_slot: 0,
+            parameter_key: oneiroi_core::effect_parameter_key("chromatic-split", "amount"),
+            amount: -0.5,
+        };
+        assert_eq!(
+            master_modulation_from_project(&master_modulation_to_project(modulation)),
+            modulation
         );
     }
 }

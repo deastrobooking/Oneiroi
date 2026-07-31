@@ -153,7 +153,8 @@ effects** returns both slots to Empty.
 With both slots empty or bypassed, composition renders directly to program
 output. Enabling blur or feedback activates fixed ping-pong/history targets
 allocated at the chosen composition resolution; no effect texture is created
-during a frame. UHD uses about 126.6 MiB of additional bounded texture storage
+during a frame. The program target also reserves one custom history texture per
+master slot. UHD uses about 189.8 MiB of additional bounded texture storage
 versus the direct path, so certify the target GPU at show resolution.
 
 Feedback history resets on a source launch/change, active source removal,
@@ -179,7 +180,27 @@ appear when a master slot is set to **Custom package**. Select the package and
 its manifest controls are created automatically. **Refresh registry** rescans
 after adding or removing a package. Parameter values and package IDs are saved
 in project version 3. If a saved package is missing or rejected, that slot
-passes its input through unchanged.
+passes its input through unchanged. The package panel reports whether the
+selected effect uses one or two bounded render passes.
+
+Expand **Master modulation matrix** for three free-running or tempo-synced LFOs
+and eight routes. A route can use a master LFO, RMS, bass, mid, high, transient,
+beat phase or bar phase, then target any parameter in either active custom
+slot. Amount is bipolar; negative values invert the source. Targets use stable
+package/parameter identity, so reordering controls in a manifest does not
+redirect saved routes.
+
+Each generated custom parameter also has **MIDI learn** and **Clear** buttons.
+Connect a controller, click Learn and move the desired hardware control.
+Custom ranges outside 0–1 can be adjusted in the MIDI mapping table's output
+range fields.
+
+**Chromatic Split** is the bundled one-pass example. **Spectral Echo** is the
+two-pass example: its first pass produces an intermediate in the fixed scratch
+texture and its second pass combines that intermediate into the slot output.
+**Temporal Melt** demonstrates the optional previous-slot-output history.
+Its first frame after selection or reset is clean; subsequent frames sample the
+saved slot output. The custom package panel identifies temporal packages.
 
 ## Layer transforms
 

@@ -16,8 +16,9 @@ pub use project::{
     ClipPlaybackProject, ControlTargetProject, CrossfadeBusProject, DeckProject,
     EffectGroupProject, EffectParameterValueProject, EffectProject, EffectSlotProject,
     EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject,
-    MasterEffectKindProject, MasterEffectSlotProject, MasterEffectsProject, MidiMappingProject,
-    MidiMessageProject, ModRouteProject, OutputProject, ProjectError, ProjectFile, ProjectSettings,
+    MasterEffectKindProject, MasterEffectSlotProject, MasterEffectsProject, MasterLfoProject,
+    MasterModulationProject, MasterModulationRouteProject, MidiMappingProject, MidiMessageProject,
+    ModRouteProject, OutputProject, ProjectError, ProjectFile, ProjectSettings,
     QuantizationProject, SourceModeProject, TransformProject, TransportProject, autosave_path,
     load_project, recovery_is_newer, save_project_atomic,
 };

@@ -43,16 +43,29 @@ fn vs_main(@builtin(vertex_index) index: u32) -> VertexOutput {
     return output;
 }
 
+fn effect_offset() -> vec2<f32> {
+    let spread = globals.parameters[0].x;
+    let rotation = globals.parameters[0].z;
+    let pulse = 0.75 + 0.25 * sin(globals.time_seconds * 2.0);
+    return vec2(cos(rotation), sin(rotation)) * spread * pulse;
+}
+
 @fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_extract(input: VertexOutput) -> @location(0) vec4<f32> {
+    let offset = effect_offset();
+    let a = textureSample(original_texture, effect_sampler, input.uv + offset);
+    let b = textureSample(original_texture, effect_sampler, input.uv - offset);
+    return vec4(a.r, (a.g + b.g) * 0.5, b.b, max(a.a, b.a));
+}
+
+@fragment
+fn fs_combine(input: VertexOutput) -> @location(0) vec4<f32> {
     let original = textureSample(original_texture, effect_sampler, input.uv);
-    let amount = globals.parameters[0].x;
-    let angle = globals.parameters[0].y;
-    let pulse = globals.parameters[0].z;
-    let animated = 1.0 + sin(globals.time_seconds * 4.0) * pulse;
-    let offset = vec2(cos(angle), sin(angle)) * amount * animated;
-    let red = textureSample(original_texture, effect_sampler, input.uv + offset).r;
-    let blue = textureSample(original_texture, effect_sampler, input.uv - offset).b;
-    let split = vec4(red, original.g, blue, original.a);
-    return mix(original, split, clamp(globals.mix_amount, 0.0, 1.0));
+    let offset = effect_offset() * 0.5;
+    let echo_amount = globals.parameters[0].y;
+    let forward = textureSample(effect_texture, effect_sampler, input.uv + offset);
+    let backward = textureSample(effect_texture, effect_sampler, input.uv - offset);
+    let echo_color = mix(forward, backward, 0.5);
+    let effected = mix(original, echo_color, clamp(echo_amount, 0.0, 1.0));
+    return mix(original, effected, clamp(globals.mix_amount, 0.0, 1.0));
 }

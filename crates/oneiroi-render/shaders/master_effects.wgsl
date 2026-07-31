@@ -7,8 +7,10 @@ struct MasterEffectGlobals {
     feedback: f32,
     time_seconds: f32,
     parameter_count: u32,
-    _padding: vec2<u32>,
+    pass_index: u32,
+    pass_count: u32,
     parameters: array<vec4<f32>, 8>,
+    history_valid: u32,
 }
 
 @group(0) @binding(0) var effect_sampler: sampler;
@@ -16,6 +18,7 @@ struct MasterEffectGlobals {
 @group(0) @binding(2) var effect_texture: texture_2d<f32>;
 @group(0) @binding(3) var<uniform> globals: MasterEffectGlobals;
 @group(0) @binding(4) var history_texture: texture_2d<f32>;
+@group(0) @binding(5) var custom_history_texture: texture_2d<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,

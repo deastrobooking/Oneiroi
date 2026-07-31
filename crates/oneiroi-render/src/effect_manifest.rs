@@ -12,6 +12,7 @@ pub const EFFECT_MANIFEST_FORMAT: &str = "oneiroi-effect";
 pub const EFFECT_MANIFEST_VERSION: u32 = 1;
 const MAX_PARAMETERS: usize = 32;
 const MAX_PACKAGES: usize = 128;
+pub const MAX_EFFECT_PASSES: usize = 2;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EffectManifest {
@@ -26,7 +27,24 @@ pub struct EffectManifest {
     pub vertex_entry: String,
     #[serde(default = "default_fragment_entry")]
     pub fragment_entry: String,
+    #[serde(default)]
+    pub passes: Vec<EffectPassSchema>,
+    #[serde(default)]
+    pub resources: EffectResourceSchema,
     pub parameters: Vec<EffectParameterSchema>,
+}
+
+impl EffectManifest {
+    pub fn pass_entries(&self) -> Vec<&str> {
+        if self.passes.is_empty() {
+            vec![self.fragment_entry.as_str()]
+        } else {
+            self.passes
+                .iter()
+                .map(|pass| pass.fragment_entry.as_str())
+                .collect()
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -37,6 +55,20 @@ pub enum EffectPackageRole {
     MasterProcessor,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectHistoryResource {
+    #[default]
+    None,
+    PreviousSlotOutput,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EffectResourceSchema {
+    #[serde(default)]
+    pub history: EffectHistoryResource,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EffectParameterSchema {
     pub id: String,
@@ -44,6 +76,11 @@ pub struct EffectParameterSchema {
     pub minimum: f32,
     pub maximum: f32,
     pub default: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EffectPassSchema {
+    pub fragment_entry: String,
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +98,8 @@ pub struct EffectDescriptor {
     pub name: String,
     pub manifest_path: PathBuf,
     pub parameters: Vec<EffectParameterSchema>,
+    pub pass_count: usize,
+    pub history: EffectHistoryResource,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -171,11 +210,15 @@ pub fn discover_effect_packages(root: impl AsRef<Path>) -> EffectRegistry {
                     ));
                     continue;
                 }
+                let pass_count = package.manifest.pass_entries().len();
+                let history = package.manifest.resources.history;
                 registry.effects.push(EffectDescriptor {
                     id: package.manifest.id,
                     name: package.manifest.name,
                     manifest_path: path,
                     parameters: package.manifest.parameters,
+                    pass_count,
+                    history,
                 });
             }
             Err(error) => registry.errors.push(format!("{}: {error}", path.display())),
@@ -221,9 +264,23 @@ fn validate_manifest(manifest: &EffectManifest) -> Result<(), EffectManifestErro
     }
     if !valid_shader_identifier(&manifest.vertex_entry)
         || !valid_shader_identifier(&manifest.fragment_entry)
+        || manifest
+            .passes
+            .iter()
+            .any(|pass| !valid_shader_identifier(&pass.fragment_entry))
     {
         return Err(EffectManifestError::Invalid(
             "entry points must be valid WGSL identifiers".to_owned(),
+        ));
+    }
+    if manifest.passes.len() > MAX_EFFECT_PASSES {
+        return Err(EffectManifestError::Invalid(format!(
+            "custom effect pass count cannot exceed {MAX_EFFECT_PASSES}"
+        )));
+    }
+    if manifest.role == EffectPackageRole::MasterProcessor && manifest.passes.len() > 1 {
+        return Err(EffectManifestError::Invalid(
+            "master_processor packages must declare exactly one pipeline".to_owned(),
         ));
     }
     if manifest.parameters.is_empty() || manifest.parameters.len() > MAX_PARAMETERS {
@@ -270,10 +327,13 @@ fn validate_shader(
     let vertex_found = module.entry_points.iter().any(|entry| {
         entry.name == manifest.vertex_entry && entry.stage == naga::ShaderStage::Vertex
     });
-    let fragment_found = module.entry_points.iter().any(|entry| {
-        entry.name == manifest.fragment_entry && entry.stage == naga::ShaderStage::Fragment
+    let fragments_found = manifest.pass_entries().into_iter().all(|fragment_entry| {
+        module
+            .entry_points
+            .iter()
+            .any(|entry| entry.name == fragment_entry && entry.stage == naga::ShaderStage::Fragment)
     });
-    if !vertex_found || !fragment_found {
+    if !vertex_found || !fragments_found {
         return Err(EffectManifestError::Invalid(
             "declared vertex/fragment entry points do not exist with the required stages"
                 .to_owned(),
@@ -379,8 +439,23 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects");
         let registry = discover_effect_packages(root);
         assert!(registry.errors.is_empty(), "{:?}", registry.errors);
-        assert_eq!(registry.effects.len(), 1);
-        assert_eq!(registry.effects[0].id, "chromatic-split");
+        assert_eq!(registry.effects.len(), 3);
+        assert!(
+            registry
+                .effects
+                .iter()
+                .any(|effect| { effect.id == "chromatic-split" && effect.pass_count == 1 })
+        );
+        assert!(
+            registry
+                .effects
+                .iter()
+                .any(|effect| { effect.id == "spectral-echo" && effect.pass_count == 2 })
+        );
+        assert!(registry.effects.iter().any(|effect| {
+            effect.id == "temporal-melt"
+                && effect.history == EffectHistoryResource::PreviousSlotOutput
+        }));
     }
 
     #[test]
@@ -406,6 +481,40 @@ mod tests {
         let mut value: serde_json::Value = serde_json::from_str(&manifest(parameters())).unwrap();
         value["shader"] = serde_json::json!("../effect.wgsl");
         let path = fixture(&serde_json::to_string(&value).unwrap(), "not used");
+        assert!(matches!(
+            load_effect_package(&path),
+            Err(EffectManifestError::Invalid(_))
+        ));
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn rejects_unbounded_or_missing_pass_entry_points() {
+        let mut value: serde_json::Value = serde_json::from_str(&manifest(parameters())).unwrap();
+        value["passes"] = serde_json::json!([
+            {"fragment_entry":"fs_main"},
+            {"fragment_entry":"fs_main"},
+            {"fragment_entry":"fs_main"}
+        ]);
+        let path = fixture(&serde_json::to_string(&value).unwrap(), "not used");
+        assert!(matches!(
+            load_effect_package(&path),
+            Err(EffectManifestError::Invalid(_))
+        ));
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+
+        value["passes"] = serde_json::json!([{"fragment_entry":"missing"}]);
+        let path = fixture(
+            &serde_json::to_string(&value).unwrap(),
+            r#"
+@vertex fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    return vec4(f32(index), 0.0, 0.0, 1.0);
+}
+@fragment fn fs_main() -> @location(0) vec4<f32> {
+    return vec4(1.0);
+}
+"#,
+        );
         assert!(matches!(
             load_effect_package(&path),
             Err(EffectManifestError::Invalid(_))

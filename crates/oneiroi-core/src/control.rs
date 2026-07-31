@@ -75,6 +75,23 @@ pub enum ControlTarget {
     EffectParameter { deck: u8, effect: u8, parameter: u8 },
     LfoParameter { deck: u8, lfo: u8, parameter: u8 },
     ModRouteParameter { deck: u8, route: u8, parameter: u8 },
+    MasterEffectParameter { slot: u8, parameter_key: u64 },
+}
+
+/// Stable identity for a package parameter across manifest reordering.
+pub fn effect_parameter_key(package_id: &str, parameter_id: &str) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET;
+    for byte in package_id
+        .bytes()
+        .chain(std::iter::once(0xff))
+        .chain(parameter_id.bytes())
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -459,6 +476,22 @@ mod tests {
                 0.0,
             ),
             Some(1.0)
+        );
+    }
+
+    #[test]
+    fn effect_parameter_keys_are_stable_and_namespaced() {
+        assert_eq!(
+            effect_parameter_key("chromatic-split", "amount"),
+            effect_parameter_key("chromatic-split", "amount")
+        );
+        assert_ne!(
+            effect_parameter_key("chromatic-split", "amount"),
+            effect_parameter_key("chromatic-split", "angle")
+        );
+        assert_ne!(
+            effect_parameter_key("chromatic-split", "amount"),
+            effect_parameter_key("other", "amount")
         );
     }
 }

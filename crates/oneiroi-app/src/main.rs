@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use oneiroi_core::{
     Clock, ControlTarget, ControlUpdate, MediaTime, MidiMapper, TapTempo, TempoClock,
+    effect_parameter_key,
 };
 use oneiroi_io::{
     AudioInput, AudioInputDevice, AudioInputSnapshot, MidiInputConnection, MidiInputDevice,
@@ -1198,6 +1199,18 @@ impl State {
                     }
                 }
             }
+            ControlTarget::MasterEffectParameter {
+                slot,
+                parameter_key,
+            } => {
+                if let Some(effect) = self.ui.master_effects.slots.get_mut(usize::from(slot))
+                    && let Some(parameter) = effect.parameters.iter_mut().find(|parameter| {
+                        effect_parameter_key(&effect.package_id, &parameter.id) == parameter_key
+                    })
+                {
+                    parameter.value = update.value;
+                }
+            }
         }
     }
 
@@ -2091,12 +2104,22 @@ impl State {
                 },
             );
             if master_effects_active {
-                self.master_effect_processor.draw_at(
+                let audio = self.audio_snapshot.analysis;
+                self.master_effect_processor.draw_modulated_at(
                     &self.gpu.queue,
                     &mut encoder,
                     &self.program,
                     &self.ui.master_effects,
+                    &self.ui.master_modulation,
                     effect_time,
+                    beat_position,
+                    [
+                        audio.rms,
+                        audio.bass,
+                        audio.mid,
+                        audio.high,
+                        audio.transient,
+                    ],
                 );
             }
         }
@@ -2265,6 +2288,19 @@ fn current_control_value(
                 _ => 0.0,
             })
             .unwrap_or_default(),
+        ControlTarget::MasterEffectParameter {
+            slot,
+            parameter_key,
+        } => ui
+            .master_effects
+            .slots
+            .get(usize::from(slot))
+            .and_then(|effect| {
+                effect.parameters.iter().find(|parameter| {
+                    effect_parameter_key(&effect.package_id, &parameter.id) == parameter_key
+                })
+            })
+            .map_or(0.0, |parameter| parameter.value),
     }
 }
 

@@ -70,6 +70,15 @@ remains before the milestone is stage-certified.
   schema-generated controls and persist named parameter values in project v3.
   Missing packages fall back to a neutral copy. Chromatic Split is bundled as
   an executable package/ABI example.
+- Three master LFOs and eight routes address custom controls through stable
+  package/parameter keys, with audio, transient, beat and bar sources. The same
+  identity drives generated MIDI learning and readable persisted mappings.
+- Custom packages may declare one or two fragment passes. Complete pipeline
+  sets compile atomically, reuse the fixed scratch/ping targets and retain the
+  previous set if either pass fails. Spectral Echo exercises the two-pass path.
+- Temporal packages may request one fixed previous-slot-output history texture.
+  Validity is explicit, resets follow source/project/blackout/disable lifecycle,
+  and Temporal Melt verifies clean seeding and subsequent-frame sampling.
 - Scene launch, quantization, tempo, transport, effects, LFOs and modulation
   routes form a coherent playable instrument.
 - Save, autosave, recovery and asynchronous restoration are already integrated.
@@ -78,7 +87,7 @@ remains before the milestone is stage-certified.
 
 - Project values are validated before application.
 - Version-one and version-two projects migrate to the current version-three schema.
-- The workspace currently passes 147 tests and strict Clippy, with one extended
+- The workspace currently passes 154 tests and strict Clippy, with one extended
   decoder soak available as an opt-in ignored test.
 
 ## Stage-critical gaps
@@ -128,17 +137,18 @@ Recommended boundaries:
 - `actions.rs`: UI and keyboard action dispatch
 - UI panels split by toolbar, clips, deck/effects and diagnostics
 
-### Package graphs and modulation are not yet implemented
+### Arbitrary package texture declarations are not implemented
 
 Deck and master chains now provide ordered slots, common controls, bounded blur
 and deterministic feedback history. Custom master shaders now register through
-validated manifests and generate their controls dynamically. The current ABI
-deliberately grants each custom slot one pass and 32 scalar parameters; packages
-cannot request extra textures, multiple passes or direct LFO/MIDI destinations.
+validated manifests, generate controls dynamically, receive stable-ID
+LFO/audio/tempo modulation plus MIDI, and may use one or two atomic passes. The
+current ABI deliberately grants 32 scalar parameters, the existing sampled
+textures and at most one fixed previous-output history per slot; packages
+cannot request arbitrary auxiliary texture counts, formats or resolutions.
 
-Resolution: extend the manifest with a bounded declarative pass graph and stable
-modulation target metadata without allowing runtime allocation or unbounded
-shader resources.
+Resolution: define a small, memory-budgeted resource declaration model without
+allowing runtime allocation or unbounded shader resources.
 
 ### Project schema discipline
 

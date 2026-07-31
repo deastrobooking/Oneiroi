@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use oneiroi_core::{
     AudioAnalysisSettings, ControlTarget, FrameTime, MappingMode, MidiMapper, Quantization,
-    TempoClock,
+    TempoClock, effect_parameter_key,
 };
 use oneiroi_io::{AudioInputDevice, AudioInputSnapshot, MidiInputDevice, MidiInputStats};
 use oneiroi_media::{
@@ -17,9 +17,9 @@ use oneiroi_media::{
     DeckState, DeckTransport, EndMode, FourDeckMixer, LaunchQueue, MediaHealth,
 };
 use oneiroi_render::{
-    DeckEffects, DeckLfos, DeckTransform, EffectDescriptor, EffectParameterValue, EffectPreset,
-    EffectTarget, LayerBlendMode, LfoWaveform, MasterEffectChain, MasterEffectKind,
-    MasterEffectSlot, SourceMode,
+    DeckEffects, DeckLfos, DeckTransform, EffectDescriptor, EffectHistoryResource,
+    EffectParameterValue, EffectPreset, EffectTarget, LayerBlendMode, LfoWaveform,
+    MasterEffectChain, MasterEffectKind, MasterEffectSlot, MasterModulation, SourceMode,
 };
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.
@@ -41,6 +41,7 @@ pub struct UiState {
     pub effect_reload_status: String,
     pub effect_packages: Vec<EffectDescriptor>,
     pub effect_registry_status: String,
+    pub master_modulation: MasterModulation,
     pub effects: [DeckEffects; 4],
     pub transforms: [DeckTransform; 4],
     pub blend_modes: [LayerBlendMode; 4],
@@ -83,6 +84,7 @@ impl Default for UiState {
             effect_reload_status: "Built-in master effect pipeline".to_owned(),
             effect_packages: Vec::new(),
             effect_registry_status: "Effect registry not scanned".to_owned(),
+            master_modulation: MasterModulation::default(),
             effects: [DeckEffects::default(); 4],
             transforms: [DeckTransform::default(); 4],
             blend_modes: [LayerBlendMode::Normal; 4],
@@ -865,7 +867,13 @@ pub fn draw(
                                         .text("persistence"),
                                 );
                             } else if slot.kind == MasterEffectKind::Custom {
-                                draw_custom_effect(ui, index, slot, effect_packages);
+                                draw_custom_effect(
+                                    ui,
+                                    index,
+                                    slot,
+                                    effect_packages,
+                                    &mut actions,
+                                );
                             }
                         });
                     }
@@ -878,6 +886,12 @@ pub fn draw(
                     master_effects.sanitize();
                     ui.weak(
                         "Blur uses fixed ping-pong textures allocated with the composition target.",
+                    );
+                    draw_master_modulation(
+                        ui,
+                        &mut state.master_modulation,
+                        master_effects,
+                        effect_packages,
                     );
                     ui.separator();
                     ui.label("Effect package");
@@ -912,6 +926,7 @@ fn draw_custom_effect(
     slot_index: usize,
     slot: &mut MasterEffectSlot,
     packages: &[EffectDescriptor],
+    actions: &mut Vec<UiAction>,
 ) {
     let selected = packages
         .iter()
@@ -957,6 +972,14 @@ fn draw_custom_effect(
         );
         return;
     };
+    if package.pass_count == 1 {
+        ui.weak("1 bounded render pass");
+    } else {
+        ui.weak(format!("{} bounded render passes", package.pass_count));
+    }
+    if package.history == EffectHistoryResource::PreviousSlotOutput {
+        ui.weak("Persistent previous-slot-output history");
+    }
     for parameter in &package.parameters {
         let value_index = slot
             .parameters
@@ -969,14 +992,175 @@ fn draw_custom_effect(
             });
             slot.parameters.len() - 1
         });
-        ui.add(
-            egui::Slider::new(
-                &mut slot.parameters[index].value,
-                parameter.minimum..=parameter.maximum,
-            )
-            .text(&parameter.label),
-        );
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::Slider::new(
+                    &mut slot.parameters[index].value,
+                    parameter.minimum..=parameter.maximum,
+                )
+                .text(&parameter.label),
+            );
+            let target = ControlTarget::MasterEffectParameter {
+                slot: slot_index as u8,
+                parameter_key: effect_parameter_key(&slot.package_id, &parameter.id),
+            };
+            if ui.small_button("MIDI learn").clicked() {
+                actions.push(UiAction::MidiLearn(target));
+            }
+            if ui.small_button("Clear").clicked() {
+                actions.push(UiAction::MidiClearTarget(target));
+            }
+        });
     }
+}
+
+fn draw_master_modulation(
+    ui: &mut egui::Ui,
+    modulation: &mut MasterModulation,
+    effects: &MasterEffectChain,
+    packages: &[EffectDescriptor],
+) {
+    egui::CollapsingHeader::new("Master modulation matrix")
+        .default_open(false)
+        .show(ui, |ui| {
+            for (index, lfo) in modulation.lfos.iter_mut().enumerate() {
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut lfo.enabled, format!("LFO {}", index + 1));
+                        egui::ComboBox::from_id_salt(("master-lfo-wave", index))
+                            .selected_text(waveform_label(lfo.waveform))
+                            .show_ui(ui, |ui| {
+                                for waveform in LFO_WAVEFORMS {
+                                    ui.selectable_value(
+                                        &mut lfo.waveform,
+                                        waveform,
+                                        waveform_label(waveform),
+                                    );
+                                }
+                            });
+                        ui.checkbox(&mut lfo.tempo_sync, "Sync");
+                    });
+                    ui.horizontal(|ui| {
+                        if lfo.tempo_sync {
+                            ui.add(
+                                egui::Slider::new(&mut lfo.beats_per_cycle, 0.0625..=8.0)
+                                    .text("beats"),
+                            );
+                        } else {
+                            ui.add(
+                                egui::Slider::new(&mut lfo.rate_hz, 0.01..=20.0)
+                                    .logarithmic(true)
+                                    .text("Hz"),
+                            );
+                        }
+                        ui.add(egui::Slider::new(&mut lfo.depth, 0.0..=1.0).text("depth"));
+                        ui.add(egui::Slider::new(&mut lfo.phase, 0.0..=1.0).text("phase"));
+                    });
+                });
+            }
+
+            for (index, route) in modulation.routes.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut route.enabled, format!("{}", index + 1));
+                    egui::ComboBox::from_id_salt(("master-mod-source", index))
+                        .selected_text(master_mod_source_label(route.source))
+                        .show_ui(ui, |ui| {
+                            for source in 0..10 {
+                                ui.selectable_value(
+                                    &mut route.source,
+                                    source,
+                                    master_mod_source_label(source),
+                                );
+                            }
+                        });
+                    egui::ComboBox::from_id_salt(("master-mod-target", index))
+                        .selected_text(master_mod_target_label(route, effects, packages))
+                        .show_ui(ui, |ui| {
+                            for (slot_index, slot) in effects.slots.iter().enumerate() {
+                                if slot.kind != MasterEffectKind::Custom {
+                                    continue;
+                                }
+                                let Some(package) = packages
+                                    .iter()
+                                    .find(|package| package.id == slot.package_id)
+                                else {
+                                    continue;
+                                };
+                                for parameter in &package.parameters {
+                                    let key = effect_parameter_key(&package.id, &parameter.id);
+                                    if ui
+                                        .selectable_label(
+                                            usize::from(route.target_slot) == slot_index
+                                                && route.parameter_key == key,
+                                            format!(
+                                                "Slot {} · {}",
+                                                slot_index + 1,
+                                                parameter.label
+                                            ),
+                                        )
+                                        .clicked()
+                                    {
+                                        route.target_slot = slot_index as u8;
+                                        route.parameter_key = key;
+                                    }
+                                }
+                            }
+                        });
+                    ui.add(
+                        egui::Slider::new(&mut route.amount, -1.0..=1.0)
+                            .text("amount")
+                            .show_value(true),
+                    );
+                });
+            }
+            ui.weak("Sources: three master LFOs, audio analysis, beat and bar phase.");
+        });
+}
+
+fn master_mod_source_label(source: u8) -> &'static str {
+    [
+        "LFO 1",
+        "LFO 2",
+        "LFO 3",
+        "Audio RMS",
+        "Audio bass",
+        "Audio mid",
+        "Audio high",
+        "Audio transient",
+        "Beat phase",
+        "Bar phase",
+    ]
+    .get(usize::from(source))
+    .copied()
+    .unwrap_or("Unknown")
+}
+
+fn master_mod_target_label(
+    route: &oneiroi_render::MasterModulationRoute,
+    effects: &MasterEffectChain,
+    packages: &[EffectDescriptor],
+) -> String {
+    let slot_index = usize::from(route.target_slot);
+    let Some(slot) = effects.slots.get(slot_index) else {
+        return "Choose target".to_owned();
+    };
+    if slot.kind != MasterEffectKind::Custom {
+        return "Missing target".to_owned();
+    }
+    let Some(package) = packages
+        .iter()
+        .find(|package| package.id == slot.package_id)
+    else {
+        return "Missing target".to_owned();
+    };
+    package
+        .parameters
+        .iter()
+        .find(|parameter| effect_parameter_key(&package.id, &parameter.id) == route.parameter_key)
+        .map_or_else(
+            || "Choose target".to_owned(),
+            |parameter| format!("Slot {} · {}", slot_index + 1, parameter.label),
+        )
 }
 
 fn draw_midi(
@@ -1084,7 +1268,7 @@ fn draw_midi(
                             binding.kind,
                             binding.number
                         ));
-                        ui.label(midi_target_label(binding.target));
+                        ui.label(midi_target_label_for_state(binding.target, state));
                         egui::ComboBox::from_id_salt(("midi-mode", index))
                             .selected_text(mapping_mode_label(binding.mode))
                             .show_ui(ui, |ui| {
@@ -1229,7 +1413,39 @@ fn midi_target_label(target: ControlTarget) -> String {
                 .copied()
                 .unwrap_or("Unknown")
         ),
+        ControlTarget::MasterEffectParameter {
+            slot,
+            parameter_key,
+        } => format!("Master slot {} · custom {:016x}", slot + 1, parameter_key),
     }
+}
+
+fn midi_target_label_for_state(target: ControlTarget, state: &UiState) -> String {
+    let ControlTarget::MasterEffectParameter {
+        slot,
+        parameter_key,
+    } = target
+    else {
+        return midi_target_label(target);
+    };
+    let slot_index = usize::from(slot);
+    let Some(effect) = state.master_effects.slots.get(slot_index) else {
+        return midi_target_label(target);
+    };
+    let label = state
+        .effect_packages
+        .iter()
+        .find(|package| package.id == effect.package_id)
+        .and_then(|package| {
+            package
+                .parameters
+                .iter()
+                .find(|parameter| effect_parameter_key(&package.id, &parameter.id) == parameter_key)
+        });
+    label.map_or_else(
+        || midi_target_label(target),
+        |parameter| format!("Master slot {} · {}", slot_index + 1, parameter.label),
+    )
 }
 
 fn deck_label(deck: u8) -> char {

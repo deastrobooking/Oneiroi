@@ -43,30 +43,27 @@ fn vs_main(@builtin(vertex_index) index: u32) -> VertexOutput {
     return output;
 }
 
-fn blur(uv: vec2<f32>) -> vec4<f32> {
-    let step = globals.direction * globals.texel_size * (globals.radius / 4.0);
-    var color = textureSample(effect_texture, effect_sampler, uv) * 0.227027;
-    color += textureSample(effect_texture, effect_sampler, uv + step) * 0.1945946;
-    color += textureSample(effect_texture, effect_sampler, uv - step) * 0.1945946;
-    color += textureSample(effect_texture, effect_sampler, uv + step * 2.0) * 0.1216216;
-    color += textureSample(effect_texture, effect_sampler, uv - step * 2.0) * 0.1216216;
-    color += textureSample(effect_texture, effect_sampler, uv + step * 3.0) * 0.054054;
-    color += textureSample(effect_texture, effect_sampler, uv - step * 3.0) * 0.054054;
-    color += textureSample(effect_texture, effect_sampler, uv + step * 4.0) * 0.016216;
-    color += textureSample(effect_texture, effect_sampler, uv - step * 4.0) * 0.016216;
-    return color;
-}
-
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let original = textureSample(original_texture, effect_sampler, input.uv);
-    if globals.mix_amount <= 0.0001 {
+    if globals.history_valid == 0u {
         return original;
     }
-    if globals.mode == 1u {
-        let history = textureSample(history_texture, effect_sampler, input.uv);
-        let trail = mix(original, history, clamp(globals.feedback, 0.0, 0.99));
-        return mix(original, trail, clamp(globals.mix_amount, 0.0, 1.0));
-    }
-    return mix(original, blur(input.uv), clamp(globals.mix_amount, 0.0, 1.0));
+    let persistence = globals.parameters[0].x;
+    let drift = globals.parameters[0].y;
+    let bleed = globals.parameters[0].z;
+    let history_uv = input.uv + vec2(0.0, drift);
+    let history = textureSample(custom_history_texture, effect_sampler, history_uv);
+    let red = textureSample(
+        custom_history_texture,
+        effect_sampler,
+        history_uv + vec2(bleed, 0.0),
+    ).r;
+    let blue = textureSample(
+        custom_history_texture,
+        effect_sampler,
+        history_uv - vec2(bleed, 0.0),
+    ).b;
+    let melted = mix(original, vec4(red, history.g, blue, history.a), persistence);
+    return mix(original, melted, clamp(globals.mix_amount, 0.0, 1.0));
 }

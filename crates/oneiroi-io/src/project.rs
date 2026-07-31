@@ -79,6 +79,7 @@ impl ProjectFile {
                 10_000.0,
             )
             || !valid_master_effects(&self.settings.master_effects)
+            || !valid_master_modulation(&self.settings.master_modulation)
         {
             return Err(ProjectError::InvalidValue(
                 "master settings are outside supported ranges".to_owned(),
@@ -227,6 +228,23 @@ fn valid_master_effects(effects: &MasterEffectsProject) -> bool {
         })
 }
 
+fn valid_master_modulation(modulation: &MasterModulationProject) -> bool {
+    modulation.lfos.len() == 3
+        && modulation.routes.len() == 8
+        && modulation.lfos.iter().all(|lfo| {
+            effect_value(lfo.rate_hz, 0.01, 20.0)
+                && effect_value(lfo.beats_per_cycle, 0.0625, 8.0)
+                && unit(lfo.depth)
+                && unit(lfo.phase)
+        })
+        && modulation.routes.iter().all(|route| {
+            route.source < 10
+                && route.target_slot < 2
+                && effect_value(route.amount, -1.0, 1.0)
+                && (!route.enabled || route.parameter_key != 0)
+        })
+}
+
 fn valid_effect_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
@@ -265,6 +283,10 @@ fn valid_control_target(target: ControlTargetProject) -> bool {
             route,
             parameter,
         } => deck < 4 && route < 8 && parameter < 2,
+        ControlTargetProject::MasterEffectParameter {
+            slot,
+            parameter_key,
+        } => slot < 2 && parameter_key != 0,
     }
 }
 
@@ -281,6 +303,8 @@ pub struct ProjectSettings {
     pub audio_analysis: AudioAnalysisProject,
     #[serde(default)]
     pub master_effects: MasterEffectsProject,
+    #[serde(default)]
+    pub master_modulation: MasterModulationProject,
 }
 
 impl Default for ProjectSettings {
@@ -294,6 +318,7 @@ impl Default for ProjectSettings {
             output: OutputProject::default(),
             audio_analysis: AudioAnalysisProject::default(),
             master_effects: MasterEffectsProject::default(),
+            master_modulation: MasterModulationProject::default(),
         }
     }
 }
@@ -369,6 +394,96 @@ fn default_blur_amount() -> f32 {
 
 fn default_feedback_amount() -> f32 {
     0.85
+}
+
+fn default_lfo_rate() -> f32 {
+    0.25
+}
+
+fn default_lfo_depth() -> f32 {
+    0.5
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MasterLfoProject {
+    #[serde(default)]
+    pub enabled: bool,
+    pub waveform: LfoWaveformProject,
+    #[serde(default = "default_lfo_rate")]
+    pub rate_hz: f32,
+    #[serde(default)]
+    pub tempo_sync: bool,
+    #[serde(default = "one")]
+    pub beats_per_cycle: f32,
+    #[serde(default = "default_lfo_depth")]
+    pub depth: f32,
+    #[serde(default)]
+    pub phase: f32,
+}
+
+impl Default for MasterLfoProject {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            waveform: LfoWaveformProject::Sine,
+            rate_hz: default_lfo_rate(),
+            tempo_sync: false,
+            beats_per_cycle: 1.0,
+            depth: default_lfo_depth(),
+            phase: 0.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MasterModulationRouteProject {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub source: u8,
+    #[serde(default)]
+    pub target_slot: u8,
+    #[serde(default)]
+    pub parameter_key: u64,
+    #[serde(default = "default_lfo_depth")]
+    pub amount: f32,
+}
+
+impl Default for MasterModulationRouteProject {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            source: 0,
+            target_slot: 0,
+            parameter_key: 0,
+            amount: default_lfo_depth(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MasterModulationProject {
+    #[serde(default = "default_master_lfos")]
+    pub lfos: Vec<MasterLfoProject>,
+    #[serde(default = "default_master_modulation_routes")]
+    pub routes: Vec<MasterModulationRouteProject>,
+}
+
+impl Default for MasterModulationProject {
+    fn default() -> Self {
+        Self {
+            lfos: default_master_lfos(),
+            routes: default_master_modulation_routes(),
+        }
+    }
+}
+
+fn default_master_lfos() -> Vec<MasterLfoProject> {
+    vec![MasterLfoProject::default(); 3]
+}
+
+fn default_master_modulation_routes() -> Vec<MasterModulationRouteProject> {
+    vec![MasterModulationRouteProject::default(); 8]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -825,6 +940,7 @@ pub enum ControlTargetProject {
     EffectParameter { deck: u8, effect: u8, parameter: u8 },
     LfoParameter { deck: u8, lfo: u8, parameter: u8 },
     ModRouteParameter { deck: u8, route: u8, parameter: u8 },
+    MasterEffectParameter { slot: u8, parameter_key: u64 },
 }
 
 impl Default for EffectProject {
@@ -1196,6 +1312,32 @@ mod tests {
             ],
             ..MasterEffectSlotProject::default()
         };
+        project.settings.master_modulation.lfos[0].enabled = true;
+        project.settings.master_modulation.lfos[0].tempo_sync = true;
+        project.settings.master_modulation.lfos[0].beats_per_cycle = 2.0;
+        project.settings.master_modulation.routes[0] = MasterModulationRouteProject {
+            enabled: true,
+            source: 0,
+            target_slot: 0,
+            parameter_key: 42,
+            amount: -0.75,
+        };
+        project.midi_mappings.push(MidiMappingProject {
+            device: "controller".to_owned(),
+            channel: 0,
+            message: MidiMessageProject::ControlChange,
+            number: 14,
+            target: ControlTargetProject::MasterEffectParameter {
+                slot: 0,
+                parameter_key: 42,
+            },
+            input_range: [0.0, 1.0],
+            output_range: [0.0, 0.08],
+            invert: false,
+            mode: MappingModeProject::Continuous,
+            soft_takeover: true,
+            feedback: None,
+        });
         project.validate().unwrap();
         let encoded = serde_json::to_vec(&project).unwrap();
         let decoded: ProjectFile = serde_json::from_slice(&encoded).unwrap();

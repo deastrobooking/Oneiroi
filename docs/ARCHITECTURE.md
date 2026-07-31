@@ -250,13 +250,14 @@ period without active feedback. Master freeze skips both composition and
 postprocessing, retaining the final texture and history exactly; blackout
 overrides freeze, renders black immediately and invalidates history.
 
-Composition resize allocates exactly five program-resolution RGBA8-sRGB
+Composition resize allocates exactly seven program-resolution RGBA8-sRGB
 textures: composition input, one shared horizontal scratch target, one ping
-target, one history target and final output. Both slots reuse scratch/ping and
-never allocate during a frame. Relative to the original final target, bounded
-additional capacity is `4 × width × height × 4` bytes: about 31.6 MiB at
-1080p or 126.6 MiB at UHD. Each pass has its own uniform buffer, preventing
-later queue writes from changing parameters of earlier encoded passes.
+target, the built-in feedback history, two custom slot histories and final
+output. Both slots reuse scratch/ping and never allocate during a frame.
+Relative to the original final target, bounded additional capacity is
+`6 × width × height × 4` bytes: about 47.5 MiB at 1080p or 189.8 MiB at UHD.
+Each pass has its own uniform buffer, preventing later queue writes from
+changing parameters of earlier encoded passes.
 
 ### Effect package validation and reload
 
@@ -283,11 +284,40 @@ Their sliders are generated from the validated schema. Values are stored by
 parameter ID, then packed into the fixed 32-float uniform array in declaration
 order, so schema reordering does not silently exchange saved controls.
 
-Each registered effect is a single bounded pass in the existing two-slot graph.
-Missing or GPU-incompatible packages execute the built-in neutral copy path.
-No texture, bind group or pipeline is allocated during a frame. The reference
-Chromatic Split package demonstrates the ABI; declarative multipass package
-graphs remain a future extension. See `EFFECT_PACKAGES.md`.
+Each registered effect declares one or two fragment passes in the existing
+two-slot graph. A one-pass effect renders directly to the slot output. For two
+passes, the first writes the shared horizontal scratch texture and the second
+reads that intermediate through `effect_texture` while writing the normal slot
+output. Both custom slots reuse the same fixed scratch/ping resources
+sequentially. Missing or GPU-incompatible packages execute the built-in neutral
+copy path. No texture, bind group or pipeline is allocated during a frame.
+Chromatic Split demonstrates one pass and Spectral Echo demonstrates two. See
+`EFFECT_PACKAGES.md`.
+
+The reload worker compiles every declared fragment entry into a candidate
+pipeline set under one validation scope. Only a completely valid set is
+published to the render thread, so a broken second pass cannot partially
+replace the last-known-good package. `pass_index` and `pass_count` in the fixed
+uniform ABI let shared shader code distinguish stages.
+
+A package may additionally declare `previous_slot_output` history. Binding 5
+then samples one fixed full-resolution texture owned by that physical master
+slot. `history_valid` is zero on the first frame and after source launch/change,
+active-source removal, project application, resize, blackout, effect
+disable/bypass, missing package or package identity change. After a successful
+slot render, its output is copied into that history and the next frame receives
+`history_valid = 1`. Master freeze skips the copy and retains history. The two
+textures are allocated with the composition target regardless of package use,
+making the memory ceiling independent of live package selection.
+
+Custom parameter automation uses a stable 64-bit key derived from package ID
+and parameter ID, never the parameter's manifest position. Three master LFOs
+feed an eight-route matrix alongside RMS, bass, mid, high, transient, beat
+phase and bar phase. Each route scales across half the target
+schema range and clamps at the validated bounds. Routes are evaluated directly
+while packing the existing uniform array, with no cloned chain or heap work in
+the render path. MIDI uses the same key, while project v3 retains the readable
+package and parameter IDs.
 
 Free-running LFOs derive phase from elapsed seconds. Synchronized LFOs derive
 phase from the internal clock's beat position, so BPM changes retain musical

@@ -197,6 +197,15 @@ Acceptance criteria:
 7. Register custom master effects, generate controls from their schemas and
    persist named values. (implemented with a 32-parameter `master-v1` ABI,
    neutral missing-package fallback and bundled Chromatic Split example)
+8. Route custom controls through modulation and MIDI without positional
+   identity. (implemented with stable package/parameter keys, three master
+   LFOs, eight audio/beat/bar-capable routes and generated MIDI learn controls)
+9. Add a bounded declarative multipass package graph. (implemented with one or
+   two fragment passes, atomic pipeline-set reload, fixed scratch/ping reuse,
+   pass index/count uniforms and bundled Spectral Echo reference)
+10. Add a safely budgeted temporal package resource. (implemented as one fixed
+    previous-slot-output history texture per master slot, with validity
+    signaling, deterministic resets and bundled Temporal Melt reference)
 
 Acceptance criteria:
 

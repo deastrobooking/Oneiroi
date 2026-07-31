@@ -1,0 +1,36 @@
+{
+  "format": "oneiroi-effect",
+  "version": 1,
+  "id": "temporal-melt",
+  "name": "Temporal melt",
+  "role": "master_effect",
+  "shader": "temporal_melt.wgsl",
+  "vertex_entry": "vs_main",
+  "fragment_entry": "fs_main",
+  "resources": {
+    "history": "previous_slot_output"
+  },
+  "parameters": [
+    {
+      "id": "persistence",
+      "label": "Persistence",
+      "minimum": 0.0,
+      "maximum": 0.98,
+      "default": 0.82
+    },
+    {
+      "id": "drift",
+      "label": "Vertical drift",
+      "minimum": -0.04,
+      "maximum": 0.04,
+      "default": 0.004
+    },
+    {
+      "id": "bleed",
+      "label": "Color bleed",
+      "minimum": 0.0,
+      "maximum": 0.03,
+      "default": 0.006
+    }
+  ]
+}

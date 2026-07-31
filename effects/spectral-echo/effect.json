@@ -1,0 +1,41 @@
+{
+  "format": "oneiroi-effect",
+  "version": 1,
+  "id": "spectral-echo",
+  "name": "Spectral echo",
+  "role": "master_effect",
+  "shader": "spectral_echo.wgsl",
+  "vertex_entry": "vs_main",
+  "fragment_entry": "fs_combine",
+  "passes": [
+    {
+      "fragment_entry": "fs_extract"
+    },
+    {
+      "fragment_entry": "fs_combine"
+    }
+  ],
+  "parameters": [
+    {
+      "id": "spread",
+      "label": "Spread",
+      "minimum": 0.0,
+      "maximum": 0.08,
+      "default": 0.018
+    },
+    {
+      "id": "echo",
+      "label": "Echo",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.65
+    },
+    {
+      "id": "rotation",
+      "label": "Rotation",
+      "minimum": -3.14159,
+      "maximum": 3.14159,
+      "default": 0.0
+    }
+  ]
+}

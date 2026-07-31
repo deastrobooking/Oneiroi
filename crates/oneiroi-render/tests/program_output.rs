@@ -446,6 +446,150 @@ fn registered_custom_effect_compiles_and_runs_through_the_master_slot() {
     assert_eq!(color, [0, 255, 0, 255]);
 }
 
+#[test]
+fn registered_multipass_effect_compiles_as_one_atomic_pipeline_set() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../effects/spectral-echo/effect.json");
+    let program = ProgramTarget::new(&device, [SIZE, SIZE]);
+    let presenter = ProgramPresenter::new(&device, &program, PROGRAM_FORMAT);
+    let mut processor = MasterEffectProcessor::new(&device, &program);
+    processor.watch_effect_manifest(manifest_path);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while processor.custom_effect_pass_count("spectral-echo") != Some(2)
+        && Instant::now() < deadline
+    {
+        processor.poll_effect_reload();
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        processor.custom_effect_pass_count("spectral-echo"),
+        Some(2),
+        "{}",
+        processor.reload_status()
+    );
+
+    let chain = MasterEffectChain {
+        slots: [
+            MasterEffectSlot {
+                kind: MasterEffectKind::Custom,
+                package_id: "spectral-echo".to_owned(),
+                parameters: vec![
+                    EffectParameterValue {
+                        id: "spread".to_owned(),
+                        value: 0.02,
+                    },
+                    EffectParameterValue {
+                        id: "echo".to_owned(),
+                        value: 0.65,
+                    },
+                    EffectParameterValue {
+                        id: "rotation".to_owned(),
+                        value: 0.0,
+                    },
+                ],
+                ..MasterEffectSlot::default()
+            },
+            MasterEffectSlot::default(),
+        ],
+    };
+    let color = render_master_color(
+        &device,
+        &queue,
+        &program,
+        &mut processor,
+        &presenter,
+        wgpu::Color::GREEN,
+        &chain,
+    );
+    assert_eq!(color, [0, 255, 0, 255]);
+}
+
+#[test]
+fn custom_history_seeds_blends_and_resets_deterministically() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../effects/temporal-melt/effect.json");
+    let program = ProgramTarget::new(&device, [SIZE, SIZE]);
+    let presenter = ProgramPresenter::new(&device, &program, PROGRAM_FORMAT);
+    let mut processor = MasterEffectProcessor::new(&device, &program);
+    processor.watch_effect_manifest(manifest_path);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !processor.custom_effect_loaded("temporal-melt") && Instant::now() < deadline {
+        processor.poll_effect_reload();
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        processor.custom_effect_loaded("temporal-melt"),
+        "{}",
+        processor.reload_status()
+    );
+    let chain = MasterEffectChain {
+        slots: [
+            MasterEffectSlot {
+                kind: MasterEffectKind::Custom,
+                package_id: "temporal-melt".to_owned(),
+                parameters: vec![
+                    EffectParameterValue {
+                        id: "persistence".to_owned(),
+                        value: 0.5,
+                    },
+                    EffectParameterValue {
+                        id: "drift".to_owned(),
+                        value: 0.0,
+                    },
+                    EffectParameterValue {
+                        id: "bleed".to_owned(),
+                        value: 0.0,
+                    },
+                ],
+                ..MasterEffectSlot::default()
+            },
+            MasterEffectSlot::default(),
+        ],
+    };
+    let red = render_master_color(
+        &device,
+        &queue,
+        &program,
+        &mut processor,
+        &presenter,
+        wgpu::Color::RED,
+        &chain,
+    );
+    assert_eq!(red, [255, 0, 0, 255]);
+    assert!(processor.custom_history_is_valid(0));
+
+    let melted = render_master_color(
+        &device,
+        &queue,
+        &program,
+        &mut processor,
+        &presenter,
+        wgpu::Color::BLUE,
+        &chain,
+    );
+    assert!(melted[0] > 100 && melted[2] > 100, "{melted:?}");
+
+    processor.reset_history();
+    let green = render_master_color(
+        &device,
+        &queue,
+        &program,
+        &mut processor,
+        &presenter,
+        wgpu::Color::GREEN,
+        &chain,
+    );
+    assert_eq!(green, [0, 255, 0, 255]);
+}
+
 fn render_master_color(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

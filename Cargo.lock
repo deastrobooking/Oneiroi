@@ -2565,6 +2565,7 @@ dependencies = [
  "bytemuck",
  "log",
  "naga",
+ "oneiroi-core",
  "oneiroi-hap",
  "oneiroi-media",
  "pollster",
