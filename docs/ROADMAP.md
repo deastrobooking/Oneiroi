@@ -267,11 +267,16 @@ Delivered:
 17. Project schema v5 with persisted typed graph and deterministic seed maps,
     compile-before-accept restoration, operator named takes and named recovery
     branches.
+18. Full-history journal replay with checkpoint-aware timeline scrubbing plus
+    safe project take metadata rename/removal that never deletes journal files.
+19. First-class labeled timeline markers plus non-destructive take export and
+    archive copies. Every copy receives a unique directory and retains both
+    the journal and its atomic checkpoint when present.
 
 Next:
 
-1. Add take catalog management and replay timeline scrubbing.
-2. Route OSC through the origin-aware gateway.
+1. Route OSC through the origin-aware gateway.
+2. Add marker editing plus portable project/media manifests to exported takes.
 3. Add shadow edit, preview, readiness and quantized commit UI.
 4. Insert inferred color/resolution conversions and expose compiler
    diagnostics.

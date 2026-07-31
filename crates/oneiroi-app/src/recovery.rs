@@ -8,7 +8,9 @@ use anyhow::{Context, Result};
 use oneiroi_core::Quantization;
 use oneiroi_graph::ParameterValue;
 use oneiroi_media::{ClipAddress, DeckId};
-use oneiroi_session::{SessionState, ShowTime, control_parameter_path, recover_journal};
+use oneiroi_session::{
+    JournalRecovery, SessionState, ShowTime, control_parameter_path, recover_journal,
+};
 
 use super::{State, performance_control_snapshot, structural};
 
@@ -21,7 +23,7 @@ pub(crate) struct RecoveryEntry {
     pub ignored_partial_tail: bool,
     pub latest_time: ShowTime,
     pub project_linked: bool,
-    state: SessionState,
+    timeline: JournalRecovery,
 }
 
 impl RecoveryEntry {
@@ -30,6 +32,10 @@ impl RecoveryEntry {
             || self.journal_path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         )
+    }
+
+    pub(crate) fn markers(&self) -> &[oneiroi_session::TimelineMarker] {
+        &self.timeline.markers
     }
 }
 
@@ -64,12 +70,35 @@ impl State {
     }
 
     pub(crate) fn restore_session_recovery(&mut self, index: usize, now: Instant) {
+        let target = self
+            .session_recoveries
+            .get(index)
+            .map_or(0, |entry| entry.latest_time.monotonic_ns);
+        self.restore_session_recovery_at(index, target, now);
+    }
+
+    pub(crate) fn restore_session_recovery_at(
+        &mut self,
+        index: usize,
+        monotonic_ns: u64,
+        now: Instant,
+    ) {
         let Some(entry) = self.session_recoveries.get(index).cloned() else {
             self.session_recovery_status = "Select a recoverable session first".to_owned();
             return;
         };
+        let state = match entry.timeline.replay_at(ShowTime {
+            monotonic_ns,
+            ..entry.latest_time
+        }) {
+            Ok(state) => state,
+            Err(error) => {
+                self.session_recovery_status = format!("Timeline replay failed: {error}");
+                return;
+            }
+        };
         let branch_name = valid_take_name(&self.ui.take_name_input).map(ToOwned::to_owned);
-        match self.apply_recovered_session(&entry, branch_name.as_deref(), now) {
+        match self.apply_recovered_session(&entry, &state, branch_name.as_deref(), now) {
             Ok(()) => {
                 self.refresh_session_recoveries();
                 self.session_recovery_status = format!(
@@ -86,10 +115,10 @@ impl State {
     fn apply_recovered_session(
         &mut self,
         entry: &RecoveryEntry,
+        state: &SessionState,
         branch_name: Option<&str>,
         now: Instant,
     ) -> Result<()> {
-        let state = &entry.state;
         let previous_extent = self.performance_runtime.render_plan().extent();
         self.performance_runtime
             .set_composition_extent(state.output_extent)
@@ -280,12 +309,150 @@ impl State {
             self.project_takes.drain(..remove);
         }
     }
+
+    pub(crate) fn rename_project_take(&mut self, index: usize) {
+        let Some(name) = valid_take_name(&self.ui.take_name_input).map(ToOwned::to_owned) else {
+            self.session_recovery_status = "Enter a valid take name first".to_owned();
+            return;
+        };
+        let Some(previous) = rename_take_metadata(&mut self.project_takes, index, &name) else {
+            self.session_recovery_status = "Select project take metadata first".to_owned();
+            return;
+        };
+        self.session_recovery_status = format!("Renamed {previous} to {name} · save project");
+    }
+
+    pub(crate) fn remove_project_take(&mut self, index: usize) {
+        let Some(removed) = remove_take_metadata(&mut self.project_takes, index) else {
+            self.session_recovery_status = "Select project take metadata first".to_owned();
+            return;
+        };
+        self.ui.project_take_selected = self
+            .ui
+            .project_take_selected
+            .min(self.project_takes.len().saturating_sub(1));
+        self.session_recovery_status = format!(
+            "Removed {} from project metadata · journal file retained",
+            removed.name
+        );
+    }
+
+    pub(crate) fn add_timeline_marker(&mut self, now: Instant) {
+        let Some(label) = valid_take_name(&self.ui.timeline_marker_input).map(ToOwned::to_owned)
+        else {
+            self.session_recovery_status = "Marker must be 1–128 printable characters".to_owned();
+            return;
+        };
+        match self
+            .performance_runtime
+            .add_timeline_marker(self.show_time_at(now), label.clone())
+        {
+            Ok(()) => {
+                self.session_recovery_status = format!("Added timeline marker · {label}");
+                self.ui.timeline_marker_input.clear();
+            }
+            Err(error) => {
+                self.session_recovery_status = format!("Add marker failed: {error:#}");
+            }
+        }
+    }
+
+    pub(crate) fn export_project_take(&mut self, index: usize, archive: bool) {
+        let Some(take) = self.project_takes.get(index) else {
+            self.session_recovery_status = "Select project take metadata first".to_owned();
+            return;
+        };
+        let destination_root = if archive {
+            self.workspace.join(".oneiroi/archive")
+        } else {
+            let value = self.ui.take_export_directory.trim();
+            if value.is_empty() {
+                self.session_recovery_status = "Enter an export directory first".to_owned();
+                return;
+            }
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                path
+            } else {
+                self.workspace.join(path)
+            }
+        };
+        match copy_take_bundle(
+            take,
+            &self.workspace.join(".oneiroi/session"),
+            &destination_root,
+        ) {
+            Ok(destination) => {
+                self.session_recovery_status = format!(
+                    "{} copy created at {}",
+                    if archive { "Archive" } else { "Export" },
+                    destination.display()
+                );
+            }
+            Err(error) => {
+                self.session_recovery_status = format!(
+                    "{} failed: {error:#}",
+                    if archive { "Archive" } else { "Export" }
+                );
+            }
+        }
+    }
+}
+
+fn copy_take_bundle(
+    take: &oneiroi_io::TakeMetadataProject,
+    source_directory: &Path,
+    destination_root: &Path,
+) -> Result<PathBuf> {
+    let journal_source = source_directory.join(&take.journal_file);
+    if !journal_source.is_file() {
+        anyhow::bail!("journal is missing: {}", journal_source.display());
+    }
+    fs::create_dir_all(destination_root)
+        .with_context(|| format!("create {}", destination_root.display()))?;
+    let destination =
+        destination_root.join(format!("{}-{}", take.take_id, oneiroi_io::new_project_id()));
+    fs::create_dir(&destination).with_context(|| format!("create {}", destination.display()))?;
+    let journal_destination = destination.join(&take.journal_file);
+    fs::copy(&journal_source, &journal_destination).with_context(|| {
+        format!(
+            "copy {} to {}",
+            journal_source.display(),
+            journal_destination.display()
+        )
+    })?;
+    let checkpoint_source = journal_source.with_extension("checkpoint.json");
+    if checkpoint_source.is_file() {
+        let checkpoint_name = checkpoint_source
+            .file_name()
+            .context("checkpoint has no filename")?;
+        fs::copy(&checkpoint_source, destination.join(checkpoint_name))
+            .with_context(|| format!("copy checkpoint {}", checkpoint_source.display()))?;
+    }
+    Ok(destination)
 }
 
 fn valid_take_name(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_control))
         .then_some(value)
+}
+
+fn rename_take_metadata(
+    takes: &mut [oneiroi_io::TakeMetadataProject],
+    index: usize,
+    name: &str,
+) -> Option<String> {
+    let take = takes.get_mut(index)?;
+    let previous = std::mem::replace(&mut take.name, name.to_owned());
+    Some(previous)
+}
+
+fn remove_take_metadata(
+    takes: &mut Vec<oneiroi_io::TakeMetadataProject>,
+    index: usize,
+) -> Option<oneiroi_io::TakeMetadataProject> {
+    (index < takes.len()).then(|| takes.remove(index))
 }
 
 fn discover_recoveries(
@@ -342,7 +509,7 @@ fn discover_recoveries(
         let latest_time = recovery.latest_time();
         entries.push(RecoveryEntry {
             journal_path,
-            take_name: recovery.take_name,
+            take_name: recovery.take_name.clone(),
             command_count: state
                 .last_sequence
                 .map_or(0, |sequence| sequence.saturating_add(1)),
@@ -350,7 +517,7 @@ fn discover_recoveries(
             ignored_partial_tail: recovery.ignored_partial_tail,
             latest_time,
             project_linked: recovery.project_id.as_deref() == Some(project_id),
-            state,
+            timeline: recovery,
         });
     }
     Ok((entries, rejected, foreign))
@@ -361,7 +528,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use oneiroi_io::new_project_id;
-    use oneiroi_session::{CommandOperation, CommandOrigin, JournalWriter};
+    use oneiroi_session::{CommandOperation, CommandOrigin, JournalWriter, StateCheckpoint};
 
     use super::*;
 
@@ -427,7 +594,9 @@ mod tests {
         assert_eq!(foreign, 1);
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().any(|entry| {
-            entry.take_name == "Old take" && !entry.project_linked && entry.state.bpm == 132.0
+            entry.take_name == "Old take"
+                && !entry.project_linked
+                && entry.timeline.replay_state().unwrap().bpm == 132.0
         }));
         assert!(
             entries
@@ -442,5 +611,63 @@ mod tests {
         assert_eq!(valid_take_name(""), None);
         assert_eq!(valid_take_name("bad\nname"), None);
         assert_eq!(valid_take_name(&"x".repeat(129)), None);
+    }
+
+    #[test]
+    fn take_metadata_can_be_renamed_and_unlinked_without_deleting_files() {
+        let mut takes = vec![oneiroi_io::TakeMetadataProject {
+            take_id: new_project_id(),
+            name: "Old".to_owned(),
+            journal_file: "old.jsonl".to_owned(),
+            created_unix_ms: 1,
+        }];
+        assert_eq!(
+            rename_take_metadata(&mut takes, 0, "Finale"),
+            Some("Old".to_owned())
+        );
+        let removed = remove_take_metadata(&mut takes, 0).unwrap();
+        assert_eq!(removed.name, "Finale");
+        assert_eq!(removed.journal_file, "old.jsonl");
+        assert!(takes.is_empty());
+    }
+
+    #[test]
+    fn take_exports_are_unique_copies_and_preserve_the_source_bundle() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("oneiroi-take-export-{unique}"));
+        let source = root.join("session");
+        let exports = root.join("exports");
+        let journal = source.join("finale.jsonl");
+        let checkpoint = source.join("finale.checkpoint.json");
+        let writer = JournalWriter::open(&journal, &checkpoint, "Finale", 4).unwrap();
+        writer
+            .try_checkpoint(StateCheckpoint {
+                after_sequence: None,
+                at: ShowTime::default(),
+                state: SessionState::default(),
+            })
+            .unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+        let take = oneiroi_io::TakeMetadataProject {
+            take_id: new_project_id(),
+            name: "Finale".to_owned(),
+            journal_file: "finale.jsonl".to_owned(),
+            created_unix_ms: 1,
+        };
+
+        let first = copy_take_bundle(&take, &source, &exports).unwrap();
+        let second = copy_take_bundle(&take, &source, &exports).unwrap();
+
+        assert_ne!(first, second);
+        for destination in [&first, &second] {
+            assert!(destination.join("finale.jsonl").is_file());
+            assert!(destination.join("finale.checkpoint.json").is_file());
+        }
+        assert!(journal.is_file());
+        assert!(checkpoint.is_file());
     }
 }

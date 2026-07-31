@@ -782,6 +782,7 @@ impl State {
                     recovery_available: self.recovery_path.is_some(),
                     session_recoveries: &self.session_recoveries,
                     session_recovery_status: &self.session_recovery_status,
+                    project_takes: &self.project_takes,
                     cameras: &self.cameras,
                     camera_status: &self.camera_status,
                     audio_inputs: &self.audio_inputs,
@@ -1064,6 +1065,10 @@ impl State {
                 ui::UiAction::RestoreSessionRecovery(index) => {
                     self.restore_session_recovery(index, now);
                 }
+                ui::UiAction::RestoreSessionRecoveryAt {
+                    index,
+                    monotonic_ns,
+                } => self.restore_session_recovery_at(index, monotonic_ns, now),
                 ui::UiAction::StartNamedTake => self.start_named_take(now),
                 ui::UiAction::SetRandomSeed => {
                     let scope = self.ui.random_seed_scope.trim().to_owned();
@@ -1078,6 +1083,11 @@ impl State {
                         );
                     }
                 }
+                ui::UiAction::RenameProjectTake(index) => self.rename_project_take(index),
+                ui::UiAction::RemoveProjectTake(index) => self.remove_project_take(index),
+                ui::UiAction::AddTimelineMarker => self.add_timeline_marker(now),
+                ui::UiAction::ExportProjectTake(index) => self.export_project_take(index, false),
+                ui::UiAction::ArchiveProjectTake(index) => self.export_project_take(index, true),
                 ui::UiAction::RefreshCameras => self.refresh_cameras(),
                 ui::UiAction::RefreshAudioInputs => self.refresh_audio_inputs(),
                 ui::UiAction::ConnectAudioInput(device_id) => {

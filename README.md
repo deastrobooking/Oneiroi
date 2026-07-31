@@ -151,6 +151,11 @@ target OS:
 - Version-five projects persist stable project/take identities, bounded take
   metadata, deterministic seed maps and the active typed graph. Operators can
   start named takes or restore a prior session as a named branch.
+- Full journal history can be scrubbed to an earlier checkpoint-aware position;
+  take metadata can be renamed or unlinked without deleting its journal file.
+- Labeled timeline markers jump the recovery cursor to exact show times, and
+  take journals/checkpoints can be exported or archived into unique folders
+  without changing the source session bundle.
 
 MIDI feedback/clock and arbitrary package-owned texture declarations have not
 landed yet.

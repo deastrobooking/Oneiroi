@@ -11,7 +11,7 @@ use thiserror::Error;
 
 pub use journal::{
     JOURNAL_FORMAT, JOURNAL_VERSION, JournalEnqueueError, JournalError, JournalHealth,
-    JournalRecord, JournalRecovery, JournalWriter, recover_journal,
+    JournalRecord, JournalRecovery, JournalWriter, TimelineMarker, recover_journal,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

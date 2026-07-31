@@ -175,6 +175,19 @@ and replays checkpoint plus tail, applies continuous and structural state to
 the concrete mixer, then opens a fresh journal with an immediate baseline
 checkpoint so command sequences restart monotonically.
 
+Recovery also retains the complete validated command/checkpoint history for
+operator timeline replay. The cursor selects the latest checkpoint at or
+before its show time, applies only the following commands through that time,
+and restores the result as a new named branch. Latest-state crash recovery
+continues to use the smaller atomic-checkpoint tail.
+
+Labeled marker records share the journal timeline without consuming command
+sequence numbers. Marker buttons move the recovery cursor to exact show time.
+Project take entries can be exported to a chosen directory or archived under
+`.oneiroi/archive`; each action creates a unique directory containing copied
+journal and checkpoint files and never moves, overwrites or deletes the live
+source bundle.
+
 Project schema v5 assigns a stable 128-bit identity and stores bounded take
 metadata. New journal headers carry the project and take identities. Recovery
 shows matching and legacy/unlinked journals, while linked journals belonging
@@ -206,8 +219,8 @@ while the graph becomes executable one node family at a time.
 
 ## Next implementation slice
 
-1. Add take catalog management and replay timeline scrubbing.
-2. Add OSC transport through the authoritative command gateway.
+1. Add OSC transport through the authoritative command gateway.
+2. Add marker editing plus portable project/media manifests for take bundles.
 3. Add the shadow-graph editor and preview/commit controls.
 4. Add the shadow-graph editor and preview/commit controls.
 5. Add executors for explicit delay/rate-adapter nodes, then unfuse deck

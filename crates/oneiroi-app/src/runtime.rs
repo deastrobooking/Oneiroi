@@ -81,8 +81,11 @@ impl PerformanceRuntime {
             format!("{graph} · journal error: {error}")
         } else {
             format!(
-                "{graph} · journal {} commands / {} checkpoints / {} overruns",
-                health.commands_written, health.checkpoints_written, health.queue_overruns
+                "{graph} · journal {} commands / {} checkpoints / {} markers / {} overruns",
+                health.commands_written,
+                health.checkpoints_written,
+                health.markers_written,
+                health.queue_overruns
             )
         }
     }
@@ -189,6 +192,16 @@ impl PerformanceRuntime {
 
     pub(crate) fn random_seeds(&self) -> &std::collections::BTreeMap<String, u64> {
         &self.state.random_seeds
+    }
+
+    pub(crate) fn add_timeline_marker(&mut self, at: ShowTime, label: String) -> Result<()> {
+        let journal = self
+            .journal
+            .as_ref()
+            .context("session journal is disabled")?;
+        journal
+            .try_marker(oneiroi_session::TimelineMarker { at, label })
+            .context("enqueue timeline marker")
     }
 
     pub(crate) fn set_project_graph(

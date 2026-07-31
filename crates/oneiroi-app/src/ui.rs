@@ -73,6 +73,10 @@ pub struct UiState {
     pub take_name_input: String,
     pub random_seed_scope: String,
     pub random_seed_value: u64,
+    pub session_replay_seconds: f64,
+    pub project_take_selected: usize,
+    pub timeline_marker_input: String,
+    pub take_export_directory: String,
     thumbnails: HashMap<ClipAddress, CachedThumbnail>,
     thumbnail_failures: HashMap<ClipAddress, (PathBuf, String)>,
     fps: FpsMeter,
@@ -120,6 +124,10 @@ impl Default for UiState {
             take_name_input: "Take 1".to_owned(),
             random_seed_scope: "visuals".to_owned(),
             random_seed_value: 1,
+            session_replay_seconds: 0.0,
+            project_take_selected: 0,
+            timeline_marker_input: String::new(),
+            take_export_directory: "take-exports".to_owned(),
             thumbnails: HashMap::new(),
             thumbnail_failures: HashMap::new(),
             fps: FpsMeter::default(),
@@ -245,8 +253,17 @@ pub enum UiAction {
     RecoverProject,
     RefreshSessionRecoveries,
     RestoreSessionRecovery(usize),
+    RestoreSessionRecoveryAt {
+        index: usize,
+        monotonic_ns: u64,
+    },
     StartNamedTake,
     SetRandomSeed,
+    RenameProjectTake(usize),
+    RemoveProjectTake(usize),
+    AddTimelineMarker,
+    ExportProjectTake(usize),
+    ArchiveProjectTake(usize),
     TapTempo,
     HalfTempo,
     DoubleTempo,
@@ -312,6 +329,7 @@ pub struct PerformanceMetrics<'a> {
     pub recovery_available: bool,
     pub session_recoveries: &'a [crate::recovery::RecoveryEntry],
     pub session_recovery_status: &'a str,
+    pub project_takes: &'a [oneiroi_io::TakeMetadataProject],
     pub cameras: &'a [CameraDevice],
     pub camera_status: &'a str,
     pub audio_inputs: &'a [AudioInputDevice],
@@ -533,13 +551,57 @@ pub fn draw(
                                         );
                                     }
                                 });
-                            if ui.button("Restore as named branch").clicked() {
+                            if ui.button("Restore latest as branch").clicked() {
                                 actions.push(UiAction::RestoreSessionRecovery(
                                     state.session_recovery_selected,
                                 ));
                             }
                         }
                     });
+                    if !metrics.project_takes.is_empty() {
+                        let selected = state
+                            .project_take_selected
+                            .min(metrics.project_takes.len() - 1);
+                        state.project_take_selected = selected;
+                        ui.horizontal(|ui| {
+                            ui.label("Project take catalog");
+                            egui::ComboBox::from_id_salt("project-take-select")
+                                .selected_text(&metrics.project_takes[selected].name)
+                                .show_ui(ui, |ui| {
+                                    for (index, take) in metrics.project_takes.iter().enumerate() {
+                                        ui.selectable_value(
+                                            &mut state.project_take_selected,
+                                            index,
+                                            format!("{} · {}", take.name, take.journal_file),
+                                        );
+                                    }
+                                });
+                            if ui.button("Rename metadata").clicked() {
+                                actions.push(UiAction::RenameProjectTake(
+                                    state.project_take_selected,
+                                ));
+                            }
+                            if ui.button("Remove metadata").clicked() {
+                                actions.push(UiAction::RemoveProjectTake(
+                                    state.project_take_selected,
+                                ));
+                            }
+                            if ui.button("Export copy").clicked() {
+                                actions.push(UiAction::ExportProjectTake(
+                                    state.project_take_selected,
+                                ));
+                            }
+                            if ui.button("Archive copy").clicked() {
+                                actions.push(UiAction::ArchiveProjectTake(
+                                    state.project_take_selected,
+                                ));
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Export directory");
+                            ui.text_edit_singleline(&mut state.take_export_directory);
+                        });
+                    }
                     ui.horizontal(|ui| {
                         ui.label("Take / branch name");
                         ui.text_edit_singleline(&mut state.take_name_input);
@@ -553,6 +615,13 @@ pub fn draw(
                         ui.add(egui::DragValue::new(&mut state.random_seed_value));
                         if ui.button("Set seed").clicked() {
                             actions.push(UiAction::SetRandomSeed);
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Timeline marker");
+                        ui.text_edit_singleline(&mut state.timeline_marker_input);
+                        if ui.button("Add marker").clicked() {
+                            actions.push(UiAction::AddTimelineMarker);
                         }
                     });
                     if let Some(entry) = metrics
@@ -576,6 +645,42 @@ pub fn draw(
                                 " · legacy/unlinked"
                             }
                         ));
+                        let maximum = entry.latest_time.monotonic_ns as f64 / 1_000_000_000.0;
+                        state.session_replay_seconds =
+                            state.session_replay_seconds.clamp(0.0, maximum);
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::Slider::new(
+                                    &mut state.session_replay_seconds,
+                                    0.0..=maximum.max(0.001),
+                                )
+                                .text("timeline seconds"),
+                            );
+                            if ui.button("Restore cursor as branch").clicked() {
+                                actions.push(UiAction::RestoreSessionRecoveryAt {
+                                    index: state.session_recovery_selected,
+                                    monotonic_ns: (state.session_replay_seconds
+                                        * 1_000_000_000.0)
+                                        .round()
+                                        as u64,
+                                });
+                            }
+                        });
+                        if !entry.markers().is_empty() {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label("Markers");
+                                for marker in entry.markers() {
+                                    let seconds =
+                                        marker.at.monotonic_ns as f64 / 1_000_000_000.0;
+                                    if ui
+                                        .small_button(format!("{} · {:.1}s", marker.label, seconds))
+                                        .clicked()
+                                    {
+                                        state.session_replay_seconds = seconds;
+                                    }
+                                }
+                            });
+                        }
                     }
                     ui.weak(metrics.session_recovery_status);
                     ui.weak(

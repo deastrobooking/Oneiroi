@@ -121,7 +121,7 @@ remains before the milestone is stage-certified.
 - Project values are validated before application.
 - Version-one through version-four projects migrate to version five with
   stable identity, take metadata, deterministic seeds and the active graph.
-- The workspace currently passes 189 tests and strict Clippy, with one extended
+- The workspace currently passes 192 tests and strict Clippy, with one extended
   decoder soak available as an opt-in ignored test.
 
 ## Stage-critical gaps

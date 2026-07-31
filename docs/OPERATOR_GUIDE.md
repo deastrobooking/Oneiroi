@@ -25,6 +25,19 @@ Enter a printable name before **Start named take** or **Restore as named
 branch**. Scoped deterministic seeds can be edited in the same panel. Seeds
 and the active typed graph are saved with the project.
 
+Use the timeline slider to select an earlier show time, then choose **Restore
+cursor as branch**. Replay starts from the closest preceding checkpoint.
+Enter a label and choose **Add marker** while recording; after scanning that
+journal, marker buttons position the replay cursor at their exact show times.
+Project take metadata can be renamed or removed; removal only unlinks the
+catalog entry and deliberately leaves the journal file on disk.
+
+Choose **Export copy** to copy the selected take into the displayed export
+directory (relative paths resolve from the workspace), or **Archive copy** to
+copy it under `.oneiroi/archive`. Each operation creates a new unique folder
+with the journal and its checkpoint when present. Existing exports and source
+session files are never overwritten, moved or removed.
+
 MIDI mappings, performance keyboard shortcuts and continuous mixer/effect/LFO
 controls use the same command gateway. Their origin is retained in the journal,
 so a replay can distinguish an operator gesture from a specific MIDI device or

@@ -32,6 +32,15 @@ pub enum JournalRecord {
     Checkpoint {
         checkpoint: StateCheckpoint,
     },
+    Marker {
+        marker: TimelineMarker,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TimelineMarker {
+    pub at: ShowTime,
+    pub label: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -45,6 +54,7 @@ struct CheckpointFile {
 pub struct JournalHealth {
     pub commands_written: u64,
     pub checkpoints_written: u64,
+    pub markers_written: u64,
     pub queue_overruns: u64,
     pub last_error: Option<String>,
 }
@@ -53,6 +63,7 @@ pub struct JournalHealth {
 struct SharedHealth {
     commands_written: AtomicU64,
     checkpoints_written: AtomicU64,
+    markers_written: AtomicU64,
     queue_overruns: AtomicU64,
     last_error: Mutex<Option<String>>,
 }
@@ -60,6 +71,7 @@ struct SharedHealth {
 enum WriterCommand {
     Append(ShowCommand),
     Checkpoint(StateCheckpoint),
+    Marker(TimelineMarker),
     Flush(mpsc::Sender<Result<(), String>>),
     Shutdown(mpsc::Sender<Result<(), String>>),
 }
@@ -176,10 +188,15 @@ impl JournalWriter {
         self.try_send(WriterCommand::Checkpoint(checkpoint))
     }
 
+    pub fn try_marker(&self, marker: TimelineMarker) -> Result<(), JournalEnqueueError> {
+        self.try_send(WriterCommand::Marker(marker))
+    }
+
     pub fn health(&self) -> JournalHealth {
         JournalHealth {
             commands_written: self.health.commands_written.load(Ordering::Relaxed),
             checkpoints_written: self.health.checkpoints_written.load(Ordering::Relaxed),
+            markers_written: self.health.markers_written.load(Ordering::Relaxed),
             queue_overruns: self.health.queue_overruns.load(Ordering::Relaxed),
             last_error: self
                 .health
@@ -253,6 +270,15 @@ fn writer_loop(
                     "write checkpoint",
                 );
             }
+            WriterCommand::Marker(marker) => {
+                let result = write_record(&mut file, &JournalRecord::Marker { marker });
+                observe(
+                    result,
+                    health,
+                    &health.markers_written,
+                    "append timeline marker",
+                );
+            }
             WriterCommand::Flush(response) => {
                 let result = file.sync_data().map_err(|error| error.to_string());
                 if let Err(error) = &result {
@@ -322,6 +348,9 @@ pub struct JournalRecovery {
     pub take_id: Option<String>,
     pub checkpoint: Option<StateCheckpoint>,
     pub commands: Vec<ShowCommand>,
+    pub history_commands: Vec<ShowCommand>,
+    pub history_checkpoints: Vec<StateCheckpoint>,
+    pub markers: Vec<TimelineMarker>,
     pub ignored_partial_tail: bool,
 }
 
@@ -341,11 +370,40 @@ impl JournalRecovery {
     }
 
     pub fn latest_time(&self) -> ShowTime {
-        self.commands
+        let command = self
+            .history_commands
             .last()
-            .map(|command| command.execute_at)
-            .or_else(|| self.checkpoint.as_ref().map(|checkpoint| checkpoint.at))
+            .map(|command| command.execute_at);
+        let checkpoint = self.checkpoint.as_ref().map(|checkpoint| checkpoint.at);
+        let marker = self.markers.last().map(|marker| marker.at);
+        [command, checkpoint, marker]
+            .into_iter()
+            .flatten()
+            .max_by_key(|time| time.monotonic_ns)
             .unwrap_or_default()
+    }
+
+    /// Replay the complete journal timeline at an operator-selected time.
+    /// This is separate from `replay_state`, whose post-checkpoint tail is the
+    /// fastest path for crash recovery at the latest durable position.
+    pub fn replay_at(&self, time: ShowTime) -> Result<SessionState, SessionError> {
+        let checkpoint = self
+            .history_checkpoints
+            .iter()
+            .chain(self.checkpoint.iter())
+            .filter(|checkpoint| checkpoint.at.monotonic_ns <= time.monotonic_ns)
+            .max_by_key(|checkpoint| checkpoint.at.monotonic_ns);
+        let mut state = checkpoint
+            .map(|checkpoint| checkpoint.state.clone())
+            .unwrap_or_default();
+        let after = checkpoint.and_then(|checkpoint| checkpoint.after_sequence);
+        for command in self.history_commands.iter().filter(|command| {
+            command.execute_at.monotonic_ns <= time.monotonic_ns
+                && after.is_none_or(|sequence| command.sequence > sequence)
+        }) {
+            state.apply(command)?;
+        }
+        Ok(state)
     }
 }
 
@@ -422,23 +480,39 @@ pub fn recover_journal(
             }
             JournalRecord::Header { .. } => return Err(JournalError::DuplicateHeader),
             JournalRecord::Command { command } if saw_header => {
+                if let Some(previous) = recovery.history_commands.last()
+                    && command.sequence <= previous.sequence
+                {
+                    return Err(JournalError::NonMonotonicSequence {
+                        previous: previous.sequence,
+                        next: command.sequence,
+                    });
+                }
                 let after = recovery
                     .checkpoint
                     .as_ref()
                     .and_then(|checkpoint| checkpoint.after_sequence);
                 if after.is_none_or(|sequence| command.sequence > sequence) {
-                    if let Some(previous) = recovery.commands.last()
-                        && command.sequence <= previous.sequence
-                    {
-                        return Err(JournalError::NonMonotonicSequence {
-                            previous: previous.sequence,
-                            next: command.sequence,
-                        });
-                    }
-                    recovery.commands.push(command);
+                    recovery.commands.push(command.clone());
                 }
+                recovery.history_commands.push(command);
             }
-            JournalRecord::Checkpoint { .. } if saw_header => {}
+            JournalRecord::Checkpoint { checkpoint } if saw_header => {
+                recovery.history_checkpoints.push(checkpoint);
+            }
+            JournalRecord::Marker { marker } if saw_header => {
+                if marker.label.is_empty()
+                    || marker.label.len() > 128
+                    || marker.label.chars().any(char::is_control)
+                    || recovery
+                        .markers
+                        .last()
+                        .is_some_and(|previous| previous.at.monotonic_ns > marker.at.monotonic_ns)
+                {
+                    return Err(JournalError::InvalidMarker);
+                }
+                recovery.markers.push(marker);
+            }
             _ => return Err(JournalError::MissingHeader),
         }
     }
@@ -516,6 +590,8 @@ pub enum JournalError {
     NonMonotonicSequence { previous: u64, next: u64 },
     #[error("journal project or take identity is invalid")]
     InvalidIdentity,
+    #[error("journal timeline marker is invalid or out of order")]
+    InvalidMarker,
 }
 
 #[cfg(test)]
@@ -568,14 +644,24 @@ mod tests {
         };
         writer.try_checkpoint(checkpoint.clone()).unwrap();
         writer.try_append(command(1)).unwrap();
+        let marker = TimelineMarker {
+            at: ShowTime {
+                monotonic_ns: 500,
+                ..ShowTime::default()
+            },
+            label: "Drop".to_owned(),
+        };
+        writer.try_marker(marker.clone()).unwrap();
         writer.flush().unwrap();
         assert_eq!(writer.health().commands_written, 2);
+        assert_eq!(writer.health().markers_written, 1);
         drop(writer);
 
         let recovered = recover_journal(&journal, &checkpoint_path).unwrap();
         assert_eq!(recovered.take_name, "show");
         assert_eq!(recovered.checkpoint, Some(checkpoint));
         assert_eq!(recovered.commands, vec![command(1)]);
+        assert_eq!(recovered.markers, vec![marker]);
     }
 
     #[test]
@@ -610,6 +696,62 @@ mod tests {
                 take_id: None,
             }
         );
+    }
+
+    #[test]
+    fn timeline_replay_selects_the_latest_checkpoint_before_the_cursor() {
+        let first = ShowCommand {
+            sequence: 0,
+            command_id: 1,
+            origin: CommandOrigin::Operator,
+            execute_at: ShowTime {
+                monotonic_ns: 1_000,
+                ..ShowTime::default()
+            },
+            operation: CommandOperation::SetTempo { bpm: 130.0 },
+        };
+        let second = ShowCommand {
+            sequence: 1,
+            command_id: 2,
+            origin: CommandOrigin::Operator,
+            execute_at: ShowTime {
+                monotonic_ns: 3_000,
+                ..ShowTime::default()
+            },
+            operation: CommandOperation::SetBlackout { enabled: true },
+        };
+        let recovery = JournalRecovery {
+            history_commands: vec![first, second],
+            history_checkpoints: vec![StateCheckpoint {
+                after_sequence: Some(0),
+                at: ShowTime {
+                    monotonic_ns: 2_000,
+                    ..ShowTime::default()
+                },
+                state: SessionState {
+                    bpm: 130.0,
+                    last_sequence: Some(0),
+                    ..SessionState::default()
+                },
+            }],
+            ..JournalRecovery::default()
+        };
+
+        let before = recovery
+            .replay_at(ShowTime {
+                monotonic_ns: 1_500,
+                ..ShowTime::default()
+            })
+            .unwrap();
+        let after = recovery
+            .replay_at(ShowTime {
+                monotonic_ns: 3_000,
+                ..ShowTime::default()
+            })
+            .unwrap();
+        assert_eq!(before.bpm, 130.0);
+        assert!(!before.blackout);
+        assert!(after.blackout);
     }
 
     #[test]
