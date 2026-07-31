@@ -1,4 +1,4 @@
-# OSC input
+# OSC transport
 
 Oneiroi accepts bounded OSC 1.0 input over UDP. Open **OSC input**, enter a
 local bind address such as `0.0.0.0:9000`, then choose **Listen**. Use
@@ -8,6 +8,12 @@ Incoming messages are decoded on a background thread and delivered through a
 fixed 256-message queue. The render loop never waits for UDP input. Packet,
 decoded-message, malformed-packet and queue-drop counters remain visible in
 the operator panel.
+
+Set a **Feedback target** such as `127.0.0.1:9001` and choose **Send
+feedback** to publish accepted state changes. Output uses a separate fixed
+256-message worker queue. Connecting sends an initial snapshot of master,
+deck, tempo and output values; sent, dropped and socket-error counters remain
+visible.
 
 Every accepted message enters the same command gateway as UI, keyboard and
 MIDI control. Journal records retain the sender socket address as their OSC
@@ -41,12 +47,19 @@ state. OSC integer, float, double and boolean arguments are accepted; string
 arguments are decoded but are not currently mapped to controls.
 
 Standard OSC bundles are accepted, including nested bundles up to eight
-levels. Bundle timetags are validated structurally but execution currently
-occurs when the render loop receives the message; future scheduling support
-can map timetags onto `ShowTime` without bypassing the command gateway.
+levels. NTP timetags are converted to monotonic deadlines and executed on the
+first render frame at or after the deadline. Immediate and past timetags run
+on receipt. The pending queue is capped at 1,024 messages and the scheduling
+horizon at 24 hours; rejected future messages increment the schedule-drop
+counter. Journal `ShowTime` records actual execution rather than arrival.
+
+Feedback uses the same addresses listed above with one float argument. Trigger
+routes emit `1`; continuous and boolean routes emit their accepted concrete
+state. Feedback is state notification, not a guaranteed-delivery protocol.
 
 ## Security boundary
 
 OSC UDP has no authentication. Bind to loopback or isolate the show-control
-network when untrusted hosts are present. Disconnecting OSC closes the socket
-and joins its worker without affecting program output.
+network when untrusted hosts are present. Disconnecting OSC input clears
+pending scheduled messages, closes the socket and joins its worker without
+affecting program output.

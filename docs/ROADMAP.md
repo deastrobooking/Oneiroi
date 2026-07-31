@@ -275,11 +275,14 @@ Delivered:
 20. Bounded OSC 1.0 UDP input with message/bundle decoding, visible malformed
     and overflow telemetry, and origin-aware command-gateway routes covering
     mixer, deck, clip, scene, tempo and output control.
+21. Bounded asynchronous OSC state feedback with an initial control snapshot,
+    plus NTP bundle-timetag conversion into a 1,024-event monotonic scheduler
+    with a defensive 24-hour horizon and visible scheduling drops.
 
 Next:
 
-1. Add OSC output feedback and bundle-timetag scheduling.
-2. Add marker editing plus portable project/media manifests to exported takes.
+1. Add marker editing plus portable project/media manifests to exported takes.
+2. Expand OSC effect/modulation routes and add route discovery.
 3. Add shadow edit, preview, readiness and quantized commit UI.
 4. Insert inferred color/resolution conversions and expose compiler
    diagnostics.

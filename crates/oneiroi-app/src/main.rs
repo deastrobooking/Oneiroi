@@ -137,6 +137,11 @@ struct State {
     osc_input: Option<osc::OscInput>,
     osc_stats: osc::OscStats,
     osc_status: String,
+    osc_pending: Vec<(Instant, osc::OscEvent)>,
+    osc_schedule_dropped: u64,
+    osc_output: Option<osc::OscOutput>,
+    osc_output_stats: osc::OscOutputStats,
+    osc_output_status: String,
     thumbnails: ThumbnailWorker,
     thumbnail_request_id: u64,
     thumbnail_requests: HashMap<ClipAddress, (u64, PathBuf)>,
@@ -702,6 +707,11 @@ impl State {
             osc_input: None,
             osc_stats: osc::OscStats::default(),
             osc_status: "OSC input disconnected".to_owned(),
+            osc_pending: Vec::new(),
+            osc_schedule_dropped: 0,
+            osc_output: None,
+            osc_output_stats: osc::OscOutputStats::default(),
+            osc_output_status: "OSC feedback disconnected".to_owned(),
             thumbnails: ThumbnailWorker::new(32),
             thumbnail_request_id: 0,
             thumbnail_requests: HashMap::new(),
@@ -808,6 +818,11 @@ impl State {
                         status: &self.osc_status,
                         connected: self.osc_input.is_some(),
                         stats: self.osc_stats,
+                        pending: self.osc_pending.len(),
+                        schedule_dropped: self.osc_schedule_dropped,
+                        output_status: &self.osc_output_status,
+                        output_connected: self.osc_output.is_some(),
+                        output_stats: self.osc_output_stats,
                     },
                     output_displays: &self.output_displays,
                     output_health: ui::OutputHealthMetrics {
@@ -870,6 +885,7 @@ impl State {
                 now.saturating_duration_since(self.performance_started)
                     .as_secs_f64(),
             );
+            self.publish_osc_value("/vjx/tempo", bpm as f32);
         }
         if self.ui.quantization != quantization_before {
             self.record_show_operation(
@@ -986,6 +1002,7 @@ impl State {
                         );
                         self.ui.bpm = bpm;
                         self.tempo.set_bpm(bpm, elapsed);
+                        self.publish_osc_value("/vjx/tempo", bpm as f32);
                     }
                 }
                 ui::UiAction::HalfTempo => {
@@ -1002,6 +1019,7 @@ impl State {
                             .as_secs_f64(),
                     );
                     self.tap_tempo.reset();
+                    self.publish_osc_value("/vjx/tempo", bpm as f32);
                 }
                 ui::UiAction::DoubleTempo => {
                     let bpm = (self.ui.bpm * 2.0).clamp(20.0, 400.0);
@@ -1017,6 +1035,7 @@ impl State {
                             .as_secs_f64(),
                     );
                     self.tap_tempo.reset();
+                    self.publish_osc_value("/vjx/tempo", bpm as f32);
                 }
                 ui::UiAction::SetOutputEnabled(enabled) => {
                     self.record_show_operation(
@@ -1028,6 +1047,7 @@ impl State {
                     if enabled {
                         self.output_window.request_redraw();
                     }
+                    self.publish_osc_value("/vjx/output/enabled", f32::from(enabled));
                 }
                 ui::UiAction::SetOutputFullscreen(fullscreen) => {
                     self.record_show_operation(
@@ -1037,6 +1057,7 @@ impl State {
                     );
                     self.ui.output_fullscreen = fullscreen;
                     self.apply_output_monitor();
+                    self.publish_osc_value("/vjx/output/fullscreen", f32::from(fullscreen));
                 }
                 ui::UiAction::SetOutputDisplay(id) => {
                     self.record_show_operation(
@@ -1114,6 +1135,8 @@ impl State {
                 ui::UiAction::DisconnectMidiInput => self.disconnect_midi_input(),
                 ui::UiAction::ConnectOscInput => self.connect_osc_input(),
                 ui::UiAction::DisconnectOscInput => self.disconnect_osc_input(),
+                ui::UiAction::ConnectOscOutput => self.connect_osc_output(),
+                ui::UiAction::DisconnectOscOutput => self.disconnect_osc_output(),
                 ui::UiAction::MidiLearn(target) => self.midi.learn(target),
                 ui::UiAction::MidiCancelLearn => self.midi.cancel_learn(),
                 ui::UiAction::MidiClearTarget(target) => self.midi.clear_target(target),

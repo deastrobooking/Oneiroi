@@ -159,6 +159,9 @@ target OS:
 - Bounded OSC 1.0 UDP input accepts mixer, deck, clip, scene, tempo and output
   routes through the authoritative command gateway, with sender origins and
   malformed/drop telemetry retained for show diagnostics.
+- OSC feedback publishes an initial state snapshot and accepted changes from a
+  separate bounded worker, while bundle NTP timetags execute through a bounded
+  monotonic scheduler without stalling rendering.
 
 MIDI feedback/clock and arbitrary package-owned texture declarations have not
 landed yet.

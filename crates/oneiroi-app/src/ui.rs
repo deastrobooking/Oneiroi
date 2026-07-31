@@ -70,6 +70,7 @@ pub struct UiState {
     pub midi_device_id: String,
     pub midi_target: ControlTarget,
     pub osc_bind_address: String,
+    pub osc_feedback_address: String,
     pub session_recovery_selected: usize,
     pub take_name_input: String,
     pub random_seed_scope: String,
@@ -122,6 +123,7 @@ impl Default for UiState {
             midi_device_id: String::new(),
             midi_target: ControlTarget::Crossfader,
             osc_bind_address: "0.0.0.0:9000".to_owned(),
+            osc_feedback_address: "127.0.0.1:9001".to_owned(),
             session_recovery_selected: 0,
             take_name_input: "Take 1".to_owned(),
             random_seed_scope: "visuals".to_owned(),
@@ -286,6 +288,8 @@ pub enum UiAction {
     DisconnectMidiInput,
     ConnectOscInput,
     DisconnectOscInput,
+    ConnectOscOutput,
+    DisconnectOscOutput,
     MidiLearn(ControlTarget),
     MidiCancelLearn,
     MidiClearTarget(ControlTarget),
@@ -358,6 +362,11 @@ pub struct OscMetrics<'a> {
     pub status: &'a str,
     pub connected: bool,
     pub stats: crate::osc::OscStats,
+    pub pending: usize,
+    pub schedule_dropped: u64,
+    pub output_status: &'a str,
+    pub output_connected: bool,
+    pub output_stats: crate::osc::OscOutputStats,
 }
 
 pub fn draw(
@@ -907,11 +916,35 @@ pub fn draw(
                         ui.weak(metrics.osc.status);
                     });
                     ui.weak(format!(
-                        "packets {} · messages {} · malformed {} · dropped {}",
+                        "packets {} · messages {} · malformed {} · dropped {} · scheduled {} · schedule drops {}",
                         metrics.osc.stats.packets,
                         metrics.osc.stats.messages,
                         metrics.osc.stats.malformed,
-                        metrics.osc.stats.dropped
+                        metrics.osc.stats.dropped,
+                        metrics.osc.pending,
+                        metrics.osc.schedule_dropped
+                    ));
+                    ui.horizontal(|ui| {
+                        ui.label("Feedback target");
+                        ui.add_enabled(
+                            !metrics.osc.output_connected,
+                            egui::TextEdit::singleline(&mut state.osc_feedback_address)
+                                .desired_width(170.0),
+                        );
+                        if metrics.osc.output_connected {
+                            if ui.button("Stop feedback").clicked() {
+                                actions.push(UiAction::DisconnectOscOutput);
+                            }
+                        } else if ui.button("Send feedback").clicked() {
+                            actions.push(UiAction::ConnectOscOutput);
+                        }
+                        ui.weak(metrics.osc.output_status);
+                    });
+                    ui.weak(format!(
+                        "feedback sent {} · dropped {} · errors {}",
+                        metrics.osc.output_stats.sent,
+                        metrics.osc.output_stats.dropped,
+                        metrics.osc.output_stats.errors
                     ));
                     ui.weak("Routes use /vjx; deck and clip numbers are 1-based.");
                 });

@@ -203,8 +203,9 @@ blocks or stops program output; the in-memory take remains available.
   they are not independently executable passes yet.
 - Node kinds beyond the compatibility graph do not yet have GPU executors.
 - OSC input reaches the same command gateway as operator, keyboard and MIDI
-  control. OSC output/feedback and timetag scheduling are not yet connected;
-  project open/restore is intentionally treated as baseline state rather than
+  control. Bundle NTP timetags become bounded monotonic deadlines, and
+  accepted mutations publish through a separate bounded feedback worker.
+  Project open/restore is intentionally treated as baseline state rather than
   live `ShowCommand` traffic.
 - Recovery still assumes the matching project is loaded so clip indices map to
   the same media. Journals identify the project but do not embed its asset
@@ -221,8 +222,8 @@ while the graph becomes executable one node family at a time.
 
 ## Next implementation slice
 
-1. Add OSC output feedback and optional bundle-timetag scheduling.
-2. Add marker editing plus portable project/media manifests for take bundles.
+1. Add marker editing plus portable project/media manifests for take bundles.
+2. Expand OSC routes to effect/modulation parameters and add route discovery.
 3. Add the shadow-graph editor and preview/commit controls.
 4. Add the shadow-graph editor and preview/commit controls.
 5. Add executors for explicit delay/rate-adapter nodes, then unfuse deck

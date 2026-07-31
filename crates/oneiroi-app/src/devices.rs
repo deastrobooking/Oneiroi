@@ -1,6 +1,6 @@
 //! Audio, MIDI and OSC lifecycle, and control-update dispatch.
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use oneiroi_core::{ControlTarget, ControlUpdate, effect_parameter_key};
 use oneiroi_io::{
@@ -11,7 +11,10 @@ use oneiroi_media::{ClipAddress, DeckId};
 use oneiroi_session::{CommandOperation, CommandOrigin};
 
 use super::{State, current_control_value, deck_id, set_effect_parameter};
-use crate::osc::{OscAction, OscInput};
+use crate::osc::{OscAction, OscInput, OscOutput};
+
+const MAX_SCHEDULED_OSC: usize = 1_024;
+const MAX_OSC_SCHEDULE_AHEAD: Duration = Duration::from_secs(24 * 60 * 60);
 
 impl State {
     pub(crate) fn refresh_audio_inputs(&mut self) {
@@ -168,58 +171,153 @@ impl State {
 
     pub(crate) fn disconnect_osc_input(&mut self) {
         self.osc_input = None;
+        self.osc_pending.clear();
         self.osc_status = "OSC input disconnected".to_owned();
     }
 
+    pub(crate) fn connect_osc_output(&mut self) {
+        self.osc_output = None;
+        let destination = self.ui.osc_feedback_address.trim();
+        match OscOutput::connect(destination) {
+            Ok(output) => {
+                self.ui.osc_feedback_address = output.destination().to_owned();
+                self.osc_output_stats = output.stats();
+                self.osc_output_status = format!("Sending to UDP {}", output.destination());
+                self.osc_output = Some(output);
+                self.publish_osc_snapshot();
+            }
+            Err(error) => {
+                self.osc_output_status = format!("OSC feedback connection failed: {error:#}");
+            }
+        }
+    }
+
+    pub(crate) fn disconnect_osc_output(&mut self) {
+        self.osc_output = None;
+        self.osc_output_status = "OSC feedback disconnected".to_owned();
+    }
+
     pub(crate) fn poll_osc(&mut self, now: Instant) {
-        let Some(input) = &self.osc_input else {
+        if let Some(output) = &self.osc_output {
+            self.osc_output_stats = output.stats();
+        }
+        let events = self.osc_input.as_ref().map_or_else(Vec::new, |input| {
+            self.osc_stats = input.stats();
+            input.try_iter().collect()
+        });
+        let system_now = SystemTime::now();
+        let mut ready = Vec::new();
+        for event in events {
+            let deadline = crate::osc::instant_for_timetag(event.message.timetag, system_now, now);
+            let delay = deadline.saturating_duration_since(now);
+            if delay.is_zero() {
+                ready.push((deadline, event));
+            } else if delay <= MAX_OSC_SCHEDULE_AHEAD && self.osc_pending.len() < MAX_SCHEDULED_OSC
+            {
+                self.osc_pending.push((deadline, event));
+            } else {
+                self.osc_schedule_dropped = self.osc_schedule_dropped.saturating_add(1);
+            }
+        }
+        let pending = std::mem::take(&mut self.osc_pending);
+        for scheduled in pending {
+            if scheduled.0 <= now {
+                ready.push(scheduled);
+            } else {
+                self.osc_pending.push(scheduled);
+            }
+        }
+        ready.sort_by_key(|(deadline, _)| *deadline);
+        for (_, event) in ready {
+            self.apply_osc_event(event, now);
+        }
+    }
+
+    fn apply_osc_event(&mut self, event: crate::osc::OscEvent, now: Instant) {
+        let address = event.message.address.clone();
+        let Some(action) = crate::osc::map_message(&event.message) else {
+            self.osc_status = format!("Ignored {address} from {}", event.peer);
             return;
         };
-        let events: Vec<_> = input.try_iter().collect();
-        self.osc_stats = input.stats();
-        for event in events {
-            let address = event.message.address.clone();
-            let Some(action) = crate::osc::map_message(&event.message) else {
-                self.osc_status = format!("Ignored {address} from {}", event.peer);
-                continue;
-            };
-            let origin = CommandOrigin::Osc(event.peer.clone());
-            match action {
-                OscAction::Control(update) => self.dispatch_control_update(update, origin, now),
-                OscAction::Tempo(bpm) => {
-                    self.record_show_operation(origin, now, CommandOperation::SetTempo { bpm });
-                    self.ui.bpm = bpm;
-                    self.tempo.set_bpm(
-                        bpm,
-                        now.saturating_duration_since(self.performance_started)
-                            .as_secs_f64(),
-                    );
-                    self.tap_tempo.reset();
-                }
-                OscAction::OutputEnabled(enabled) => {
-                    self.record_show_operation(
-                        origin,
-                        now,
-                        CommandOperation::SetOutputEnabled { enabled },
-                    );
-                    self.ui.output_enabled = enabled;
-                    self.output_window.set_visible(enabled);
-                    if enabled {
-                        self.output_window.request_redraw();
-                    }
-                }
-                OscAction::OutputFullscreen(fullscreen) => {
-                    self.record_show_operation(
-                        origin,
-                        now,
-                        CommandOperation::SetOutputFullscreen { fullscreen },
-                    );
-                    self.ui.output_fullscreen = fullscreen;
-                    self.apply_output_monitor();
-                }
+        let origin = CommandOrigin::Osc(event.peer.clone());
+        match action {
+            OscAction::Control(update) => self.dispatch_control_update(update, origin, now),
+            OscAction::Tempo(bpm) => {
+                self.record_show_operation(origin, now, CommandOperation::SetTempo { bpm });
+                self.ui.bpm = bpm;
+                self.tempo.set_bpm(
+                    bpm,
+                    now.saturating_duration_since(self.performance_started)
+                        .as_secs_f64(),
+                );
+                self.tap_tempo.reset();
+                self.publish_osc_value("/vjx/tempo", bpm as f32);
             }
-            self.osc_status = format!("{address} · {}", event.peer);
+            OscAction::OutputEnabled(enabled) => {
+                self.record_show_operation(
+                    origin,
+                    now,
+                    CommandOperation::SetOutputEnabled { enabled },
+                );
+                self.ui.output_enabled = enabled;
+                self.output_window.set_visible(enabled);
+                if enabled {
+                    self.output_window.request_redraw();
+                }
+                self.publish_osc_value("/vjx/output/enabled", f32::from(enabled));
+            }
+            OscAction::OutputFullscreen(fullscreen) => {
+                self.record_show_operation(
+                    origin,
+                    now,
+                    CommandOperation::SetOutputFullscreen { fullscreen },
+                );
+                self.ui.output_fullscreen = fullscreen;
+                self.apply_output_monitor();
+                self.publish_osc_value("/vjx/output/fullscreen", f32::from(fullscreen));
+            }
         }
+        self.osc_status = format!("{address} · {}", event.peer);
+    }
+
+    pub(crate) fn publish_osc_value(&self, address: &str, value: f32) {
+        if let Some(output) = &self.osc_output {
+            output.try_feedback(address.to_owned(), value);
+        }
+    }
+
+    fn publish_osc_control(&self, update: ControlUpdate) {
+        if let Some((address, value)) = crate::osc::feedback_for_control(update) {
+            self.publish_osc_value(&address, value);
+        }
+    }
+
+    fn publish_osc_snapshot(&self) {
+        for target in [
+            ControlTarget::Crossfader,
+            ControlTarget::MasterOpacity,
+            ControlTarget::MasterBlackout,
+            ControlTarget::MasterFreeze,
+        ]
+        .into_iter()
+        .chain((0..4).flat_map(|deck| {
+            [
+                ControlTarget::DeckLevel(deck),
+                ControlTarget::DeckPlay(deck),
+                ControlTarget::DeckFreeze(deck),
+                ControlTarget::DeckSpeed(deck),
+                ControlTarget::DeckSelect(deck),
+            ]
+        })) {
+            let value = current_control_value(&self.ui, &self.mixer, &self.transports, target);
+            self.publish_osc_control(ControlUpdate { target, value });
+        }
+        self.publish_osc_value("/vjx/tempo", self.ui.bpm as f32);
+        self.publish_osc_value("/vjx/output/enabled", f32::from(self.ui.output_enabled));
+        self.publish_osc_value(
+            "/vjx/output/fullscreen",
+            f32::from(self.ui.output_fullscreen),
+        );
     }
 
     pub(crate) fn dispatch_control_update(
@@ -237,6 +335,7 @@ impl State {
                     self.record_show_operation(origin, now, CommandOperation::SetTempo { bpm });
                     self.ui.bpm = bpm;
                     self.tempo.set_bpm(bpm, elapsed);
+                    self.publish_osc_value("/vjx/tempo", bpm as f32);
                 }
             }
             return;
@@ -246,6 +345,16 @@ impl State {
         };
         self.record_show_operation(origin, now, operation);
         self.apply_control_update_unrecorded(update, now);
+        let feedback_value = match update.target {
+            ControlTarget::DeckRestart(_)
+            | ControlTarget::ClipLaunch { .. }
+            | ControlTarget::SceneLaunch(_) => update.value,
+            target => current_control_value(&self.ui, &self.mixer, &self.transports, target),
+        };
+        self.publish_osc_control(ControlUpdate {
+            target: update.target,
+            value: feedback_value,
+        });
     }
 
     pub(crate) fn apply_control_update_unrecorded(&mut self, update: ControlUpdate, now: Instant) {

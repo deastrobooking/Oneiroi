@@ -50,6 +50,11 @@ sender addresses are retained as journal origins, and malformed/overflow
 counters are visible beside the listener status. The complete route table is
 in [OSC.md](OSC.md).
 
+Set **Feedback target** and choose **Send feedback** to transmit an immediate
+state snapshot followed by accepted control changes. Future OSC bundle
+timetags execute on the first frame at or after their NTP deadline; pending
+and rejected scheduled-message counts are visible in the same panel.
+
 Deck transforms, crop/source/blend choices, effect-slot order, LFO and
 modulation routing, master effects/modulation, and accepted media assignments
 are also journaled as stable field commands. Project opening establishes a new
