@@ -16,7 +16,20 @@ pub(super) fn draw_clip_grid(
         .show(ui, |ui| {
             ui.strong("SCENE");
             for slot in 0..CLIPS_PER_DECK {
-                if ui.small_button(format!("{}", slot + 1)).clicked() {
+                if ui
+                    .add_sized(
+                        [96.0, 28.0],
+                        egui::Button::new(
+                            egui::RichText::new(format!("SCENE {}", slot + 1)).strong(),
+                        )
+                        .fill(egui::Color32::from_rgb(43, 36, 67)),
+                    )
+                    .on_hover_text(format!(
+                        "Launch scene {} on the next quantized boundary",
+                        slot + 1
+                    ))
+                    .clicked()
+                {
                     actions.push(UiAction::LaunchScene(slot));
                 }
             }
@@ -78,8 +91,27 @@ pub(super) fn draw_clip_grid(
                             };
                             egui::Button::new(label)
                         }
-                        .selected(selected || active);
-                    let response = ui.add_sized([96.0, 38.0], button);
+                        .selected(selected || active)
+                        .fill(if active {
+                            egui::Color32::from_rgb(27, 103, 87)
+                        } else if queued {
+                            egui::Color32::from_rgb(102, 73, 28)
+                        } else if selected {
+                            egui::Color32::from_rgb(34, 89, 111)
+                        } else {
+                            UI_CONTROL
+                        })
+                        .stroke(egui::Stroke::new(
+                            if active || queued { 2.0 } else { 1.0 },
+                            if active {
+                                egui::Color32::from_rgb(91, 239, 187)
+                            } else if queued {
+                                egui::Color32::from_rgb(255, 194, 79)
+                            } else {
+                                egui::Color32::from_rgb(55, 60, 79)
+                            },
+                        ));
+                    let response = ui.add_sized([96.0, 46.0], button);
                     if response.clicked() {
                         clips.select(address);
                         mixer.select(deck);

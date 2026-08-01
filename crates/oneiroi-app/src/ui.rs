@@ -369,6 +369,59 @@ pub struct OscMetrics<'a> {
     pub output_stats: crate::osc::OscOutputStats,
 }
 
+const UI_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(12, 13, 20);
+const UI_SURFACE: egui::Color32 = egui::Color32::from_rgb(22, 24, 35);
+const UI_CONTROL: egui::Color32 = egui::Color32::from_rgb(33, 36, 51);
+const UI_ACCENT: egui::Color32 = egui::Color32::from_rgb(71, 214, 255);
+const UI_ACCENT_HOVER: egui::Color32 = egui::Color32::from_rgb(104, 224, 255);
+const UI_VIOLET: egui::Color32 = egui::Color32::from_rgb(176, 113, 255);
+const UI_DANGER: egui::Color32 = egui::Color32::from_rgb(255, 70, 98);
+
+fn install_operator_style(ctx: &egui::Context) {
+    let theme = ctx.theme();
+    if ctx.style_of(theme).visuals.panel_fill == UI_BACKGROUND {
+        return;
+    }
+    let mut style = (*ctx.style_of(theme)).clone();
+    style.spacing.item_spacing = egui::vec2(8.0, 7.0);
+    style.spacing.button_padding = egui::vec2(10.0, 6.0);
+    style.spacing.interact_size.y = 26.0;
+    style.spacing.slider_width = 180.0;
+    style.visuals = egui::Visuals::dark();
+    style.visuals.panel_fill = UI_BACKGROUND;
+    style.visuals.window_fill = UI_SURFACE;
+    style.visuals.extreme_bg_color = egui::Color32::from_rgb(8, 9, 15);
+    style.visuals.faint_bg_color = egui::Color32::from_rgb(27, 29, 42);
+    style.visuals.code_bg_color = egui::Color32::from_rgb(18, 20, 31);
+    style.visuals.selection.bg_fill = UI_ACCENT;
+    style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    style.visuals.widgets.inactive.weak_bg_fill = UI_CONTROL;
+    style.visuals.widgets.inactive.bg_fill = UI_CONTROL;
+    style.visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(43, 48, 67);
+    style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(43, 48, 67);
+    style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, UI_ACCENT_HOVER);
+    style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(35, 111, 135);
+    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, UI_ACCENT);
+    style.visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, UI_VIOLET);
+    style.visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(49, 53, 72));
+    style.visuals.window_corner_radius = egui::CornerRadius::same(10);
+    style.visuals.menu_corner_radius = egui::CornerRadius::same(8);
+    style.visuals.collapsing_header_frame = true;
+    ctx.set_style_of(theme, style);
+}
+
+fn status_dot(ui: &mut egui::Ui, label: &str, active: bool, warning: bool) {
+    let color = if warning {
+        UI_DANGER
+    } else if active {
+        egui::Color32::from_rgb(92, 226, 146)
+    } else {
+        egui::Color32::from_rgb(105, 110, 129)
+    };
+    ui.label(egui::RichText::new("●").color(color));
+    ui.weak(label);
+}
+
 pub fn draw(
     ctx: &egui::Context,
     state: &mut UiState,
@@ -378,21 +431,81 @@ pub fn draw(
     transports: &mut [DeckTransport; 4],
     mut metrics: PerformanceMetrics<'_>,
 ) -> Vec<UiAction> {
+    install_operator_style(ctx);
     state.fps.push(metrics.frame_time.delta);
     let mut actions = Vec::new();
 
     egui::Window::new("oneiroi")
         .default_pos([16.0, 16.0])
-        .default_size([920.0, 520.0])
+        .default_size([1040.0, 720.0])
+        .min_size([760.0, 480.0])
         .resizable(true)
+        .scroll([true, true])
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("ONEIROI · FOUR DECK VIDEO MIXER");
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("ONEIROI")
+                            .size(24.0)
+                            .strong()
+                            .color(UI_ACCENT),
+                    );
+                    ui.weak("LIVE VISUAL PERFORMANCE SYSTEM");
+                });
+                ui.add_space(12.0);
+                status_dot(
+                    ui,
+                    "PROGRAM",
+                    state.output_enabled,
+                    state.output_enabled && metrics.output_health.status != "Healthy",
+                );
+                status_dot(ui, "AUDIO", metrics.audio_connected, false);
+                status_dot(ui, "MIDI", metrics.midi.connected, false);
+                status_dot(ui, "OSC", metrics.osc.connected, false);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let blackout_fill = if state.blackout {
+                        UI_DANGER
+                    } else {
+                        egui::Color32::from_rgb(62, 29, 40)
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("BLACKOUT").strong().color(egui::Color32::WHITE),
+                            )
+                            .fill(blackout_fill)
+                            .min_size(egui::vec2(104.0, 34.0)),
+                        )
+                        .on_hover_text("Emergency program blackout")
+                        .clicked()
+                    {
+                        state.blackout = !state.blackout;
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new(if state.master_freeze {
+                                "Resume master"
+                            } else {
+                                "Freeze master"
+                            })
+                            .selected(state.master_freeze),
+                        )
+                        .clicked()
+                    {
+                        state.master_freeze = !state.master_freeze;
+                    }
+                });
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.weak(metrics.gpu_info);
                 ui.separator();
-                ui.label(metrics.gpu_info);
-                ui.separator();
+                ui.weak(metrics.runtime_status);
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Output");
                 if ui
-                    .checkbox(&mut state.output_enabled, "Program output")
+                    .checkbox(&mut state.output_enabled, "Enabled")
                     .changed()
                 {
                     actions.push(UiAction::SetOutputEnabled(state.output_enabled));
@@ -406,10 +519,6 @@ pub fn draw(
                 {
                     actions.push(UiAction::SetOutputFullscreen(state.output_fullscreen));
                 }
-            });
-            ui.weak(metrics.runtime_status);
-            ui.horizontal(|ui| {
-                ui.label("Output");
                 let display_label = metrics
                     .output_displays
                     .iter()

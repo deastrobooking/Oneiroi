@@ -65,8 +65,11 @@ target OS:
 - Native per-deck mirror, neon glow, fractal fold, scanline jitter, find-edges,
   bit reduction, black-light inversion, pixelate and luma-key effects.
 - Three reorderable deck-effect groups with independent bypass and dry/wet,
-  legacy-compatible project defaults and Neutral, Neon Night, Blacklight and
-  Glitch presets.
+  legacy-compatible project defaults and Neutral, Neon Night, Blacklight,
+  Glitch and Halation presets.
+- A scrollable, stage-oriented operator UI with live program/audio/MIDI/OSC
+  status, top-level blackout/freeze controls, deck accents and explicit
+  selected/queued/active clip states.
 - Two reorderable master-effect slots with persisted bypass/dry-wet controls
   plus separable Gaussian blur and persistent feedback/trails backed by fixed
   ping-pong and history textures.
@@ -216,6 +219,7 @@ freeze holds the most recent rendered frame.
 
 ## Documentation
 
+- [Release notes](docs/RELEASE_NOTES.md)
 - [Operator guide](docs/OPERATOR_GUIDE.md)
 - [Feature status](docs/FEATURES.md)
 - [Application review](docs/REVIEW.md)

@@ -29,19 +29,45 @@ pub(super) fn draw_deck(
         lfos,
     } = controls;
     let selected = mixer.selected() == id;
+    let accent = match id {
+        DeckId::A => UI_ACCENT,
+        DeckId::B => UI_VIOLET,
+        DeckId::C => egui::Color32::from_rgb(255, 151, 74),
+        DeckId::D => egui::Color32::from_rgb(84, 224, 155),
+    };
     let frame = egui::Frame::group(ui.style())
         .fill(if selected {
-            ui.visuals().selection.bg_fill.linear_multiply(0.35)
+            accent.linear_multiply(0.12)
         } else {
             ui.visuals().faint_bg_color
         })
+        .stroke(egui::Stroke::new(
+            if selected { 2.0 } else { 1.0 },
+            if selected {
+                accent
+            } else {
+                egui::Color32::from_rgb(48, 52, 70)
+            },
+        ))
+        .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(10.0);
 
     frame.show(ui, |ui| {
         ui.set_min_size([420.0, 165.0].into());
         ui.horizontal(|ui| {
             if ui
-                .selectable_label(selected, format!("DECK {}", id.label()))
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new(format!("DECK {}", id.label()))
+                            .strong()
+                            .color(if selected {
+                                accent
+                            } else {
+                                egui::Color32::WHITE
+                            }),
+                    )
+                    .selected(selected),
+                )
                 .clicked()
             {
                 mixer.select(id);
