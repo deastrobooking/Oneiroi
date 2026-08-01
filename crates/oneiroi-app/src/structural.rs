@@ -193,17 +193,7 @@ pub(crate) fn apply_session_parameters(
         }
         *transform = transform.sanitized();
         if let Some(value) = text_at(parameters, &format!("{root}.blend_mode")) {
-            ui.blend_modes[deck] = match value {
-                "normal" => LayerBlendMode::Normal,
-                "add" => LayerBlendMode::Add,
-                "screen" => LayerBlendMode::Screen,
-                "multiply" => LayerBlendMode::Multiply,
-                "difference" => LayerBlendMode::Difference,
-                "lighten" => LayerBlendMode::Lighten,
-                "darken" => LayerBlendMode::Darken,
-                "overlay" => LayerBlendMode::Overlay,
-                _ => ui.blend_modes[deck],
-            };
+            ui.blend_modes[deck] = LayerBlendMode::from_name(value).unwrap_or(ui.blend_modes[deck]);
         }
         assign_bool(&mut ui.solo[deck], parameters, &format!("{root}.solo"));
         assign_bool(
@@ -470,6 +460,10 @@ fn parse_target(value: &str) -> Option<EffectTarget> {
         "find_edges" => EffectTarget::FindEdges,
         "bit_reduction" => EffectTarget::BitReduction,
         "blacklight" => EffectTarget::Blacklight,
+        "bloom" => EffectTarget::Bloom,
+        "bloom_threshold" => EffectTarget::BloomThreshold,
+        "bloom_radius" => EffectTarget::BloomRadius,
+        "bloom_chroma" => EffectTarget::BloomChroma,
         _ => return None,
     })
 }
@@ -811,16 +805,7 @@ fn source_name(value: SourceMode) -> &'static str {
     }
 }
 fn blend_name(value: LayerBlendMode) -> &'static str {
-    match value {
-        LayerBlendMode::Normal => "normal",
-        LayerBlendMode::Add => "add",
-        LayerBlendMode::Screen => "screen",
-        LayerBlendMode::Multiply => "multiply",
-        LayerBlendMode::Difference => "difference",
-        LayerBlendMode::Lighten => "lighten",
-        LayerBlendMode::Darken => "darken",
-        LayerBlendMode::Overlay => "overlay",
-    }
+    value.name()
 }
 fn waveform_name(value: LfoWaveform) -> &'static str {
     match value {
@@ -855,6 +840,10 @@ fn target_name(value: EffectTarget) -> &'static str {
         EffectTarget::FindEdges => "find_edges",
         EffectTarget::BitReduction => "bit_reduction",
         EffectTarget::Blacklight => "blacklight",
+        EffectTarget::Bloom => "bloom",
+        EffectTarget::BloomThreshold => "bloom_threshold",
+        EffectTarget::BloomRadius => "bloom_radius",
+        EffectTarget::BloomChroma => "bloom_chroma",
     }
 }
 

@@ -597,3 +597,305 @@ fn crop_and_source_modes_use_the_source_aspect_ratio() {
     );
     assert_ne!(cropped, stretch);
 }
+
+/// Encode a linear value the way an `Rgba8UnormSrgb` render target does, so
+/// expectations below can be written in the space the shader actually works in.
+fn srgb_byte(linear: f32) -> u8 {
+    let clamped = linear.clamp(0.0, 1.0);
+    let encoded = if clamped <= 0.0031308 {
+        clamped * 12.92
+    } else {
+        1.055 * clamped.powf(1.0 / 2.4) - 0.055
+    };
+    (encoded * 255.0 + 0.5) as u8
+}
+
+/// Red under green, which is the pair the original eight modes are checked
+/// with. Every expectation is derived from the W3C formulas by hand.
+const BLEND_EXPECTATIONS: [(LayerBlendMode, [f32; 3]); 35] = [
+    (LayerBlendMode::Normal, [0.0, 1.0, 0.0]),
+    (LayerBlendMode::Add, [1.0, 1.0, 0.0]),
+    (LayerBlendMode::Screen, [1.0, 1.0, 0.0]),
+    (LayerBlendMode::Multiply, [0.0, 0.0, 0.0]),
+    (LayerBlendMode::Difference, [1.0, 1.0, 0.0]),
+    (LayerBlendMode::Lighten, [1.0, 1.0, 0.0]),
+    (LayerBlendMode::Darken, [0.0, 0.0, 0.0]),
+    (LayerBlendMode::Overlay, [1.0, 0.0, 0.0]),
+    (LayerBlendMode::ColorDodge, [1.0, 0.0, 0.0]),
+    (LayerBlendMode::ColorBurn, [1.0, 0.0, 0.0]),
+    (LayerBlendMode::HardLight, [0.0, 1.0, 0.0]),
+    (LayerBlendMode::SoftLight, [1.0, 0.0, 0.0]),
+    (LayerBlendMode::Exclusion, [1.0, 1.0, 0.0]),
+    (LayerBlendMode::LinearBurn, [0.0, 0.0, 0.0]),
+    (LayerBlendMode::VividLight, [1.0, 0.0, 0.0]),
+    (LayerBlendMode::LinearLight, [0.0, 1.0, 0.0]),
+    (LayerBlendMode::PinLight, [0.0, 1.0, 0.0]),
+    (LayerBlendMode::HardMix, [1.0, 1.0, 0.0]),
+    (LayerBlendMode::Subtract, [1.0, 0.0, 0.0]),
+    (LayerBlendMode::Divide, [1.0, 0.0, 0.0]),
+    // Non-separable: the layer's hue at the backdrop's luminosity, which for
+    // red under green lands on a mid green.
+    (LayerBlendMode::Hue, [0.0, 0.5085, 0.0]),
+    (LayerBlendMode::Saturation, [1.0, 0.0, 0.0]),
+    (LayerBlendMode::Color, [0.0, 0.5085, 0.0]),
+    (LayerBlendMode::Luminosity, [1.0, 0.4143, 0.4143]),
+    // Red is the darker of the two by the spec's luminance weights.
+    (LayerBlendMode::DarkerColor, [1.0, 0.0, 0.0]),
+    (LayerBlendMode::LighterColor, [0.0, 1.0, 0.0]),
+    (LayerBlendMode::Negation, [1.0, 1.0, 0.0]),
+    (LayerBlendMode::Invert, [0.41, 0.59, 0.59]),
+    (LayerBlendMode::Reflect, [1.0, 0.0, 0.0]),
+    (LayerBlendMode::Glow, [0.0, 1.0, 0.0]),
+    (LayerBlendMode::Phoenix, [0.0, 0.0, 1.0]),
+    // A 120 degree hue rotation carries red to green.
+    (LayerBlendMode::HueShift, [0.0, 1.0, 0.0]),
+    (LayerBlendMode::FractalFold, [0.0, 1.0, 1.0]),
+    (LayerBlendMode::XorCrush, [1.0, 1.0, 0.0]),
+    (LayerBlendMode::Solarize, [0.0, 0.0, 0.0]),
+];
+
+#[test]
+fn every_blend_mode_matches_its_hand_derived_result() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer
+        .upload(&device, &queue, 0, &solid([255, 0, 0, 255]))
+        .unwrap();
+    mixer
+        .upload(&device, &queue, 1, &solid([0, 255, 0, 255]))
+        .unwrap();
+
+    // Every mode must be covered, so a new variant fails here until it has a
+    // derived expectation rather than silently going untested.
+    assert_eq!(BLEND_EXPECTATIONS.len(), LayerBlendMode::ALL.len());
+    for mode in LayerBlendMode::ALL {
+        assert!(
+            BLEND_EXPECTATIONS.iter().any(|(listed, _)| *listed == mode),
+            "{mode:?} has no expectation"
+        );
+    }
+
+    for (mode, expected) in BLEND_EXPECTATIONS {
+        let output = render(
+            &device,
+            &queue,
+            &mut mixer,
+            MixerParams {
+                levels: [1.0, 1.0, 0.0, 0.0],
+                blend_modes: [
+                    LayerBlendMode::Normal,
+                    mode,
+                    LayerBlendMode::Normal,
+                    LayerBlendMode::Normal,
+                ],
+                ..Default::default()
+            },
+        );
+        let expected_bytes = expected.map(srgb_byte);
+        for channel in 0..3 {
+            let difference = i32::from(output[channel]) - i32::from(expected_bytes[channel]);
+            assert!(
+                difference.abs() <= 2,
+                "{mode:?} channel {channel}: got {}, expected {} (linear {})",
+                output[channel],
+                expected_bytes[channel],
+                expected[channel],
+            );
+        }
+        assert_eq!(output[3], 255, "{mode:?} alpha");
+    }
+}
+
+/// Blend codes are written into saved projects, so renumbering one would
+/// silently repaint every show that used it.
+#[test]
+fn blend_mode_codes_and_names_are_stable_and_unique() {
+    let mut codes: Vec<u32> = LayerBlendMode::ALL.iter().map(|mode| mode.code()).collect();
+    codes.sort_unstable();
+    codes.dedup();
+    assert_eq!(codes.len(), LayerBlendMode::ALL.len(), "duplicate codes");
+    assert_eq!(codes.first().copied(), Some(0));
+    assert_eq!(
+        codes.last().copied(),
+        Some(LayerBlendMode::ALL.len() as u32 - 1)
+    );
+
+    for mode in LayerBlendMode::ALL {
+        assert_eq!(LayerBlendMode::from_name(mode.name()), Some(mode));
+    }
+
+    // The original eight predate this table and must keep their values.
+    assert_eq!(LayerBlendMode::Normal.code(), 0);
+    assert_eq!(LayerBlendMode::Add.code(), 1);
+    assert_eq!(LayerBlendMode::Screen.code(), 2);
+    assert_eq!(LayerBlendMode::Multiply.code(), 3);
+    assert_eq!(LayerBlendMode::Difference.code(), 4);
+    assert_eq!(LayerBlendMode::Lighten.code(), 5);
+    assert_eq!(LayerBlendMode::Darken.code(), 6);
+    assert_eq!(LayerBlendMode::Overlay.code(), 7);
+}
+
+const BLOOM_SIZE: u32 = 64;
+
+/// Left half black, right half white: bloom has to carry light across the seam.
+fn split_frame() -> VideoFramePayload {
+    let mut data = Vec::with_capacity((BLOOM_SIZE * BLOOM_SIZE * 4) as usize);
+    for _ in 0..BLOOM_SIZE {
+        for x in 0..BLOOM_SIZE {
+            let value = if x < BLOOM_SIZE / 2 { 0 } else { 255 };
+            data.extend_from_slice(&[value, value, value, 255]);
+        }
+    }
+    VideoFramePayload::Rgba8(RgbaFrame {
+        extent: [BLOOM_SIZE, BLOOM_SIZE],
+        data: data.into(),
+    })
+}
+
+fn render_bloom(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    compositor: &mut FourDeckCompositor,
+    params: MixerParams,
+) -> Vec<u8> {
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("bloom-test-target"),
+        size: wgpu::Extent3d {
+            width: BLOOM_SIZE,
+            height: BLOOM_SIZE,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = target.create_view(&Default::default());
+    // 64 px * 4 bytes is exactly the 256-byte copy alignment.
+    let row_bytes = BLOOM_SIZE * 4;
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("bloom-test-readback"),
+        size: u64::from(row_bytes * BLOOM_SIZE),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    compositor.draw(device, queue, &mut encoder, &view, params);
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &target,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row_bytes),
+                rows_per_image: Some(BLOOM_SIZE),
+            },
+        },
+        wgpu::Extent3d {
+            width: BLOOM_SIZE,
+            height: BLOOM_SIZE,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+    readback.slice(..).map_async(wgpu::MapMode::Read, |result| {
+        result.expect("map bloom readback");
+    });
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        })
+        .unwrap();
+    let pixels = readback.slice(..).get_mapped_range().to_vec();
+    readback.unmap();
+    pixels
+}
+
+fn bloom_pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
+    let index = ((y * BLOOM_SIZE + x) * 4) as usize;
+    [
+        pixels[index],
+        pixels[index + 1],
+        pixels[index + 2],
+        pixels[index + 3],
+    ]
+}
+
+#[test]
+fn bloom_spreads_light_from_bright_regions_and_falls_off_with_distance() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer.upload(&device, &queue, 0, &split_frame()).unwrap();
+
+    let base = MixerParams {
+        levels: [1.0, 0.0, 0.0, 0.0],
+        ..Default::default()
+    };
+
+    let unlit = render_bloom(&device, &queue, &mut mixer, base);
+    assert_eq!(
+        bloom_pixel(&unlit, 28, 32)[0],
+        0,
+        "the dark half must stay black with bloom disabled"
+    );
+
+    let mut effects = DeckEffects {
+        bloom: 1.0,
+        bloom_threshold: 0.1,
+        bloom_radius: 1.0,
+        ..Default::default()
+    };
+    let lit = render_bloom(
+        &device,
+        &queue,
+        &mut mixer,
+        MixerParams {
+            effects: [effects, effects, effects, effects],
+            ..base
+        },
+    );
+
+    let near = bloom_pixel(&lit, 28, 32)[0];
+    let far = bloom_pixel(&lit, 2, 32)[0];
+    assert!(near > 0, "bloom should carry light into the dark half");
+    assert!(
+        near > far,
+        "bloom must fall off with distance: near {near}, far {far}"
+    );
+    assert_eq!(
+        bloom_pixel(&lit, 60, 32)[0],
+        255,
+        "already-white pixels stay white"
+    );
+
+    // Chroma spreads red further than blue, so the fringe warms up.
+    effects.bloom_chroma = 1.0;
+    let chromatic = render_bloom(
+        &device,
+        &queue,
+        &mut mixer,
+        MixerParams {
+            effects: [effects, effects, effects, effects],
+            ..base
+        },
+    );
+    let fringe = bloom_pixel(&chromatic, 28, 32);
+    assert!(
+        fringe[0] > fringe[2],
+        "chromatic bloom should push red past blue: {fringe:?}"
+    );
+}

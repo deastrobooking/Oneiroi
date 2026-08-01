@@ -27,7 +27,7 @@ use oneiroi_media::{
     DeckState, DeckTransport, EndMode, FourDeckMixer, LaunchQueue, MediaHealth,
 };
 use oneiroi_render::{
-    DeckEffects, DeckLfos, DeckTransform, EffectDescriptor, EffectHistoryResource,
+    BlendModeGroup, DeckEffects, DeckLfos, DeckTransform, EffectDescriptor, EffectHistoryResource,
     EffectParameterValue, EffectPreset, EffectTarget, LayerBlendMode, LfoWaveform,
     MasterEffectChain, MasterEffectKind, MasterEffectSlot, MasterModulation, SourceMode,
 };
@@ -1239,6 +1239,10 @@ fn effect_parameter_label(effect: u8) -> &'static str {
         "Find edges",
         "Bit reduction",
         "Black light",
+        "Bloom",
+        "Bloom threshold",
+        "Bloom radius",
+        "Bloom chroma",
     ]
     .get(usize::from(effect))
     .copied()

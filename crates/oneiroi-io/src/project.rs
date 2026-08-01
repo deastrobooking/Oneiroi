@@ -760,6 +760,33 @@ pub enum BlendModeProject {
     Lighten,
     Darken,
     Overlay,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Exclusion,
+    LinearBurn,
+    VividLight,
+    LinearLight,
+    PinLight,
+    HardMix,
+    Subtract,
+    Divide,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+    DarkerColor,
+    LighterColor,
+    Negation,
+    Invert,
+    Reflect,
+    Glow,
+    Phoenix,
+    HueShift,
+    FractalFold,
+    XorCrush,
+    Solarize,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -818,7 +845,23 @@ pub struct EffectProject {
     pub bit_reduction: f32,
     #[serde(default)]
     pub blacklight: f32,
+    #[serde(default)]
+    pub bloom: f32,
+    #[serde(default = "default_bloom_threshold")]
+    pub bloom_threshold: f32,
+    #[serde(default = "default_bloom_radius")]
+    pub bloom_radius: f32,
+    #[serde(default)]
+    pub bloom_chroma: f32,
     pub mirror: bool,
+}
+
+fn default_bloom_threshold() -> f32 {
+    0.65
+}
+
+fn default_bloom_radius() -> f32 {
+    0.35
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -880,6 +923,10 @@ pub enum EffectTargetProject {
     FindEdges,
     BitReduction,
     Blacklight,
+    Bloom,
+    BloomThreshold,
+    BloomRadius,
+    BloomChroma,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1027,6 +1074,10 @@ impl Default for EffectProject {
             find_edges: 0.0,
             bit_reduction: 0.0,
             blacklight: 0.0,
+            bloom: 0.0,
+            bloom_threshold: default_bloom_threshold(),
+            bloom_radius: default_bloom_radius(),
+            bloom_chroma: 0.0,
             mirror: false,
         }
     }

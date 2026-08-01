@@ -437,6 +437,33 @@ fn blend_mode_to_project(mode: LayerBlendMode) -> BlendModeProject {
         LayerBlendMode::Lighten => BlendModeProject::Lighten,
         LayerBlendMode::Darken => BlendModeProject::Darken,
         LayerBlendMode::Overlay => BlendModeProject::Overlay,
+        LayerBlendMode::ColorDodge => BlendModeProject::ColorDodge,
+        LayerBlendMode::ColorBurn => BlendModeProject::ColorBurn,
+        LayerBlendMode::HardLight => BlendModeProject::HardLight,
+        LayerBlendMode::SoftLight => BlendModeProject::SoftLight,
+        LayerBlendMode::Exclusion => BlendModeProject::Exclusion,
+        LayerBlendMode::LinearBurn => BlendModeProject::LinearBurn,
+        LayerBlendMode::VividLight => BlendModeProject::VividLight,
+        LayerBlendMode::LinearLight => BlendModeProject::LinearLight,
+        LayerBlendMode::PinLight => BlendModeProject::PinLight,
+        LayerBlendMode::HardMix => BlendModeProject::HardMix,
+        LayerBlendMode::Subtract => BlendModeProject::Subtract,
+        LayerBlendMode::Divide => BlendModeProject::Divide,
+        LayerBlendMode::Hue => BlendModeProject::Hue,
+        LayerBlendMode::Saturation => BlendModeProject::Saturation,
+        LayerBlendMode::Color => BlendModeProject::Color,
+        LayerBlendMode::Luminosity => BlendModeProject::Luminosity,
+        LayerBlendMode::DarkerColor => BlendModeProject::DarkerColor,
+        LayerBlendMode::LighterColor => BlendModeProject::LighterColor,
+        LayerBlendMode::Negation => BlendModeProject::Negation,
+        LayerBlendMode::Invert => BlendModeProject::Invert,
+        LayerBlendMode::Reflect => BlendModeProject::Reflect,
+        LayerBlendMode::Glow => BlendModeProject::Glow,
+        LayerBlendMode::Phoenix => BlendModeProject::Phoenix,
+        LayerBlendMode::HueShift => BlendModeProject::HueShift,
+        LayerBlendMode::FractalFold => BlendModeProject::FractalFold,
+        LayerBlendMode::XorCrush => BlendModeProject::XorCrush,
+        LayerBlendMode::Solarize => BlendModeProject::Solarize,
     }
 }
 
@@ -450,6 +477,33 @@ fn blend_mode_from_project(mode: BlendModeProject) -> LayerBlendMode {
         BlendModeProject::Lighten => LayerBlendMode::Lighten,
         BlendModeProject::Darken => LayerBlendMode::Darken,
         BlendModeProject::Overlay => LayerBlendMode::Overlay,
+        BlendModeProject::ColorDodge => LayerBlendMode::ColorDodge,
+        BlendModeProject::ColorBurn => LayerBlendMode::ColorBurn,
+        BlendModeProject::HardLight => LayerBlendMode::HardLight,
+        BlendModeProject::SoftLight => LayerBlendMode::SoftLight,
+        BlendModeProject::Exclusion => LayerBlendMode::Exclusion,
+        BlendModeProject::LinearBurn => LayerBlendMode::LinearBurn,
+        BlendModeProject::VividLight => LayerBlendMode::VividLight,
+        BlendModeProject::LinearLight => LayerBlendMode::LinearLight,
+        BlendModeProject::PinLight => LayerBlendMode::PinLight,
+        BlendModeProject::HardMix => LayerBlendMode::HardMix,
+        BlendModeProject::Subtract => LayerBlendMode::Subtract,
+        BlendModeProject::Divide => LayerBlendMode::Divide,
+        BlendModeProject::Hue => LayerBlendMode::Hue,
+        BlendModeProject::Saturation => LayerBlendMode::Saturation,
+        BlendModeProject::Color => LayerBlendMode::Color,
+        BlendModeProject::Luminosity => LayerBlendMode::Luminosity,
+        BlendModeProject::DarkerColor => LayerBlendMode::DarkerColor,
+        BlendModeProject::LighterColor => LayerBlendMode::LighterColor,
+        BlendModeProject::Negation => LayerBlendMode::Negation,
+        BlendModeProject::Invert => LayerBlendMode::Invert,
+        BlendModeProject::Reflect => LayerBlendMode::Reflect,
+        BlendModeProject::Glow => LayerBlendMode::Glow,
+        BlendModeProject::Phoenix => LayerBlendMode::Phoenix,
+        BlendModeProject::HueShift => LayerBlendMode::HueShift,
+        BlendModeProject::FractalFold => LayerBlendMode::FractalFold,
+        BlendModeProject::XorCrush => LayerBlendMode::XorCrush,
+        BlendModeProject::Solarize => LayerBlendMode::Solarize,
     }
 }
 
@@ -515,6 +569,10 @@ fn effect_to_project(effect: DeckEffects) -> EffectProject {
         find_edges: effect.find_edges,
         bit_reduction: effect.bit_reduction,
         blacklight: effect.blacklight,
+        bloom: effect.bloom,
+        bloom_threshold: effect.bloom_threshold,
+        bloom_radius: effect.bloom_radius,
+        bloom_chroma: effect.bloom_chroma,
         mirror: effect.mirror,
     }
 }
@@ -535,6 +593,10 @@ fn effect_from_project(effect: &EffectProject) -> DeckEffects {
         find_edges: effect.find_edges,
         bit_reduction: effect.bit_reduction,
         blacklight: effect.blacklight,
+        bloom: effect.bloom,
+        bloom_threshold: effect.bloom_threshold,
+        bloom_radius: effect.bloom_radius,
+        bloom_chroma: effect.bloom_chroma,
         mirror: effect.mirror,
         ..DeckEffects::default()
     };
@@ -626,6 +688,10 @@ fn effect_target_to_project(target: EffectTarget) -> EffectTargetProject {
         EffectTarget::FindEdges => EffectTargetProject::FindEdges,
         EffectTarget::BitReduction => EffectTargetProject::BitReduction,
         EffectTarget::Blacklight => EffectTargetProject::Blacklight,
+        EffectTarget::Bloom => EffectTargetProject::Bloom,
+        EffectTarget::BloomThreshold => EffectTargetProject::BloomThreshold,
+        EffectTarget::BloomRadius => EffectTargetProject::BloomRadius,
+        EffectTarget::BloomChroma => EffectTargetProject::BloomChroma,
     }
 }
 
@@ -645,6 +711,10 @@ fn effect_target_from_project(target: EffectTargetProject) -> EffectTarget {
         EffectTargetProject::FindEdges => EffectTarget::FindEdges,
         EffectTargetProject::BitReduction => EffectTarget::BitReduction,
         EffectTargetProject::Blacklight => EffectTarget::Blacklight,
+        EffectTargetProject::Bloom => EffectTarget::Bloom,
+        EffectTargetProject::BloomThreshold => EffectTarget::BloomThreshold,
+        EffectTargetProject::BloomRadius => EffectTarget::BloomRadius,
+        EffectTargetProject::BloomChroma => EffectTarget::BloomChroma,
     }
 }
 

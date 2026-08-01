@@ -36,8 +36,23 @@ target OS:
 - Per-deck position, uniform scale, rotation and independent horizontal or
   vertical flip, four-edge crop, and Fit/Fill/Stretch source modes, with
   transparent pixels outside transformed layer bounds.
-- Alpha-correct per-deck Normal, Add, Screen, Multiply, Difference, Lighten,
-  Darken and Overlay blend modes inside each bus.
+- Thirty-five alpha-correct per-deck blend modes inside each bus, grouped as
+  Standard, Contrast, Component and Oneiroi in the picker. The separable and
+  non-separable modes follow W3C Compositing and Blending Level 1, so Color
+  Dodge, Soft Light, Vivid Light, Hue, Color, Luminosity and the rest match
+  what a compositing tool does; every mode has a hand-derived GPU readback
+  test.
+- Nine signature blend modes with no Photoshop equivalent: Negation, Invert,
+  Reflect, Glow, Phoenix, Hue Shift, Fractal Fold, Xor Crush and Solarize.
+  Fractal Fold folds channels through a layer-driven triangle wave, Xor Crush
+  quantises both layers to five bits and exclusive-ors them, and Hue Shift
+  rotates the backdrop by the layer's own hue angle.
+- Per-deck bloom gathered inside the composite pass: soft-knee bright pass,
+  16-tap golden-angle disc, resolution-independent radius, and a chromatic
+  spread that carries red further than blue. Decks at zero level, bypassed or
+  excluded by solo skip the gather entirely, so cost tracks decks actually on
+  screen. Measured at 1080p on an M3 Pro: 2.78 ms/frame for four decks
+  without bloom, 6.90 ms with bloom on all four.
 - Per-deck Solo isolation and non-destructive layer Bypass, including
   multi-solo operation across both buses.
 - Native audio-input discovery and capture through a bounded allocation-free

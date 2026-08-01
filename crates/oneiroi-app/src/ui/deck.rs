@@ -150,17 +150,17 @@ pub(super) fn draw_deck(
             egui::ComboBox::from_id_salt(format!("blend-mode-{}", id.label()))
                 .selected_text(blend_mode_label(*blend_mode))
                 .show_ui(ui, |ui| {
-                    for mode in [
-                        LayerBlendMode::Normal,
-                        LayerBlendMode::Add,
-                        LayerBlendMode::Screen,
-                        LayerBlendMode::Multiply,
-                        LayerBlendMode::Difference,
-                        LayerBlendMode::Lighten,
-                        LayerBlendMode::Darken,
-                        LayerBlendMode::Overlay,
-                    ] {
-                        ui.selectable_value(blend_mode, mode, blend_mode_label(mode));
+                    ui.set_min_width(190.0);
+                    for group in BlendModeGroup::ALL {
+                        ui.label(egui::RichText::new(group.label()).weak().small());
+                        for mode in LayerBlendMode::ALL
+                            .into_iter()
+                            .filter(|mode| mode.group() == group)
+                        {
+                            ui.selectable_value(blend_mode, mode, blend_mode_label(mode))
+                                .on_hover_text(mode.hint());
+                        }
+                        ui.separator();
                     }
                 });
             if *bypassed {
@@ -358,6 +358,27 @@ pub(super) fn draw_deck(
                     columns[1]
                         .add(egui::Slider::new(&mut effects.pixelate, 0.0..=0.1).text("pixelate"));
                     columns[1]
+                        .add(egui::Slider::new(&mut effects.bloom, 0.0..=1.0).text("bloom"))
+                        .on_hover_text(
+                            "Scatters light from the brightest parts of this layer only.",
+                        );
+                    // The shaping controls only matter once there is bloom to shape.
+                    columns[1].add_enabled_ui(effects.bloom > 0.0, |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut effects.bloom_threshold, 0.0..=1.0)
+                                .text("bloom threshold"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut effects.bloom_radius, 0.02..=1.0)
+                                .text("bloom radius"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut effects.bloom_chroma, 0.0..=1.0)
+                                .text("bloom chroma"),
+                        )
+                        .on_hover_text("Spreads red further than blue, like real diffusion.");
+                    });
+                    columns[1]
                         .add(egui::Slider::new(&mut effects.luma_key, 0.0..=1.0).text("luma key"));
                 });
                 ui.horizontal(|ui| {
@@ -489,7 +510,7 @@ pub(super) fn draw_deck(
     });
 }
 
-pub(super) const EFFECT_TARGETS: [EffectTarget; 14] = [
+pub(super) const EFFECT_TARGETS: [EffectTarget; 18] = [
     EffectTarget::Hue,
     EffectTarget::Contrast,
     EffectTarget::Saturation,
@@ -504,6 +525,10 @@ pub(super) const EFFECT_TARGETS: [EffectTarget; 14] = [
     EffectTarget::FindEdges,
     EffectTarget::BitReduction,
     EffectTarget::Blacklight,
+    EffectTarget::Bloom,
+    EffectTarget::BloomThreshold,
+    EffectTarget::BloomRadius,
+    EffectTarget::BloomChroma,
 ];
 
 pub(super) const BEAT_DIVISIONS: [(f32, &str); 8] = [
@@ -533,20 +558,15 @@ pub(super) fn effect_target_label(target: EffectTarget) -> &'static str {
         EffectTarget::FindEdges => "Find edges",
         EffectTarget::BitReduction => "Bit reduction",
         EffectTarget::Blacklight => "Black light",
+        EffectTarget::Bloom => "Bloom",
+        EffectTarget::BloomThreshold => "Bloom threshold",
+        EffectTarget::BloomRadius => "Bloom radius",
+        EffectTarget::BloomChroma => "Bloom chroma",
     }
 }
 
 pub(super) fn blend_mode_label(mode: LayerBlendMode) -> &'static str {
-    match mode {
-        LayerBlendMode::Normal => "Normal",
-        LayerBlendMode::Add => "Add",
-        LayerBlendMode::Screen => "Screen",
-        LayerBlendMode::Multiply => "Multiply",
-        LayerBlendMode::Difference => "Difference",
-        LayerBlendMode::Lighten => "Lighten",
-        LayerBlendMode::Darken => "Darken",
-        LayerBlendMode::Overlay => "Overlay",
-    }
+    mode.label()
 }
 
 pub(super) fn mod_source_label(source: u8) -> &'static str {

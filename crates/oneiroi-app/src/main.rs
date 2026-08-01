@@ -1550,6 +1550,10 @@ fn effect_parameter(effects: DeckEffects, effect: u8) -> f32 {
         11 => effects.find_edges,
         12 => effects.bit_reduction,
         13 => effects.blacklight,
+        14 => effects.bloom,
+        15 => effects.bloom_threshold,
+        16 => effects.bloom_radius,
+        17 => effects.bloom_chroma,
         _ => 0.0,
     }
 }
@@ -1570,6 +1574,10 @@ fn set_effect_parameter(effects: &mut DeckEffects, effect: u8, value: f32) {
         11 => effects.find_edges = value,
         12 => effects.bit_reduction = value,
         13 => effects.blacklight = value,
+        14 => effects.bloom = value,
+        15 => effects.bloom_threshold = value,
+        16 => effects.bloom_radius = value,
+        17 => effects.bloom_chroma = value,
         _ => {}
     }
     *effects = effects.sanitized();

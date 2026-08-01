@@ -20,9 +20,10 @@ pub use effect_manifest::{
 pub use gpu::{Gpu, PresentSurface, SurfaceAcquireStatus, SurfaceAcquisition};
 pub use graph_plan::{BuiltInRenderStage, FusedDeckNodes, LoweredPlanError, LoweredRenderPlan};
 pub use mixer::{
-    DeckEffects, DeckLfos, DeckTransform, EFFECT_SLOTS_PER_DECK, EffectGroup, EffectLfo,
-    EffectPreset, EffectSlot, EffectTarget, FourDeckCompositor, LayerBlendMode, LfoWaveform,
-    MOD_ROUTES_PER_DECK, MixerBus, MixerParams, MixerUploadError, ModulationRoute, SourceMode,
+    BlendModeGroup, DeckEffects, DeckLfos, DeckTransform, EFFECT_SLOTS_PER_DECK, EffectGroup,
+    EffectLfo, EffectPreset, EffectSlot, EffectTarget, FourDeckCompositor, LayerBlendMode,
+    LfoWaveform, MOD_ROUTES_PER_DECK, MixerBus, MixerParams, MixerUploadError, ModulationRoute,
+    SourceMode,
 };
 pub use program::{
     EFFECT_PARAMETER_CAPACITY, EffectParameterValue, MASTER_EFFECT_SLOTS, MASTER_MODULATION_ROUTES,

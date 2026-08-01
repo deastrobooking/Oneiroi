@@ -15,6 +15,10 @@ struct MixerGlobals {
     find_edges: vec4<f32>,
     bit_reduction: vec4<f32>,
     blacklight: vec4<f32>,
+    bloom: vec4<f32>,
+    bloom_threshold: vec4<f32>,
+    bloom_radius: vec4<f32>,
+    bloom_chroma: vec4<f32>,
     mirror: vec4<u32>,
     effect_slot_groups_0: vec4<u32>,
     effect_slot_groups_1: vec4<u32>,
@@ -62,6 +66,10 @@ struct EffectConfig {
     find_edges: f32,
     bit_reduction: f32,
     blacklight: f32,
+    bloom: f32,
+    bloom_threshold: f32,
+    bloom_radius: f32,
+    bloom_chroma: f32,
     mirror: u32,
     slot_groups: vec4<u32>,
     slot_enabled: vec4<u32>,
@@ -141,31 +149,235 @@ fn sample_source(
     );
 }
 
+// Blend modes follow the separable and non-separable definitions in W3C
+// Compositing and Blending Level 1, which is also what Photoshop implements.
+// One deliberate difference: this engine composites in linear light, while
+// Photoshop evaluates in gamma space, so mid-tone behaviour is smoother here
+// and exact numeric parity with a Photoshop screenshot is not a goal.
+//
+// `mode` is uniform across the draw, so these branches cost a scalar jump
+// rather than per-pixel divergence.
+
+// The non-separable modes carry their own luminance weights in the spec.
+// They stay distinct from the Rec. 709 weights the grading code uses.
+const BLEND_LUMA: vec3<f32> = vec3(0.3, 0.59, 0.11);
+const TAU: f32 = 6.2831853;
+
+fn blend_lum(color: vec3<f32>) -> f32 {
+    return dot(color, BLEND_LUMA);
+}
+
+fn clip_color(color: vec3<f32>) -> vec3<f32> {
+    let luma = blend_lum(color);
+    let low = min(color.r, min(color.g, color.b));
+    let high = max(color.r, max(color.g, color.b));
+    var clipped = color;
+    if low < 0.0 {
+        clipped = luma + ((clipped - luma) * luma) / max(luma - low, 0.00001);
+    }
+    if high > 1.0 {
+        clipped = luma + ((clipped - luma) * (1.0 - luma)) / max(high - luma, 0.00001);
+    }
+    return clipped;
+}
+
+fn set_lum(color: vec3<f32>, luma: f32) -> vec3<f32> {
+    return clip_color(color + (luma - blend_lum(color)));
+}
+
+fn blend_sat(color: vec3<f32>) -> f32 {
+    return max(color.r, max(color.g, color.b)) - min(color.r, min(color.g, color.b));
+}
+
+fn set_sat(color: vec3<f32>, saturation: f32) -> vec3<f32> {
+    let low = min(color.r, min(color.g, color.b));
+    let high = max(color.r, max(color.g, color.b));
+    if high <= low {
+        return vec3(0.0);
+    }
+    return (color - low) * saturation / (high - low);
+}
+
+/// Hue angle in turns, taken from the RGB hexagon's chroma plane.
+fn hue_angle(color: vec3<f32>) -> f32 {
+    let alpha = color.r - 0.5 * (color.g + color.b);
+    let beta = 0.8660254 * (color.g - color.b);
+    return atan2(beta, alpha) / TAU;
+}
+
+fn hue_rotate(color: vec3<f32>, turns: f32) -> vec3<f32> {
+    let angle = turns * TAU;
+    let axis = normalize(vec3(1.0));
+    return color * cos(angle)
+        + cross(axis, color) * sin(angle)
+        + axis * dot(axis, color) * (1.0 - cos(angle));
+}
+
+fn blend_screen(back: vec3<f32>, front: vec3<f32>) -> vec3<f32> {
+    return back + front - back * front;
+}
+
+fn blend_color_dodge(back: vec3<f32>, front: vec3<f32>) -> vec3<f32> {
+    let dodged = min(vec3(1.0), back / max(vec3(1.0) - front, vec3(0.00001)));
+    let saturated = select(dodged, vec3(1.0), front >= vec3(1.0));
+    return select(saturated, vec3(0.0), back <= vec3(0.0));
+}
+
+fn blend_color_burn(back: vec3<f32>, front: vec3<f32>) -> vec3<f32> {
+    let burned = vec3(1.0) - min(vec3(1.0), (vec3(1.0) - back) / max(front, vec3(0.00001)));
+    let floored = select(burned, vec3(0.0), front <= vec3(0.0));
+    return select(floored, vec3(1.0), back >= vec3(1.0));
+}
+
+fn blend_hard_light(back: vec3<f32>, front: vec3<f32>) -> vec3<f32> {
+    let low = 2.0 * back * front;
+    let high = blend_screen(back, 2.0 * front - vec3(1.0));
+    return select(low, high, front > vec3(0.5));
+}
+
+fn soft_light_curve(back: vec3<f32>) -> vec3<f32> {
+    let low = ((16.0 * back - vec3(12.0)) * back + vec3(4.0)) * back;
+    return select(sqrt(max(back, vec3(0.0))), low, back <= vec3(0.25));
+}
+
+fn blend_soft_light(back: vec3<f32>, front: vec3<f32>) -> vec3<f32> {
+    let darkened = back - (vec3(1.0) - 2.0 * front) * back * (vec3(1.0) - back);
+    let lightened = back + (2.0 * front - vec3(1.0)) * (soft_light_curve(back) - back);
+    return select(lightened, darkened, front <= vec3(0.5));
+}
+
 fn blend_color(back: vec3<f32>, front: vec3<f32>, mode: u32) -> vec3<f32> {
-    if mode == 1u {
-        return min(back + front, vec3(1.0));
+    var result = front;
+    switch mode {
+        case 1u: {
+            result = back + front;
+        }
+        case 2u: {
+            result = blend_screen(back, front);
+        }
+        case 3u: {
+            result = back * front;
+        }
+        case 4u: {
+            result = abs(back - front);
+        }
+        case 5u: {
+            result = max(back, front);
+        }
+        case 6u: {
+            result = min(back, front);
+        }
+        case 7u: {
+            result = blend_hard_light(front, back);
+        }
+        case 8u: {
+            result = blend_color_dodge(back, front);
+        }
+        case 9u: {
+            result = blend_color_burn(back, front);
+        }
+        case 10u: {
+            result = blend_hard_light(back, front);
+        }
+        case 11u: {
+            result = blend_soft_light(back, front);
+        }
+        case 12u: {
+            result = back + front - 2.0 * back * front;
+        }
+        case 13u: {
+            result = back + front - vec3(1.0);
+        }
+        case 14u: {
+            let burn = blend_color_burn(back, 2.0 * front);
+            let dodge = blend_color_dodge(back, 2.0 * (front - vec3(0.5)));
+            result = select(dodge, burn, front <= vec3(0.5));
+        }
+        case 15u: {
+            result = back + 2.0 * front - vec3(1.0);
+        }
+        case 16u: {
+            let darker = min(back, 2.0 * front);
+            let lighter = max(back, 2.0 * front - vec3(1.0));
+            result = select(lighter, darker, front <= vec3(0.5));
+        }
+        case 17u: {
+            result = select(vec3(0.0), vec3(1.0), (back + front) >= vec3(1.0));
+        }
+        case 18u: {
+            result = back - front;
+        }
+        case 19u: {
+            result = back / max(front, vec3(0.00001));
+        }
+        case 20u: {
+            result = set_lum(set_sat(front, blend_sat(back)), blend_lum(back));
+        }
+        case 21u: {
+            result = set_lum(set_sat(back, blend_sat(front)), blend_lum(back));
+        }
+        case 22u: {
+            result = set_lum(front, blend_lum(back));
+        }
+        case 23u: {
+            result = set_lum(back, blend_lum(front));
+        }
+        case 24u: {
+            result = select(front, back, blend_lum(back) < blend_lum(front));
+        }
+        case 25u: {
+            result = select(front, back, blend_lum(back) > blend_lum(front));
+        }
+        // --- Signature modes. Destructive by design; they are instruments,
+        // --- not correctness-preserving compositing operators.
+        case 26u: {
+            // Negation: difference that reflects off black instead of
+            // reaching it, so overlapping darks stay luminous.
+            result = vec3(1.0) - abs(vec3(1.0) - back - front);
+        }
+        case 27u: {
+            // The layer's brightness drives how far the backdrop inverts,
+            // so bright footage punches a photographic negative through.
+            result = mix(back, vec3(1.0) - back, blend_lum(front));
+        }
+        case 28u: {
+            result = min(vec3(1.0), back * back / max(vec3(1.0) - front, vec3(0.00001)));
+        }
+        case 29u: {
+            result = min(vec3(1.0), front * front / max(vec3(1.0) - back, vec3(0.00001)));
+        }
+        case 30u: {
+            result = min(back, front) - max(back, front) + vec3(1.0);
+        }
+        case 31u: {
+            // Rotates the backdrop around the grey axis by the layer's own hue
+            // angle: identity on greyscale layers, a spinning colour wheel on
+            // saturated ones.
+            result = hue_rotate(back, hue_angle(front));
+        }
+        case 32u: {
+            // Triangle-wave folding. The layer sets the fold count per channel,
+            // so a gradient becomes contour bands that march with the footage.
+            let folds = vec3(1.0) + front * 7.0;
+            result = abs(fract(back * folds * 0.5) * 2.0 - vec3(1.0));
+        }
+        case 33u: {
+            // Both layers quantise to 5 bits and exclusive-or. Neighbouring
+            // input values land far apart, which is the point.
+            let levels = 31.0;
+            let back_code = vec3<u32>(clamp(back, vec3(0.0), vec3(1.0)) * levels + vec3(0.5));
+            let front_code = vec3<u32>(clamp(front, vec3(0.0), vec3(1.0)) * levels + vec3(0.5));
+            result = vec3<f32>(back_code ^ front_code) / levels;
+        }
+        case 34u: {
+            // Solarisation with a per-channel threshold supplied by the layer.
+            result = select(back, vec3(1.0) - back, back > front);
+        }
+        default: {
+            result = front;
+        }
     }
-    if mode == 2u {
-        return vec3(1.0) - (vec3(1.0) - back) * (vec3(1.0) - front);
-    }
-    if mode == 3u {
-        return back * front;
-    }
-    if mode == 4u {
-        return abs(back - front);
-    }
-    if mode == 5u {
-        return max(back, front);
-    }
-    if mode == 6u {
-        return min(back, front);
-    }
-    if mode == 7u {
-        let low = 2.0 * back * front;
-        let high = vec3(1.0) - 2.0 * (vec3(1.0) - back) * (vec3(1.0) - front);
-        return select(low, high, back >= vec3(0.5));
-    }
-    return front;
+    return clamp(result, vec3(0.0), vec3(1.0));
 }
 
 fn composite(back: vec4<f32>, straight_front: vec4<f32>, level: f32, mode: u32) -> vec4<f32> {
@@ -276,12 +488,65 @@ fn effect_uv(input_uv: vec2<f32>, effect: EffectConfig) -> vec2<f32> {
     return effect_uv_slot(uv, effect, 2u);
 }
 
-fn hue_rotate(color: vec3<f32>, turns: f32) -> vec3<f32> {
-    let angle = turns * 6.2831853;
-    let axis = normalize(vec3(1.0));
-    return color * cos(angle)
-        + cross(axis, color) * sin(angle)
-        + axis * dot(axis, color) * (1.0 - cos(angle));
+// Bloom is gathered inside the composite pass rather than as a separate
+// bright-pass/blur pipeline: the mixer samples every deck once already, and a
+// per-deck ping-pong chain would cost four more render targets at composition
+// resolution. A 16-tap golden-angle disc is a coarser blur than a true
+// separable Gaussian, but at these radii the difference is invisible against
+// moving footage.
+const BLOOM_TAPS: u32 = 16u;
+const GOLDEN_ANGLE: f32 = 2.39996323;
+const BLOOM_FALLOFF: f32 = 2.5;
+
+/// Isolate the light above the threshold with a quadratic knee, so bloom fades
+/// in as footage brightens instead of popping on at a hard cutoff.
+fn bright_pass(color: vec3<f32>, threshold: f32) -> vec3<f32> {
+    let knee = max(threshold * 0.5, 0.0001);
+    let luma = dot(max(color, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
+    let soft = clamp(luma - threshold + knee, 0.0, 2.0 * knee);
+    let contribution = max(soft * soft / (4.0 * knee), luma - threshold);
+    return max(color, vec3(0.0)) * (max(contribution, 0.0) / max(luma, 0.0001));
+}
+
+fn bloom_light(
+    primary: texture_2d<f32>,
+    alpha_texture: texture_2d<f32>,
+    uv: vec2<f32>,
+    kind: u32,
+    effect: EffectConfig,
+) -> vec3<f32> {
+    let dimensions = max(vec2<f32>(textureDimensions(primary)), vec2(1.0));
+    let texel = 1.0 / dimensions;
+    // Scale the radius off the smaller dimension so a given setting spreads the
+    // same distance whatever resolution the clip happens to be.
+    let radius = effect.bloom_radius * 0.12 * min(dimensions.x, dimensions.y);
+
+    var accumulated = vec3(0.0);
+    var weights = vec3(0.0);
+    for (var tap = 0u; tap < BLOOM_TAPS; tap = tap + 1u) {
+        let step = (f32(tap) + 0.5) / f32(BLOOM_TAPS);
+        let angle = f32(tap) * GOLDEN_ANGLE;
+        // sqrt distributes taps evenly across the disc; without it they crowd
+        // the centre and the bloom develops a hard core.
+        let offset = vec2(cos(angle), sin(angle)) * sqrt(step) * radius * texel;
+        let sampled = sample_source(
+            primary,
+            alpha_texture,
+            clamp(uv + offset, vec2(0.0), vec2(1.0)),
+            kind,
+        );
+        // Longer red falloff than blue reproduces how real diffusion spreads
+        // wavelengths unevenly. Free: it only reweights taps already taken.
+        let spread = BLOOM_FALLOFF * vec3(
+            1.0 - 0.55 * effect.bloom_chroma,
+            1.0,
+            1.0 + 0.55 * effect.bloom_chroma,
+        );
+        let weight = exp(-step * spread);
+        accumulated += bright_pass(sampled.rgb, effect.bloom_threshold) * weight * sampled.a;
+        weights += weight;
+    }
+    return accumulated / max(weights, vec3(0.0001));
 }
 
 fn edge_strength(
@@ -325,6 +590,7 @@ fn apply_color_group(color: vec4<f32>, effect: EffectConfig) -> vec4<f32> {
 fn apply_stylize_group(
     color: vec4<f32>,
     edge: f32,
+    bloom: vec3<f32>,
     source_luma: f32,
     effect: EffectConfig,
 ) -> vec4<f32> {
@@ -346,6 +612,10 @@ fn apply_stylize_group(
         let edge_color = vec3(edge);
         rgb = mix(rgb, edge_color, effect.find_edges);
     }
+    if effect.bloom > 0.0001 {
+        // Additive: bloom is light the lens scattered, not a colour choice.
+        rgb += bloom * effect.bloom * 2.5;
+    }
 
     var alpha = color.a;
     if effect.luma_key > 0.0001 {
@@ -357,6 +627,7 @@ fn apply_stylize_group(
 fn apply_effect_slot(
     color: vec4<f32>,
     edge: f32,
+    bloom: vec3<f32>,
     source_luma: f32,
     effect: EffectConfig,
     slot: u32,
@@ -368,16 +639,21 @@ fn apply_effect_slot(
     if effect.slot_groups[slot] == 1u {
         effected = apply_color_group(color, effect);
     } else if effect.slot_groups[slot] == 2u {
-        effected = apply_stylize_group(color, edge, source_luma, effect);
+        effected = apply_stylize_group(color, edge, bloom, source_luma, effect);
     }
     return mix(color, effected, effect.slot_mix[slot]);
 }
 
-fn apply_color_effects(color: vec4<f32>, edge: f32, effect: EffectConfig) -> vec4<f32> {
+fn apply_color_effects(
+    color: vec4<f32>,
+    edge: f32,
+    bloom: vec3<f32>,
+    effect: EffectConfig,
+) -> vec4<f32> {
     let source_luma = dot(max(color.rgb, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
-    var resolved = apply_effect_slot(color, edge, source_luma, effect, 0u);
-    resolved = apply_effect_slot(resolved, edge, source_luma, effect, 1u);
-    return apply_effect_slot(resolved, edge, source_luma, effect, 2u);
+    var resolved = apply_effect_slot(color, edge, bloom, source_luma, effect, 0u);
+    resolved = apply_effect_slot(resolved, edge, bloom, source_luma, effect, 1u);
+    return apply_effect_slot(resolved, edge, bloom, source_luma, effect, 2u);
 }
 
 fn stylize_slot_active(effect: EffectConfig, slot: u32) -> bool {
@@ -402,7 +678,11 @@ fn process_source(
     if stylize_active && (effect.neon > 0.0001 || effect.find_edges > 0.0001) {
         edge = edge_strength(primary, alpha_texture, uv, kind);
     }
-    return apply_color_effects(color, edge, effect);
+    var bloom = vec3(0.0);
+    if stylize_active && effect.bloom > 0.0001 {
+        bloom = bloom_light(primary, alpha_texture, uv, kind, effect);
+    }
+    return apply_color_effects(color, edge, bloom, effect);
 }
 
 fn process_layer(
@@ -410,9 +690,15 @@ fn process_layer(
     alpha_texture: texture_2d<f32>,
     transformed_uv: vec3<f32>,
     kind: u32,
+    level: f32,
     effect: EffectConfig,
 ) -> vec4<f32> {
-    if transformed_uv.z == 0.0 {
+    // A zero level cannot reach the output: `composite` scales the layer's
+    // alpha by it, and the CPU already folds bypass and solo exclusion into
+    // the same value. Bailing here skips the whole per-layer effect chain,
+    // which matters most for the multi-tap gathers - bloom alone is 16
+    // samples per deck per pixel whether or not the deck is being seen.
+    if transformed_uv.z == 0.0 || level <= 0.0 {
         return vec4(0.0);
     }
     return process_source(primary, alpha_texture, transformed_uv.xy, kind, effect);
@@ -424,10 +710,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         return vec4(0.0, 0.0, 0.0, 1.0);
     }
 
-    let effect_a = EffectConfig(globals.contrast.x, globals.saturation.x, globals.hue.x, globals.black_level.x, globals.white_level.x, globals.gamma.x, globals.pixelate.x, globals.luma_key.x, globals.neon.x, globals.fractal.x, globals.jitter.x, globals.find_edges.x, globals.bit_reduction.x, globals.blacklight.x, globals.mirror.x, vec4(globals.effect_slot_groups_0.x, globals.effect_slot_groups_1.x, globals.effect_slot_groups_2.x, 0u), vec4(globals.effect_slot_enabled_0.x, globals.effect_slot_enabled_1.x, globals.effect_slot_enabled_2.x, 0u), vec4(globals.effect_slot_mix_0.x, globals.effect_slot_mix_1.x, globals.effect_slot_mix_2.x, 0.0));
-    let effect_b = EffectConfig(globals.contrast.y, globals.saturation.y, globals.hue.y, globals.black_level.y, globals.white_level.y, globals.gamma.y, globals.pixelate.y, globals.luma_key.y, globals.neon.y, globals.fractal.y, globals.jitter.y, globals.find_edges.y, globals.bit_reduction.y, globals.blacklight.y, globals.mirror.y, vec4(globals.effect_slot_groups_0.y, globals.effect_slot_groups_1.y, globals.effect_slot_groups_2.y, 0u), vec4(globals.effect_slot_enabled_0.y, globals.effect_slot_enabled_1.y, globals.effect_slot_enabled_2.y, 0u), vec4(globals.effect_slot_mix_0.y, globals.effect_slot_mix_1.y, globals.effect_slot_mix_2.y, 0.0));
-    let effect_c = EffectConfig(globals.contrast.z, globals.saturation.z, globals.hue.z, globals.black_level.z, globals.white_level.z, globals.gamma.z, globals.pixelate.z, globals.luma_key.z, globals.neon.z, globals.fractal.z, globals.jitter.z, globals.find_edges.z, globals.bit_reduction.z, globals.blacklight.z, globals.mirror.z, vec4(globals.effect_slot_groups_0.z, globals.effect_slot_groups_1.z, globals.effect_slot_groups_2.z, 0u), vec4(globals.effect_slot_enabled_0.z, globals.effect_slot_enabled_1.z, globals.effect_slot_enabled_2.z, 0u), vec4(globals.effect_slot_mix_0.z, globals.effect_slot_mix_1.z, globals.effect_slot_mix_2.z, 0.0));
-    let effect_d = EffectConfig(globals.contrast.w, globals.saturation.w, globals.hue.w, globals.black_level.w, globals.white_level.w, globals.gamma.w, globals.pixelate.w, globals.luma_key.w, globals.neon.w, globals.fractal.w, globals.jitter.w, globals.find_edges.w, globals.bit_reduction.w, globals.blacklight.w, globals.mirror.w, vec4(globals.effect_slot_groups_0.w, globals.effect_slot_groups_1.w, globals.effect_slot_groups_2.w, 0u), vec4(globals.effect_slot_enabled_0.w, globals.effect_slot_enabled_1.w, globals.effect_slot_enabled_2.w, 0u), vec4(globals.effect_slot_mix_0.w, globals.effect_slot_mix_1.w, globals.effect_slot_mix_2.w, 0.0));
+    let effect_a = EffectConfig(globals.contrast.x, globals.saturation.x, globals.hue.x, globals.black_level.x, globals.white_level.x, globals.gamma.x, globals.pixelate.x, globals.luma_key.x, globals.neon.x, globals.fractal.x, globals.jitter.x, globals.find_edges.x, globals.bit_reduction.x, globals.blacklight.x, globals.bloom.x, globals.bloom_threshold.x, globals.bloom_radius.x, globals.bloom_chroma.x, globals.mirror.x, vec4(globals.effect_slot_groups_0.x, globals.effect_slot_groups_1.x, globals.effect_slot_groups_2.x, 0u), vec4(globals.effect_slot_enabled_0.x, globals.effect_slot_enabled_1.x, globals.effect_slot_enabled_2.x, 0u), vec4(globals.effect_slot_mix_0.x, globals.effect_slot_mix_1.x, globals.effect_slot_mix_2.x, 0.0));
+    let effect_b = EffectConfig(globals.contrast.y, globals.saturation.y, globals.hue.y, globals.black_level.y, globals.white_level.y, globals.gamma.y, globals.pixelate.y, globals.luma_key.y, globals.neon.y, globals.fractal.y, globals.jitter.y, globals.find_edges.y, globals.bit_reduction.y, globals.blacklight.y, globals.bloom.y, globals.bloom_threshold.y, globals.bloom_radius.y, globals.bloom_chroma.y, globals.mirror.y, vec4(globals.effect_slot_groups_0.y, globals.effect_slot_groups_1.y, globals.effect_slot_groups_2.y, 0u), vec4(globals.effect_slot_enabled_0.y, globals.effect_slot_enabled_1.y, globals.effect_slot_enabled_2.y, 0u), vec4(globals.effect_slot_mix_0.y, globals.effect_slot_mix_1.y, globals.effect_slot_mix_2.y, 0.0));
+    let effect_c = EffectConfig(globals.contrast.z, globals.saturation.z, globals.hue.z, globals.black_level.z, globals.white_level.z, globals.gamma.z, globals.pixelate.z, globals.luma_key.z, globals.neon.z, globals.fractal.z, globals.jitter.z, globals.find_edges.z, globals.bit_reduction.z, globals.blacklight.z, globals.bloom.z, globals.bloom_threshold.z, globals.bloom_radius.z, globals.bloom_chroma.z, globals.mirror.z, vec4(globals.effect_slot_groups_0.z, globals.effect_slot_groups_1.z, globals.effect_slot_groups_2.z, 0u), vec4(globals.effect_slot_enabled_0.z, globals.effect_slot_enabled_1.z, globals.effect_slot_enabled_2.z, 0u), vec4(globals.effect_slot_mix_0.z, globals.effect_slot_mix_1.z, globals.effect_slot_mix_2.z, 0.0));
+    let effect_d = EffectConfig(globals.contrast.w, globals.saturation.w, globals.hue.w, globals.black_level.w, globals.white_level.w, globals.gamma.w, globals.pixelate.w, globals.luma_key.w, globals.neon.w, globals.fractal.w, globals.jitter.w, globals.find_edges.w, globals.bit_reduction.w, globals.blacklight.w, globals.bloom.w, globals.bloom_threshold.w, globals.bloom_radius.w, globals.bloom_chroma.w, globals.mirror.w, vec4(globals.effect_slot_groups_0.w, globals.effect_slot_groups_1.w, globals.effect_slot_groups_2.w, 0u), vec4(globals.effect_slot_enabled_0.w, globals.effect_slot_enabled_1.w, globals.effect_slot_enabled_2.w, 0u), vec4(globals.effect_slot_mix_0.w, globals.effect_slot_mix_1.w, globals.effect_slot_mix_2.w, 0.0));
     let aspect_a = f32(textureDimensions(source_a).x) / max(f32(textureDimensions(source_a).y), 1.0);
     let aspect_b = f32(textureDimensions(source_b).x) / max(f32(textureDimensions(source_b).y), 1.0);
     let aspect_c = f32(textureDimensions(source_c).x) / max(f32(textureDimensions(source_c).y), 1.0);
@@ -436,10 +722,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let uv_b = layer_uv(input.uv, vec2(globals.position_x.y, globals.position_y.y), globals.scale.y, globals.rotation.y, globals.flip_horizontal.y, globals.flip_vertical.y, aspect_b, vec4(globals.crop_left.y, globals.crop_right.y, globals.crop_top.y, globals.crop_bottom.y), globals.source_modes.y);
     let uv_c = layer_uv(input.uv, vec2(globals.position_x.z, globals.position_y.z), globals.scale.z, globals.rotation.z, globals.flip_horizontal.z, globals.flip_vertical.z, aspect_c, vec4(globals.crop_left.z, globals.crop_right.z, globals.crop_top.z, globals.crop_bottom.z), globals.source_modes.z);
     let uv_d = layer_uv(input.uv, vec2(globals.position_x.w, globals.position_y.w), globals.scale.w, globals.rotation.w, globals.flip_horizontal.w, globals.flip_vertical.w, aspect_d, vec4(globals.crop_left.w, globals.crop_right.w, globals.crop_top.w, globals.crop_bottom.w), globals.source_modes.w);
-    let a = process_layer(source_a, alpha_a, uv_a, globals.source_kinds.x, effect_a);
-    let b = process_layer(source_b, alpha_b, uv_b, globals.source_kinds.y, effect_b);
-    let c = process_layer(source_c, alpha_c, uv_c, globals.source_kinds.z, effect_c);
-    let d = process_layer(source_d, alpha_d, uv_d, globals.source_kinds.w, effect_d);
+    let a = process_layer(source_a, alpha_a, uv_a, globals.source_kinds.x, globals.levels.x, effect_a);
+    let b = process_layer(source_b, alpha_b, uv_b, globals.source_kinds.y, globals.levels.y, effect_b);
+    let c = process_layer(source_c, alpha_c, uv_c, globals.source_kinds.z, globals.levels.z, effect_c);
+    let d = process_layer(source_d, alpha_d, uv_d, globals.source_kinds.w, globals.levels.w, effect_d);
 
     var bus_a = vec4(0.0);
     var bus_b = vec4(0.0);

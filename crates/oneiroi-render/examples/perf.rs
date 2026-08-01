@@ -9,7 +9,7 @@
 //! ```sh
 //! cargo run --release -p oneiroi-render --example perf -- --decks 4
 //! cargo run --release -p oneiroi-render --example perf -- --decks 2 --source rgba
-//! cargo run --release -p oneiroi-render --example perf -- --deck-fx --master both --json
+//! cargo run --release -p oneiroi-render --example perf -- --preset halation --master both
 //! ```
 //!
 //! Every configuration is measured twice, because the two numbers answer
@@ -91,7 +91,7 @@ usage: perf [options]
   --width N          composition width          (default 1920)
   --height N         composition height         (default 1080)
   --source hap|rgba  per-deck frame format      (default hap)
-  --deck-fx          apply the Neon Night preset to every deck
+  --preset NAME      deck effect preset: neutral|neon|blacklight|glitch|halation
   --master MODE      none|blur|feedback|both    (default none)
   --inflight N       frames submitted before a wait (default 3)
   --runs N           repeat the measurement N times (default 3)
@@ -160,7 +160,7 @@ struct Args {
     width: u32,
     height: u32,
     source: Source,
-    deck_fx: bool,
+    preset: EffectPreset,
     master: Master,
     inflight: usize,
     runs: usize,
@@ -178,7 +178,7 @@ impl Args {
             width: 1920,
             height: 1080,
             source: Source::Hap,
-            deck_fx: false,
+            preset: EffectPreset::Neutral,
             master: Master::None,
             inflight: 3,
             runs: 3,
@@ -217,7 +217,16 @@ impl Args {
                         other => return Err(format!("unknown master mode `{other}`")),
                     }
                 }
-                "--deck-fx" => parsed.deck_fx = true,
+                "--preset" => {
+                    parsed.preset = match value()?.as_str() {
+                        "neutral" => EffectPreset::Neutral,
+                        "neon" => EffectPreset::NeonNight,
+                        "blacklight" => EffectPreset::Blacklight,
+                        "glitch" => EffectPreset::Glitch,
+                        "halation" => EffectPreset::Halation,
+                        other => return Err(format!("unknown preset `{other}`")),
+                    }
+                }
                 "--gpu-timing" => parsed.gpu_timing = true,
                 "--json" => parsed.json = true,
                 "--help" | "-h" => {
@@ -482,9 +491,7 @@ fn run(gpu: &Gpu, args: &Args) -> Report {
             MixerBus::B
         };
         params.levels[deck] = if deck < args.decks { 1.0 } else { 0.0 };
-        if args.deck_fx {
-            params.effects[deck] = DeckEffects::preset(EffectPreset::NeonNight);
-        }
+        params.effects[deck] = DeckEffects::preset(args.preset);
     }
     params.crossfade_gains = [0.5, 0.5];
 
@@ -698,7 +705,7 @@ impl Summary {
             args.height,
             args.decks,
             args.source.label(),
-            if args.deck_fx { "on" } else { "off" },
+            args.preset.label(),
             args.master.label(),
             args.runs,
             args.frames,
@@ -763,7 +770,7 @@ impl Summary {
         format!(
             concat!(
                 r#"{{"adapter":"{}","backend":"{}","width":{},"height":{},"decks":{},"#,
-                r#""source":"{}","deck_fx":{},"master":"{}","runs":{},"frames":{},"warmup":{},"#,
+                r#""source":"{}","preset":"{}","master":"{}","runs":{},"frames":{},"warmup":{},"#,
                 r#""inflight":{},"sustained_runs_ms":[{}],"sustained_best_ms":{:.4},"#,
                 r#""sustained_median_ms":{:.4},"sustained_worst_ms":{:.4},"sustained_median_fps":{:.2},"#,
                 r#""spread":{:.4},"mean_ms":{:.4},"p50_ms":{:.4},"p95_ms":{:.4},"p99_ms":{:.4},"#,
@@ -777,7 +784,7 @@ impl Summary {
             args.height,
             args.decks,
             args.source.label(),
-            args.deck_fx,
+            args.preset.label(),
             args.master.label(),
             args.runs,
             args.frames,

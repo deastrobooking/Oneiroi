@@ -26,6 +26,10 @@ struct MixerGlobals {
     find_edges: [f32; 4],
     bit_reduction: [f32; 4],
     blacklight: [f32; 4],
+    bloom: [f32; 4],
+    bloom_threshold: [f32; 4],
+    bloom_radius: [f32; 4],
+    bloom_chroma: [f32; 4],
     mirror: [u32; 4],
     effect_slot_groups_0: [u32; 4],
     effect_slot_groups_1: [u32; 4],
@@ -119,14 +123,16 @@ pub enum EffectPreset {
     NeonNight,
     Blacklight,
     Glitch,
+    Halation,
 }
 
 impl EffectPreset {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Neutral,
         Self::NeonNight,
         Self::Blacklight,
         Self::Glitch,
+        Self::Halation,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -135,6 +141,7 @@ impl EffectPreset {
             Self::NeonNight => "Neon night",
             Self::Blacklight => "Blacklight",
             Self::Glitch => "Glitch",
+            Self::Halation => "Halation",
         }
     }
 }
@@ -162,6 +169,14 @@ pub struct DeckEffects {
     pub find_edges: f32,
     pub bit_reduction: f32,
     pub blacklight: f32,
+    /// Bloom intensity. Zero disables the bright-pass entirely.
+    pub bloom: f32,
+    /// Luminance above which a pixel contributes light to the bloom.
+    pub bloom_threshold: f32,
+    /// Bloom spread as a fraction of the source's smaller dimension.
+    pub bloom_radius: f32,
+    /// Chromatic spread. Red carries further than blue as this rises.
+    pub bloom_chroma: f32,
     pub mirror: bool,
 }
 
@@ -187,6 +202,10 @@ impl Default for DeckEffects {
             find_edges: 0.0,
             bit_reduction: 0.0,
             blacklight: 0.0,
+            bloom: 0.0,
+            bloom_threshold: 0.65,
+            bloom_radius: 0.35,
+            bloom_chroma: 0.0,
             mirror: false,
         }
     }
@@ -214,6 +233,16 @@ impl DeckEffects {
                 effects.bit_reduction = 0.55;
                 effects.blacklight = 0.15;
             }
+            // Wide, warm diffusion off the highlights only: the look of
+            // bright footage through an anamorphic lens.
+            EffectPreset::Halation => {
+                effects.contrast = 1.1;
+                effects.black_level = 0.04;
+                effects.bloom = 0.8;
+                effects.bloom_threshold = 0.55;
+                effects.bloom_radius = 0.6;
+                effects.bloom_chroma = 0.7;
+            }
         }
         effects
     }
@@ -234,6 +263,12 @@ impl DeckEffects {
         self.find_edges = self.find_edges.clamp(0.0, 1.0);
         self.bit_reduction = self.bit_reduction.clamp(0.0, 1.0);
         self.blacklight = self.blacklight.clamp(0.0, 1.0);
+        self.bloom = self.bloom.clamp(0.0, 1.0);
+        self.bloom_threshold = self.bloom_threshold.clamp(0.0, 1.0);
+        // A zero radius would collapse every tap onto the centre pixel and
+        // turn bloom into a flat brightness lift, so keep a floor.
+        self.bloom_radius = self.bloom_radius.clamp(0.02, 1.0);
+        self.bloom_chroma = self.bloom_chroma.clamp(0.0, 1.0);
         self
     }
 }
@@ -284,6 +319,10 @@ pub enum EffectTarget {
     FindEdges,
     BitReduction,
     Blacklight,
+    Bloom,
+    BloomThreshold,
+    BloomRadius,
+    BloomChroma,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -407,6 +446,10 @@ fn modulate(effects: &mut DeckEffects, target: EffectTarget, value: f32) {
         EffectTarget::FindEdges => effects.find_edges += value,
         EffectTarget::BitReduction => effects.bit_reduction += value,
         EffectTarget::Blacklight => effects.blacklight += value,
+        EffectTarget::Bloom => effects.bloom += value,
+        EffectTarget::BloomThreshold => effects.bloom_threshold += value * 0.5,
+        EffectTarget::BloomRadius => effects.bloom_radius += value * 0.5,
+        EffectTarget::BloomChroma => effects.bloom_chroma += value,
     }
 }
 
@@ -515,6 +558,349 @@ pub enum LayerBlendMode {
     Lighten,
     Darken,
     Overlay,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Exclusion,
+    LinearBurn,
+    VividLight,
+    LinearLight,
+    PinLight,
+    HardMix,
+    Subtract,
+    Divide,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+    DarkerColor,
+    LighterColor,
+    Negation,
+    Invert,
+    Reflect,
+    Glow,
+    Phoenix,
+    HueShift,
+    FractalFold,
+    XorCrush,
+    Solarize,
+}
+
+/// How a blend mode is presented to the operator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BlendModeGroup {
+    /// Darken/lighten families every compositing tool shares.
+    Standard,
+    /// Contrast modes that pivot around mid grey.
+    Contrast,
+    /// Non-separable modes that transplant one colour component.
+    Component,
+    /// Destructive modes specific to this engine.
+    Signature,
+}
+
+impl BlendModeGroup {
+    pub const ALL: [Self; 4] = [
+        Self::Standard,
+        Self::Contrast,
+        Self::Component,
+        Self::Signature,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Standard => "Standard",
+            Self::Contrast => "Contrast",
+            Self::Component => "Component",
+            Self::Signature => "Oneiroi",
+        }
+    }
+}
+
+impl LayerBlendMode {
+    pub const ALL: [Self; 35] = [
+        Self::Normal,
+        Self::Add,
+        Self::Screen,
+        Self::Multiply,
+        Self::Difference,
+        Self::Lighten,
+        Self::Darken,
+        Self::Overlay,
+        Self::ColorDodge,
+        Self::ColorBurn,
+        Self::HardLight,
+        Self::SoftLight,
+        Self::Exclusion,
+        Self::LinearBurn,
+        Self::VividLight,
+        Self::LinearLight,
+        Self::PinLight,
+        Self::HardMix,
+        Self::Subtract,
+        Self::Divide,
+        Self::Hue,
+        Self::Saturation,
+        Self::Color,
+        Self::Luminosity,
+        Self::DarkerColor,
+        Self::LighterColor,
+        Self::Negation,
+        Self::Invert,
+        Self::Reflect,
+        Self::Glow,
+        Self::Phoenix,
+        Self::HueShift,
+        Self::FractalFold,
+        Self::XorCrush,
+        Self::Solarize,
+    ];
+
+    /// Shader selector. These values are also the persisted numeric identity of
+    /// a mode, so existing values must never be renumbered.
+    pub const fn code(self) -> u32 {
+        match self {
+            Self::Normal => 0,
+            Self::Add => 1,
+            Self::Screen => 2,
+            Self::Multiply => 3,
+            Self::Difference => 4,
+            Self::Lighten => 5,
+            Self::Darken => 6,
+            Self::Overlay => 7,
+            Self::ColorDodge => 8,
+            Self::ColorBurn => 9,
+            Self::HardLight => 10,
+            Self::SoftLight => 11,
+            Self::Exclusion => 12,
+            Self::LinearBurn => 13,
+            Self::VividLight => 14,
+            Self::LinearLight => 15,
+            Self::PinLight => 16,
+            Self::HardMix => 17,
+            Self::Subtract => 18,
+            Self::Divide => 19,
+            Self::Hue => 20,
+            Self::Saturation => 21,
+            Self::Color => 22,
+            Self::Luminosity => 23,
+            Self::DarkerColor => 24,
+            Self::LighterColor => 25,
+            Self::Negation => 26,
+            Self::Invert => 27,
+            Self::Reflect => 28,
+            Self::Glow => 29,
+            Self::Phoenix => 30,
+            Self::HueShift => 31,
+            Self::FractalFold => 32,
+            Self::XorCrush => 33,
+            Self::Solarize => 34,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "Normal",
+            Self::Add => "Add",
+            Self::Screen => "Screen",
+            Self::Multiply => "Multiply",
+            Self::Difference => "Difference",
+            Self::Lighten => "Lighten",
+            Self::Darken => "Darken",
+            Self::Overlay => "Overlay",
+            Self::ColorDodge => "Color Dodge",
+            Self::ColorBurn => "Color Burn",
+            Self::HardLight => "Hard Light",
+            Self::SoftLight => "Soft Light",
+            Self::Exclusion => "Exclusion",
+            Self::LinearBurn => "Linear Burn",
+            Self::VividLight => "Vivid Light",
+            Self::LinearLight => "Linear Light",
+            Self::PinLight => "Pin Light",
+            Self::HardMix => "Hard Mix",
+            Self::Subtract => "Subtract",
+            Self::Divide => "Divide",
+            Self::Hue => "Hue",
+            Self::Saturation => "Saturation",
+            Self::Color => "Color",
+            Self::Luminosity => "Luminosity",
+            Self::DarkerColor => "Darker Color",
+            Self::LighterColor => "Lighter Color",
+            Self::Negation => "Negation",
+            Self::Invert => "Invert",
+            Self::Reflect => "Reflect",
+            Self::Glow => "Glow",
+            Self::Phoenix => "Phoenix",
+            Self::HueShift => "Hue Shift",
+            Self::FractalFold => "Fractal Fold",
+            Self::XorCrush => "Xor Crush",
+            Self::Solarize => "Solarize",
+        }
+    }
+
+    /// Stable identifier used by the typed project graph. Never rename
+    /// these; they are written into saved documents.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Add => "add",
+            Self::Screen => "screen",
+            Self::Multiply => "multiply",
+            Self::Difference => "difference",
+            Self::Lighten => "lighten",
+            Self::Darken => "darken",
+            Self::Overlay => "overlay",
+            Self::ColorDodge => "color_dodge",
+            Self::ColorBurn => "color_burn",
+            Self::HardLight => "hard_light",
+            Self::SoftLight => "soft_light",
+            Self::Exclusion => "exclusion",
+            Self::LinearBurn => "linear_burn",
+            Self::VividLight => "vivid_light",
+            Self::LinearLight => "linear_light",
+            Self::PinLight => "pin_light",
+            Self::HardMix => "hard_mix",
+            Self::Subtract => "subtract",
+            Self::Divide => "divide",
+            Self::Hue => "hue",
+            Self::Saturation => "saturation",
+            Self::Color => "color",
+            Self::Luminosity => "luminosity",
+            Self::DarkerColor => "darker_color",
+            Self::LighterColor => "lighter_color",
+            Self::Negation => "negation",
+            Self::Invert => "invert",
+            Self::Reflect => "reflect",
+            Self::Glow => "glow",
+            Self::Phoenix => "phoenix",
+            Self::HueShift => "hue_shift",
+            Self::FractalFold => "fractal_fold",
+            Self::XorCrush => "xor_crush",
+            Self::Solarize => "solarize",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "normal" => Some(Self::Normal),
+            "add" => Some(Self::Add),
+            "screen" => Some(Self::Screen),
+            "multiply" => Some(Self::Multiply),
+            "difference" => Some(Self::Difference),
+            "lighten" => Some(Self::Lighten),
+            "darken" => Some(Self::Darken),
+            "overlay" => Some(Self::Overlay),
+            "color_dodge" => Some(Self::ColorDodge),
+            "color_burn" => Some(Self::ColorBurn),
+            "hard_light" => Some(Self::HardLight),
+            "soft_light" => Some(Self::SoftLight),
+            "exclusion" => Some(Self::Exclusion),
+            "linear_burn" => Some(Self::LinearBurn),
+            "vivid_light" => Some(Self::VividLight),
+            "linear_light" => Some(Self::LinearLight),
+            "pin_light" => Some(Self::PinLight),
+            "hard_mix" => Some(Self::HardMix),
+            "subtract" => Some(Self::Subtract),
+            "divide" => Some(Self::Divide),
+            "hue" => Some(Self::Hue),
+            "saturation" => Some(Self::Saturation),
+            "color" => Some(Self::Color),
+            "luminosity" => Some(Self::Luminosity),
+            "darker_color" => Some(Self::DarkerColor),
+            "lighter_color" => Some(Self::LighterColor),
+            "negation" => Some(Self::Negation),
+            "invert" => Some(Self::Invert),
+            "reflect" => Some(Self::Reflect),
+            "glow" => Some(Self::Glow),
+            "phoenix" => Some(Self::Phoenix),
+            "hue_shift" => Some(Self::HueShift),
+            "fractal_fold" => Some(Self::FractalFold),
+            "xor_crush" => Some(Self::XorCrush),
+            "solarize" => Some(Self::Solarize),
+            _ => None,
+        }
+    }
+
+    pub const fn group(self) -> BlendModeGroup {
+        match self {
+            Self::Normal
+            | Self::Add
+            | Self::Screen
+            | Self::Multiply
+            | Self::Lighten
+            | Self::Darken
+            | Self::ColorDodge
+            | Self::ColorBurn
+            | Self::LinearBurn
+            | Self::Subtract
+            | Self::Divide
+            | Self::DarkerColor
+            | Self::LighterColor => BlendModeGroup::Standard,
+            Self::Difference
+            | Self::Overlay
+            | Self::HardLight
+            | Self::SoftLight
+            | Self::Exclusion
+            | Self::VividLight
+            | Self::LinearLight
+            | Self::PinLight
+            | Self::HardMix => BlendModeGroup::Contrast,
+            Self::Hue | Self::Saturation | Self::Color | Self::Luminosity => {
+                BlendModeGroup::Component
+            }
+            Self::Negation
+            | Self::Invert
+            | Self::Reflect
+            | Self::Glow
+            | Self::Phoenix
+            | Self::HueShift
+            | Self::FractalFold
+            | Self::XorCrush
+            | Self::Solarize => BlendModeGroup::Signature,
+        }
+    }
+
+    /// One-line description of what the mode does, shown as a tooltip.
+    pub const fn hint(self) -> &'static str {
+        match self {
+            Self::Normal => "Replaces the backdrop.",
+            Self::Add => "Sums light. Clips to white.",
+            Self::Screen => "Inverse multiply. Lightens without clipping.",
+            Self::Multiply => "Darkens by multiplying light.",
+            Self::Difference => "Absolute channel distance.",
+            Self::Lighten => "Keeps the brighter channel.",
+            Self::Darken => "Keeps the darker channel.",
+            Self::Overlay => "Multiply in shadows, screen in highlights.",
+            Self::ColorDodge => "Brightens the backdrop toward white.",
+            Self::ColorBurn => "Darkens the backdrop toward black.",
+            Self::HardLight => "Overlay judged by the layer instead of the backdrop.",
+            Self::SoftLight => "Gentle dodge and burn.",
+            Self::Exclusion => "Difference with a soft mid-tone rolloff.",
+            Self::LinearBurn => "Sums and subtracts white. Crushes shadows.",
+            Self::VividLight => "Burns below mid grey, dodges above.",
+            Self::LinearLight => "Linear burn below mid grey, linear dodge above.",
+            Self::PinLight => "Replaces by distance from mid grey.",
+            Self::HardMix => "Snaps every channel to zero or one.",
+            Self::Subtract => "Removes the layer's light.",
+            Self::Divide => "Divides the backdrop. Blows out fast.",
+            Self::Hue => "Layer hue, backdrop saturation and luminosity.",
+            Self::Saturation => "Layer saturation, backdrop hue and luminosity.",
+            Self::Color => "Layer hue and saturation, backdrop luminosity.",
+            Self::Luminosity => "Layer luminosity, backdrop hue and saturation.",
+            Self::DarkerColor => "Keeps whichever whole colour is darker.",
+            Self::LighterColor => "Keeps whichever whole colour is brighter.",
+            Self::Negation => "Difference inverted. Never reaches black.",
+            Self::Invert => "Layer brightness inverts the backdrop.",
+            Self::Reflect => "Backdrop reflects the layer into blown highlights.",
+            Self::Glow => "Reflect with the operands swapped.",
+            Self::Phoenix => "Channel range inverted. Flat pastel separation.",
+            Self::HueShift => "Rotates backdrop hue by the layer's hue angle.",
+            Self::FractalFold => "Folds channels through a triangle wave the layer drives.",
+            Self::XorCrush => "Quantises both layers and exclusive-ors the codes.",
+            Self::Solarize => "Inverts wherever the backdrop outshines the layer.",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -814,6 +1200,10 @@ impl FourDeckCompositor {
                 find_edges: float_values(|effect| effect.find_edges),
                 bit_reduction: float_values(|effect| effect.bit_reduction),
                 blacklight: float_values(|effect| effect.blacklight),
+                bloom: float_values(|effect| effect.bloom),
+                bloom_threshold: float_values(|effect| effect.bloom_threshold),
+                bloom_radius: float_values(|effect| effect.bloom_radius),
+                bloom_chroma: float_values(|effect| effect.bloom_chroma),
                 mirror: effects.map(|effect| u32::from(effect.mirror)),
                 effect_slot_groups_0: slot_groups(0),
                 effect_slot_groups_1: slot_groups(1),
@@ -839,16 +1229,7 @@ impl FourDeckCompositor {
                     SourceMode::Fill => 1,
                     SourceMode::Stretch => 2,
                 }),
-                blend_modes: params.blend_modes.map(|mode| match mode {
-                    LayerBlendMode::Normal => 0,
-                    LayerBlendMode::Add => 1,
-                    LayerBlendMode::Screen => 2,
-                    LayerBlendMode::Multiply => 3,
-                    LayerBlendMode::Difference => 4,
-                    LayerBlendMode::Lighten => 5,
-                    LayerBlendMode::Darken => 6,
-                    LayerBlendMode::Overlay => 7,
-                }),
+                blend_modes: params.blend_modes.map(LayerBlendMode::code),
                 bus_assignments: params.buses.map(|bus| match bus {
                     MixerBus::A => 0,
                     MixerBus::B => 1,
