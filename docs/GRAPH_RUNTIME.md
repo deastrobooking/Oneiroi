@@ -123,7 +123,7 @@ MIDI and keyboard updates enter a single application gateway. The gateway:
 3. Records and journals the command with its origin and show time.
 4. Applies the concrete mixer, transport or effect mutation.
 
-For continuous egui widgets, the app snapshots 192 built-in performance
+For continuous egui widgets, the app snapshots 208 built-in performance
 targets plus dynamic custom-effect parameters before drawing. Changed values
 are restored to their prior value and then reapplied through the gateway. This
 keeps mouse drags on the same command path as MIDI and keyboard input rather

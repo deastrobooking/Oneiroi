@@ -104,7 +104,7 @@ remains before the milestone is stage-certified.
   overruns and worker errors are visible in the operator UI.
 - MIDI and keyboard performance mutations now pass through one origin-aware
   command gateway before concrete application. Continuous UI controls are
-  snapshotted, reverted and reapplied through that gateway, covering 192 fixed
+  snapshotted, reverted and reapplied through that gateway, covering 208 fixed
   mixer/transport/effect/LFO/matrix targets plus dynamic custom-effect values.
   Launch, clear, eject, seek, tempo and output operations use typed semantic
   commands for deterministic replay.
@@ -121,7 +121,7 @@ remains before the milestone is stage-certified.
 - Project values are validated before application.
 - Version-one through version-four projects migrate to version five with
   stable identity, take metadata, deterministic seeds and the active graph.
-- The workspace currently passes 198 tests and strict Clippy, with one extended
+- The workspace currently passes more than 200 tests and strict Clippy, with one extended
   decoder soak available as an opt-in ignored test.
 
 ## Stage-critical gaps
@@ -191,12 +191,11 @@ and version-two files on load. The next persistence work should extract
 explicit migration steps and add golden fixture files for every supported
 version before a fourth schema is introduced.
 
-### Uncommitted integration surface
+### Integration surface
 
-The working tree contains the camera, clip-grid, persistence, thumbnail,
-effects, modulation, tempo and documentation slices beyond the last commit.
-This is recoverable locally but is too large a delta to begin dual-window
-refactoring without first preserving an intentional checkpoint.
+The camera, clip-grid, persistence, thumbnail, effects, modulation, tempo and
+documentation slices are committed as intentional checkpoints. Future large
+refactors should continue to preserve small validated integration boundaries.
 
 ## Recommended decision
 

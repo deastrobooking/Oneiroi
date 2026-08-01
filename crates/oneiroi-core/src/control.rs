@@ -5,6 +5,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Number of addressable parameters in the built-in deck effect bank.
+///
+/// This is part of the persisted MIDI target contract. Keep the parameter
+/// indices stable and update this bound whenever a parameter is appended.
+pub const FIXED_DECK_EFFECT_PARAMETER_COUNT: u8 = 18;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum MidiMessageKind {
     Note,

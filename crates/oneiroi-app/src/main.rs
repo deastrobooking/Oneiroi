@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use oneiroi_core::{
-    Clock, ControlTarget, MediaTime, MidiMapper, Quantization, TapTempo, TempoClock,
-    effect_parameter_key,
+    Clock, ControlTarget, FIXED_DECK_EFFECT_PARAMETER_COUNT, MediaTime, MidiMapper, Quantization,
+    TapTempo, TempoClock, effect_parameter_key,
 };
 use oneiroi_io::{
     AudioInput, AudioInputDevice, AudioInputSnapshot, MidiInputConnection, MidiInputDevice,
@@ -1494,7 +1494,7 @@ fn performance_control_snapshot(
             ControlTarget::DeckSpeed(deck),
             ControlTarget::DeckSelect(deck),
         ]);
-        for effect in 0..14_u8 {
+        for effect in 0..FIXED_DECK_EFFECT_PARAMETER_COUNT {
             targets.push(ControlTarget::EffectParameter {
                 deck,
                 effect,
@@ -1676,11 +1676,11 @@ mod output_health_tests {
 
         let snapshot = performance_control_snapshot(&ui, &mixer, &transports);
 
-        assert_eq!(snapshot.len(), 192);
+        assert_eq!(snapshot.len(), 208);
         assert!(snapshot.contains_key(&ControlTarget::Crossfader));
         assert!(snapshot.contains_key(&ControlTarget::EffectParameter {
             deck: 3,
-            effect: 13,
+            effect: 17,
             parameter: 0,
         }));
         assert!(snapshot.contains_key(&ControlTarget::ModRouteParameter {

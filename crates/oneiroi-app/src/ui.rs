@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use oneiroi_core::{
-    AudioAnalysisSettings, ControlTarget, FrameTime, MappingMode, MidiMapper, Quantization,
-    TempoClock, effect_parameter_key,
+    AudioAnalysisSettings, ControlTarget, FIXED_DECK_EFFECT_PARAMETER_COUNT, FrameTime,
+    MappingMode, MidiMapper, Quantization, TempoClock, effect_parameter_key,
 };
 use oneiroi_io::{AudioInputDevice, AudioInputSnapshot, MidiInputDevice, MidiInputStats};
 use oneiroi_media::{

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use oneiroi_core::FIXED_DECK_EFFECT_PARAMETER_COUNT;
 use oneiroi_graph::ProjectGraph;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -338,7 +339,7 @@ fn valid_control_target(target: ControlTargetProject) -> bool {
             deck,
             effect,
             parameter,
-        } => deck < 4 && effect < 14 && parameter == 0,
+        } => deck < 4 && effect < FIXED_DECK_EFFECT_PARAMETER_COUNT && parameter == 0,
         ControlTargetProject::LfoParameter {
             deck,
             lfo,
@@ -1400,6 +1401,53 @@ mod tests {
             project.validate(),
             Err(ProjectError::InvalidValue(_))
         ));
+
+        project = ProjectFile::default();
+        project.midi_mappings.push(MidiMappingProject {
+            device: "controller".to_owned(),
+            channel: 0,
+            message: MidiMessageProject::ControlChange,
+            number: 1,
+            target: ControlTargetProject::EffectParameter {
+                deck: 0,
+                effect: FIXED_DECK_EFFECT_PARAMETER_COUNT,
+                parameter: 0,
+            },
+            input_range: [0.0, 1.0],
+            output_range: [0.0, 1.0],
+            invert: false,
+            mode: MappingModeProject::Continuous,
+            soft_takeover: false,
+            feedback: None,
+        });
+        assert!(matches!(
+            project.validate(),
+            Err(ProjectError::InvalidValue(_))
+        ));
+    }
+
+    #[test]
+    fn accepts_midi_mapping_for_the_last_built_in_effect_parameter() {
+        let mut project = ProjectFile::default();
+        project.midi_mappings.push(MidiMappingProject {
+            device: "controller".to_owned(),
+            channel: 0,
+            message: MidiMessageProject::ControlChange,
+            number: 1,
+            target: ControlTargetProject::EffectParameter {
+                deck: 3,
+                effect: FIXED_DECK_EFFECT_PARAMETER_COUNT - 1,
+                parameter: 0,
+            },
+            input_range: [0.0, 1.0],
+            output_range: [0.0, 1.0],
+            invert: false,
+            mode: MappingModeProject::Continuous,
+            soft_takeover: false,
+            feedback: None,
+        });
+
+        project.validate().unwrap();
     }
 
     #[test]

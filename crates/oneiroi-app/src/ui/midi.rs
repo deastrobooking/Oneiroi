@@ -175,7 +175,7 @@ pub(super) fn midi_targets() -> Vec<ControlTarget> {
         for slot in 0..8 {
             targets.push(ControlTarget::ClipLaunch { deck, slot });
         }
-        for effect in 0..14 {
+        for effect in 0..FIXED_DECK_EFFECT_PARAMETER_COUNT {
             targets.push(ControlTarget::EffectParameter {
                 deck,
                 effect,
@@ -285,4 +285,18 @@ pub(super) fn midi_target_label_for_state(target: ControlTarget, state: &UiState
         || midi_target_label(target),
         |parameter| format!("Master slot {} · {}", slot_index + 1, parameter.label),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn midi_targets_include_the_last_built_in_effect_parameter() {
+        assert!(midi_targets().contains(&ControlTarget::EffectParameter {
+            deck: 3,
+            effect: FIXED_DECK_EFFECT_PARAMETER_COUNT - 1,
+            parameter: 0,
+        }));
+    }
 }

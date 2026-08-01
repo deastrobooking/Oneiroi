@@ -6,10 +6,10 @@ which feature is most visually interesting.
 
 ## Phase 0: establish a reliable baseline
 
-The current working tree contains several completed feature slices beyond the
-last commit. Before another large subsystem lands:
+The completed feature slices have been preserved as intentional checkpoints.
+Before another large subsystem lands:
 
-1. Preserve the current validated state as an intentional checkpoint.
+1. Preserve the current validated state as an intentional checkpoint. (implemented)
 2. Record release-mode performance for two and four simultaneous 1080p sources.
 3. Add a repeatable fixture command for HAP, conventional video, still and
    synthetic camera playback.
@@ -183,7 +183,7 @@ Acceptance criteria:
 1. Replace the monolithic fixed effect struct with three reorderable deck slots
    and two master slots. (implemented)
 2. Add common bypass, dry/wet, reset and preset behavior. (implemented for
-   deck slots with four factory presets)
+   deck slots with five factory presets)
 3. Implement separable blur. (implemented in the master chain with fixed
    ping-pong targets)
 4. Implement persistent feedback/trails textures. (implemented with bounded
@@ -254,7 +254,7 @@ Delivered:
     replacement, torn-tail recovery and visible health counters.
 13. An origin-aware application command gateway for every device-neutral MIDI
     target, keyboard emergency/mixer/scene control, semantic clip/transport/
-    output commands and 192 built-in plus dynamic custom-effect UI values.
+    output commands and 208 built-in plus dynamic custom-effect UI values.
 14. Record-before-apply structural snapshots for deck transforms, crop/source
     and blend modes, bus/solo/bypass, effect slots, LFO and modulation routing,
     master effects/modulation, plus accepted movie/folder/relink assignments.
