@@ -10,7 +10,7 @@ use oneiroi_io::{
     MasterEffectKindProject, MasterEffectSlotProject, MasterEffectsProject, MasterLfoProject,
     MasterModulationProject, MasterModulationRouteProject, MidiMappingProject, MidiMessageProject,
     ModRouteProject, OutputProject, ProjectFile, ProjectSettings, QuantizationProject,
-    SourceModeProject, TransformProject, TransportProject,
+    SourceModeProject, ThemeProject, TransformProject, TransportProject,
 };
 use oneiroi_media::{
     CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipLaunchMode,
@@ -63,6 +63,7 @@ pub fn snapshot(
             audio_analysis: audio_analysis_to_project(ui.audio_analysis),
             master_effects: master_effects_to_project(&ui.master_effects),
             master_modulation: master_modulation_to_project(ui.master_modulation),
+            theme: theme_to_project(&ui.theme),
         },
         decks: DeckId::ALL
             .into_iter()
@@ -224,6 +225,7 @@ pub fn apply_master(project: &ProjectFile, ui: &mut UiState) {
     ui.audio_analysis = audio_analysis_from_project(project.settings.audio_analysis);
     ui.master_effects = master_effects_from_project(&project.settings.master_effects);
     ui.master_modulation = master_modulation_from_project(&project.settings.master_modulation);
+    theme_from_project(&project.settings.theme, &mut ui.theme);
     ui.blackout = false;
     ui.master_freeze = false;
 }
@@ -284,6 +286,35 @@ fn master_effects_from_project(effects: &MasterEffectsProject) -> MasterEffectCh
         };
     }
     result.sanitized()
+}
+
+fn theme_to_project(theme: &crate::ui::theme::ThemeState) -> ThemeProject {
+    ThemeProject {
+        preset: theme.preset.name().to_owned(),
+        accent: theme
+            .accent_override
+            .map(|color| [color.r(), color.g(), color.b()]),
+        density: theme.density.name().to_owned(),
+        deck_layout: theme.deck_layout.name().to_owned(),
+    }
+}
+
+/// Unknown names (from a newer build's presets) keep the current value
+/// rather than failing the load.
+fn theme_from_project(project: &ThemeProject, theme: &mut crate::ui::theme::ThemeState) {
+    use crate::ui::theme::{DeckLayout, Density, ThemePreset};
+    if let Some(preset) = ThemePreset::from_name(&project.preset) {
+        theme.preset = preset;
+    }
+    theme.accent_override = project
+        .accent
+        .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b));
+    if let Some(density) = Density::from_name(&project.density) {
+        theme.density = density;
+    }
+    if let Some(layout) = DeckLayout::from_name(&project.deck_layout) {
+        theme.deck_layout = layout;
+    }
 }
 
 fn master_modulation_to_project(modulation: MasterModulation) -> MasterModulationProject {
@@ -948,6 +979,41 @@ mod tests {
             clip_playback_from_project(clip_playback_to_project(playback)),
             playback
         );
+    }
+
+    #[test]
+    fn theme_conversion_round_trips_and_tolerates_unknown_names() {
+        use crate::ui::theme::{DeckLayout, Density, ThemePreset, ThemeState};
+
+        let mut theme = ThemeState::default();
+        theme.preset = ThemePreset::Ember;
+        theme.accent_override = Some(egui::Color32::from_rgb(10, 200, 40));
+        theme.density = Density::Compact;
+        theme.deck_layout = DeckLayout::Cascade;
+
+        let mut restored = ThemeState::default();
+        theme_from_project(&theme_to_project(&theme), &mut restored);
+        assert_eq!(restored.preset, ThemePreset::Ember);
+        assert_eq!(
+            restored.accent_override,
+            Some(egui::Color32::from_rgb(10, 200, 40))
+        );
+        assert_eq!(restored.density, Density::Compact);
+        assert_eq!(restored.deck_layout, DeckLayout::Cascade);
+
+        // A project written by a newer build with presets this build does not
+        // know must keep the current values instead of failing.
+        let stranger = ThemeProject {
+            preset: "hypercolor".to_owned(),
+            accent: None,
+            density: "sparse".to_owned(),
+            deck_layout: "orbital".to_owned(),
+        };
+        theme_from_project(&stranger, &mut restored);
+        assert_eq!(restored.preset, ThemePreset::Ember);
+        assert_eq!(restored.accent_override, None);
+        assert_eq!(restored.density, Density::Compact);
+        assert_eq!(restored.deck_layout, DeckLayout::Cascade);
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub(super) fn draw_clip_grid(
     launches: &LaunchQueue,
     actions: &mut Vec<UiAction>,
 ) {
+    let palette = state.theme.palette();
     egui::Grid::new("clip-grid")
         .num_columns(CLIPS_PER_DECK + 1)
         .spacing([5.0, 5.0])
@@ -93,13 +94,13 @@ pub(super) fn draw_clip_grid(
                         }
                         .selected(selected || active)
                         .fill(if active {
-                            egui::Color32::from_rgb(27, 103, 87)
+                            palette.success.linear_multiply(0.22)
                         } else if queued {
-                            egui::Color32::from_rgb(102, 73, 28)
+                            palette.warning.linear_multiply(0.20)
                         } else if selected {
-                            egui::Color32::from_rgb(34, 89, 111)
+                            palette.accent.linear_multiply(0.22)
                         } else {
-                            UI_CONTROL
+                            palette.control
                         })
                         .stroke(egui::Stroke::new(
                             if active || queued { 2.0 } else { 1.0 },

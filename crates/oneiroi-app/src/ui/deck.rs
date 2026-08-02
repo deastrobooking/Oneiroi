@@ -3,6 +3,7 @@
 use super::*;
 
 pub(super) struct DeckControls<'a> {
+    pub(super) accent: egui::Color32,
     pub(super) transport: &'a mut DeckTransport,
     pub(super) transform: &'a mut DeckTransform,
     pub(super) blend_mode: &'a mut LayerBlendMode,
@@ -20,6 +21,7 @@ pub(super) fn draw_deck(
     actions: &mut Vec<UiAction>,
 ) {
     let DeckControls {
+        accent,
         transport,
         transform,
         blend_mode,
@@ -29,12 +31,6 @@ pub(super) fn draw_deck(
         lfos,
     } = controls;
     let selected = mixer.selected() == id;
-    let accent = match id {
-        DeckId::A => UI_ACCENT,
-        DeckId::B => UI_VIOLET,
-        DeckId::C => egui::Color32::from_rgb(255, 151, 74),
-        DeckId::D => egui::Color32::from_rgb(84, 224, 155),
-    };
     let frame = egui::Frame::group(ui.style())
         .fill(if selected {
             accent.linear_multiply(0.12)
@@ -46,14 +42,21 @@ pub(super) fn draw_deck(
             if selected {
                 accent
             } else {
-                egui::Color32::from_rgb(48, 52, 70)
+                ui.visuals().window_stroke.color
             },
         ))
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(10.0);
 
     frame.show(ui, |ui| {
-        ui.set_min_size([420.0, 165.0].into());
+        // 340 keeps a strip usable inside the cascade's 380 px column; the
+        // grid cells simply grow past it.
+        ui.set_min_size([340.0, 165.0].into());
+        // Channel banding: every strip carries its deck colour whether or not
+        // it is selected, so an operator can find deck C without reading.
+        let (band, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+        ui.painter().rect_filled(band, 2.0, accent);
         ui.horizontal(|ui| {
             if ui
                 .add(

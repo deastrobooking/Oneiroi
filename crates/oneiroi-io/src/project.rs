@@ -372,6 +372,8 @@ pub struct ProjectSettings {
     pub master_effects: MasterEffectsProject,
     #[serde(default)]
     pub master_modulation: MasterModulationProject,
+    #[serde(default)]
+    pub theme: ThemeProject,
 }
 
 impl Default for ProjectSettings {
@@ -386,6 +388,30 @@ impl Default for ProjectSettings {
             audio_analysis: AudioAnalysisProject::default(),
             master_effects: MasterEffectsProject::default(),
             master_modulation: MasterModulationProject::default(),
+            theme: ThemeProject::default(),
+        }
+    }
+}
+
+/// Operator theme choices. Stored as open strings rather than an enum so a
+/// project written by a newer build with more presets still loads here; the
+/// UI falls back to its default preset for names it does not know.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ThemeProject {
+    pub preset: String,
+    #[serde(default)]
+    pub accent: Option<[u8; 3]>,
+    pub density: String,
+    pub deck_layout: String,
+}
+
+impl Default for ThemeProject {
+    fn default() -> Self {
+        Self {
+            preset: "nocturne".to_owned(),
+            accent: None,
+            density: "cozy".to_owned(),
+            deck_layout: "auto".to_owned(),
         }
     }
 }
