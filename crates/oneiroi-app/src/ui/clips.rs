@@ -23,7 +23,7 @@ pub(super) fn draw_clip_grid(
                         egui::Button::new(
                             egui::RichText::new(format!("SCENE {}", slot + 1)).strong(),
                         )
-                        .fill(egui::Color32::from_rgb(43, 36, 67)),
+                        .fill(palette.control_tint(palette.secondary, 0.22)),
                     )
                     .on_hover_text(format!(
                         "Launch scene {} on the next quantized boundary",
@@ -94,22 +94,22 @@ pub(super) fn draw_clip_grid(
                         }
                         .selected(selected || active)
                         .fill(if active {
-                            palette.success.linear_multiply(0.22)
+                            palette.control_tint(palette.success, 0.24)
                         } else if queued {
-                            palette.warning.linear_multiply(0.20)
+                            palette.control_tint(palette.warning, 0.22)
                         } else if selected {
-                            palette.accent.linear_multiply(0.22)
+                            palette.control_tint(palette.accent, 0.24)
                         } else {
                             palette.control
                         })
                         .stroke(egui::Stroke::new(
                             if active || queued { 2.0 } else { 1.0 },
                             if active {
-                                egui::Color32::from_rgb(91, 239, 187)
+                                palette.success
                             } else if queued {
-                                egui::Color32::from_rgb(255, 194, 79)
+                                palette.warning
                             } else {
-                                egui::Color32::from_rgb(55, 60, 79)
+                                palette.stroke
                             },
                         ));
                     let response = ui.add_sized([96.0, 46.0], button);
@@ -281,7 +281,7 @@ pub(super) fn draw_clip_grid(
         ))
         .default_open(true)
         .show(ui, |ui| {
-            ui.colored_label(egui::Color32::LIGHT_RED, path.display().to_string());
+            ui.colored_label(palette.danger, path.display().to_string());
             if ui.button("Browse and relink…").clicked() {
                 actions.push(UiAction::BrowseRelink(address));
             }

@@ -1151,7 +1151,7 @@ pub fn draw(
                         mixer,
                         deck_id,
                         DeckControls {
-                            accent: palette.deck_color(deck_id),
+                            palette,
                             transport: &mut transports[deck_id.index()],
                             transform: &mut transforms_ref[deck_id.index()],
                             blend_mode: &mut blend_modes_ref[deck_id.index()],

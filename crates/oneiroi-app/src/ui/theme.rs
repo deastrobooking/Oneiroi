@@ -43,13 +43,21 @@ impl ThemePalette {
         blend(self.accent, egui::Color32::WHITE, 0.25)
     }
 
+    /// A restrained semantic tint over the normal control colour. Blending
+    /// from the control (rather than multiplying RGB) preserves readable
+    /// foreground contrast in both dark and light presets.
+    pub fn control_tint(&self, color: egui::Color32, amount: f32) -> egui::Color32 {
+        blend(self.control, color, amount)
+    }
+
+    /// A restrained deck tint over the panel surface.
+    pub fn surface_tint(&self, color: egui::Color32, amount: f32) -> egui::Color32 {
+        blend(self.surface, color, amount)
+    }
+
     /// Fill used by an accent-selected widget on this background.
     pub fn selection_fill(&self) -> egui::Color32 {
-        blend(
-            self.accent,
-            self.background,
-            if self.dark { 0.35 } else { 0.15 },
-        )
+        self.control_tint(self.accent, if self.dark { 0.45 } else { 0.18 })
     }
 }
 
@@ -466,6 +474,9 @@ fn apply(ctx: &egui::Context, palette: &ThemePalette, density: Density) {
     style.visuals.extreme_bg_color = palette.extreme;
     style.visuals.faint_bg_color = palette.faint;
     style.visuals.code_bg_color = palette.code;
+    style.visuals.warn_fg_color = palette.warning;
+    style.visuals.error_fg_color = palette.danger;
+    style.visuals.hyperlink_color = palette.accent;
     style.visuals.selection.bg_fill = palette.selection_fill();
     style.visuals.selection.stroke = egui::Stroke::new(
         1.0,

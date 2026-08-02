@@ -3,7 +3,7 @@
 use super::*;
 
 pub(super) struct DeckControls<'a> {
-    pub(super) accent: egui::Color32,
+    pub(super) palette: ThemePalette,
     pub(super) transport: &'a mut DeckTransport,
     pub(super) transform: &'a mut DeckTransform,
     pub(super) blend_mode: &'a mut LayerBlendMode,
@@ -21,7 +21,7 @@ pub(super) fn draw_deck(
     actions: &mut Vec<UiAction>,
 ) {
     let DeckControls {
-        accent,
+        palette,
         transport,
         transform,
         blend_mode,
@@ -30,10 +30,11 @@ pub(super) fn draw_deck(
         effects,
         lfos,
     } = controls;
+    let accent = palette.deck_color(id);
     let selected = mixer.selected() == id;
     let frame = egui::Frame::group(ui.style())
         .fill(if selected {
-            accent.linear_multiply(0.12)
+            palette.surface_tint(accent, if palette.dark { 0.14 } else { 0.08 })
         } else {
             ui.visuals().faint_bg_color
         })
@@ -66,7 +67,7 @@ pub(super) fn draw_deck(
                             .color(if selected {
                                 accent
                             } else {
-                                egui::Color32::WHITE
+                                ui.visuals().text_color()
                             }),
                     )
                     .selected(selected),
@@ -126,16 +127,16 @@ pub(super) fn draw_deck(
                     }
                 });
                 let (label, color) = match movie.health {
-                    MediaHealth::StageReady => ("STAGE READY", egui::Color32::LIGHT_GREEN),
-                    MediaHealth::Usable => ("USABLE", egui::Color32::from_rgb(130, 210, 255)),
-                    MediaHealth::Caution => ("CAUTION", egui::Color32::YELLOW),
-                    MediaHealth::Problem => ("PROBLEM", egui::Color32::LIGHT_RED),
+                    MediaHealth::StageReady => ("STAGE READY", palette.success),
+                    MediaHealth::Usable => ("USABLE", palette.accent),
+                    MediaHealth::Caution => ("CAUTION", palette.warning),
+                    MediaHealth::Problem => ("PROBLEM", palette.danger),
                 };
                 ui.colored_label(color, label);
                 ui.weak(&movie.health_reason);
             }
             DeckState::Live(config) => {
-                ui.colored_label(egui::Color32::LIGHT_GREEN, "● LIVE CAMERA");
+                ui.colored_label(palette.success, "● LIVE CAMERA");
                 ui.strong(&config.device.label);
                 ui.horizontal(|ui| {
                     ui.label(config.device.backend.to_uppercase());
@@ -149,7 +150,7 @@ pub(super) fn draw_deck(
                 ui.weak("Non-seekable low-latency source");
             }
             DeckState::Error { path, message } => {
-                ui.colored_label(egui::Color32::LIGHT_RED, "IMPORT ERROR");
+                ui.colored_label(palette.danger, "IMPORT ERROR");
                 ui.label(
                     path.file_name()
                         .and_then(|name| name.to_str())
