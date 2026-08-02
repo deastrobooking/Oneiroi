@@ -289,6 +289,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn two_devices_map_the_same_control_change_independently() {
+        let message = MidiMessage::ControlChange {
+            channel: 0,
+            controller: 21,
+            value: 127,
+        };
+        let mut mapper = MidiMapper::default();
+
+        // The same knob identity on two controllers binds to two targets.
+        mapper.learn(ControlTarget::Crossfader);
+        mapper.ingest("apc-40", message, |_| 0.0);
+        mapper.learn(ControlTarget::MasterOpacity);
+        mapper.ingest("launch-control", message, |_| 0.0);
+        assert_eq!(mapper.bindings.len(), 2);
+
+        // Each device drives only its own target.
+        let updates = mapper.ingest("apc-40", message, |_| 0.0);
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].target, ControlTarget::Crossfader);
+
+        let updates = mapper.ingest("launch-control", message, |_| 0.0);
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].target, ControlTarget::MasterOpacity);
+
+        // An unknown device drives nothing.
+        assert!(mapper.ingest("stranger", message, |_| 0.0).is_empty());
+    }
+
+    #[test]
+    fn relearning_a_target_replaces_only_that_devices_binding() {
+        let message = MidiMessage::ControlChange {
+            channel: 0,
+            controller: 7,
+            value: 64,
+        };
+        let mut mapper = MidiMapper::default();
+        mapper.learn(ControlTarget::Crossfader);
+        mapper.ingest("apc-40", message, |_| 0.0);
+        mapper.learn(ControlTarget::Crossfader);
+        mapper.ingest("launch-control", message, |_| 0.0);
+
+        // Both devices may drive the same target; relearning on one device
+        // replaced nothing on the other.
+        assert_eq!(mapper.bindings.len(), 2);
+        assert!(mapper.bindings.iter().any(|b| b.device == "apc-40"));
+        assert!(mapper.bindings.iter().any(|b| b.device == "launch-control"));
+    }
+
+    #[test]
     fn learns_and_maps_a_control_change() {
         let message = MidiMessage::ControlChange {
             channel: 2,

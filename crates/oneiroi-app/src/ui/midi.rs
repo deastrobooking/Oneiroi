@@ -8,21 +8,25 @@ pub(super) fn draw_midi(
     metrics: &mut MidiMetrics<'_>,
     actions: &mut Vec<UiAction>,
 ) {
+    let devices = metrics.devices;
+    let inputs = metrics.inputs;
+    let status = metrics.status;
+    let selected_connected = metrics.device_connected(&state.midi_device_id);
+    let any_connected = metrics.any_connected();
     let midi = &mut *metrics.mapper;
     egui::CollapsingHeader::new("MIDI control")
         .default_open(false)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Input");
-                let selected = metrics
-                    .inputs
+                let selected = inputs
                     .iter()
                     .find(|device| device.id == state.midi_device_id)
                     .map_or("No controller selected", |device| device.label.as_str());
                 egui::ComboBox::from_id_salt("midi-input-device")
                     .selected_text(selected)
                     .show_ui(ui, |ui| {
-                        for device in metrics.inputs {
+                        for device in inputs {
                             ui.selectable_value(
                                 &mut state.midi_device_id,
                                 device.id.clone(),
@@ -33,9 +37,9 @@ pub(super) fn draw_midi(
                 if ui.button("Refresh MIDI").clicked() {
                     actions.push(UiAction::RefreshMidiInputs);
                 }
-                if metrics.connected {
+                if selected_connected {
                     if ui.button("Disconnect").clicked() {
-                        actions.push(UiAction::DisconnectMidiInput);
+                        actions.push(UiAction::DisconnectMidiInput(state.midi_device_id.clone()));
                     }
                 } else if ui
                     .add_enabled(
@@ -46,7 +50,7 @@ pub(super) fn draw_midi(
                 {
                     actions.push(UiAction::ConnectMidiInput(state.midi_device_id.clone()));
                 }
-                ui.weak(metrics.status);
+                ui.weak(status);
             });
 
             ui.horizontal(|ui| {
@@ -68,7 +72,7 @@ pub(super) fn draw_midi(
                         actions.push(UiAction::MidiCancelLearn);
                     }
                 } else if ui
-                    .add_enabled(metrics.connected, egui::Button::new("Learn"))
+                    .add_enabled(any_connected, egui::Button::new("Learn"))
                     .clicked()
                 {
                     actions.push(UiAction::MidiLearn(state.midi_target));
@@ -78,11 +82,18 @@ pub(super) fn draw_midi(
                 }
             });
 
+            let (received, dropped, parse_errors) =
+                devices.iter().fold((0, 0, 0), |sums, device| {
+                    (
+                        sums.0 + device.stats.received,
+                        sums.1 + device.stats.dropped,
+                        sums.2 + device.stats.parse_errors,
+                    )
+                });
             ui.weak(format!(
-                "events {} · dropped {} · parse errors {} · {} mapping(s)",
-                metrics.stats.received,
-                metrics.stats.dropped,
-                metrics.stats.parse_errors,
+                "{} device(s) live · events {received} · dropped {dropped} · parse errors \
+                 {parse_errors} · {} mapping(s)",
+                devices.iter().filter(|d| d.connected).count(),
                 midi.bindings.len()
             ));
 

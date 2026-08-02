@@ -27,7 +27,7 @@ impl State {
             let remove = takes.len() - 256;
             takes.drain(..remove);
         }
-        project::snapshot(
+        let mut snapshot = project::snapshot(
             &self.ui,
             &self.mixer,
             &self.clips,
@@ -40,7 +40,9 @@ impl State {
                 graph: self.performance_runtime.active_graph().clone(),
                 random_seeds: self.performance_runtime.random_seeds().clone(),
             },
-        )
+        );
+        snapshot.settings.midi_devices = self.midi_wanted.iter().cloned().collect();
+        snapshot
     }
 
     pub(crate) fn project_dirty(&self) -> bool {
@@ -140,6 +142,10 @@ impl State {
         project::apply_master(&project_file, &mut self.ui);
         let _ = self.apply_output_settings();
         self.midi = project::apply_midi(&project_file);
+        self.midi_wanted = project_file.settings.midi_devices.iter().cloned().collect();
+        // Reconnect whatever hardware from the saved rig is present right now;
+        // the rest reconnects automatically when it appears.
+        self.refresh_midi_inputs();
 
         for deck in DeckId::ALL {
             let index = deck.index();

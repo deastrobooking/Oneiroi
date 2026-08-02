@@ -26,8 +26,8 @@ use oneiroi_core::{
 };
 use oneiroi_io::{
     AudioInput, AudioInputDevice, AudioInputSnapshot, MidiInputConnection, MidiInputDevice,
-    MidiInputStats, ProjectFile, TakeMetadataProject, autosave_path, discover_audio_inputs,
-    discover_midi_inputs, new_project_id,
+    ProjectFile, TakeMetadataProject, autosave_path, discover_audio_inputs, discover_midi_inputs,
+    new_project_id,
 };
 use oneiroi_media::{
     CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipRestorer, CrossfadeBus, DeckDecoder,
@@ -129,10 +129,12 @@ struct State {
     restore_transport: [Option<DeckTransport>; 4],
     midi: MidiMapper,
     midi_inputs: Vec<MidiInputDevice>,
-    midi_input: Option<MidiInputConnection>,
-    midi_stats: MidiInputStats,
+    midi_connections: Vec<MidiInputConnection>,
+    midi_device_stats: Vec<ui::MidiDeviceStatus>,
     midi_status: String,
-    midi_reconnect: bool,
+    /// Devices the operator wants connected; reconnected automatically when
+    /// they reappear and saved with the project.
+    midi_wanted: std::collections::BTreeSet<String>,
     last_midi_refresh: Instant,
     osc_input: Option<osc::OscInput>,
     osc_stats: osc::OscStats,
@@ -699,10 +701,10 @@ impl State {
             restore_transport: [None; 4],
             midi: MidiMapper::default(),
             midi_inputs,
-            midi_input: None,
-            midi_stats: MidiInputStats::default(),
+            midi_connections: Vec::new(),
+            midi_device_stats: Vec::new(),
             midi_status,
-            midi_reconnect: false,
+            midi_wanted: std::collections::BTreeSet::new(),
             last_midi_refresh: Instant::now(),
             osc_input: None,
             osc_stats: osc::OscStats::default(),
@@ -810,8 +812,7 @@ impl State {
                     midi: ui::MidiMetrics {
                         inputs: &self.midi_inputs,
                         status: &self.midi_status,
-                        connected: self.midi_input.is_some(),
-                        stats: self.midi_stats,
+                        devices: &self.midi_device_stats,
                         mapper: &mut self.midi,
                     },
                     osc: ui::OscMetrics {
@@ -1135,7 +1136,15 @@ impl State {
                 ui::UiAction::ConnectMidiInput(device_id) => {
                     self.connect_midi_input(device_id);
                 }
-                ui::UiAction::DisconnectMidiInput => self.disconnect_midi_input(),
+                ui::UiAction::DisconnectMidiInput(device_id) => {
+                    self.disconnect_midi_input(&device_id);
+                }
+                ui::UiAction::MidiClearDevice(device_id) => {
+                    self.midi
+                        .bindings
+                        .retain(|binding| binding.device != device_id);
+                    self.midi_status = format!("Cleared all mappings for {device_id}");
+                }
                 ui::UiAction::ConnectOscInput => self.connect_osc_input(),
                 ui::UiAction::DisconnectOscInput => self.disconnect_osc_input(),
                 ui::UiAction::ConnectOscOutput => self.connect_osc_output(),

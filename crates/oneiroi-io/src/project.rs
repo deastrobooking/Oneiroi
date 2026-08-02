@@ -374,6 +374,9 @@ pub struct ProjectSettings {
     pub master_modulation: MasterModulationProject,
     #[serde(default)]
     pub theme: ThemeProject,
+    /// MIDI devices the operator had connected; reconnected on load.
+    #[serde(default)]
+    pub midi_devices: Vec<String>,
 }
 
 impl Default for ProjectSettings {
@@ -389,6 +392,7 @@ impl Default for ProjectSettings {
             master_effects: MasterEffectsProject::default(),
             master_modulation: MasterModulationProject::default(),
             theme: ThemeProject::default(),
+            midi_devices: Vec::new(),
         }
     }
 }
@@ -1811,5 +1815,26 @@ mod tests {
         assert!(loaded.graph.is_some());
         assert_eq!(loaded.settings.output, OutputProject::default());
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn midi_device_list_round_trips_and_defaults_empty() {
+        let mut project = ProjectFile::default();
+        project.settings.midi_devices = vec!["apc-40".to_owned(), "launch-control".to_owned()];
+        let json = serde_json::to_string(&project).unwrap();
+        let loaded: ProjectFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            loaded.settings.midi_devices,
+            vec!["apc-40".to_owned(), "launch-control".to_owned()]
+        );
+
+        // A settings object written before the field existed still loads.
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("midi_devices");
+        let legacy: ProjectFile = serde_json::from_value(value).unwrap();
+        assert!(legacy.settings.midi_devices.is_empty());
     }
 }

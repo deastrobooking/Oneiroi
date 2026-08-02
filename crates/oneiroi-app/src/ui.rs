@@ -8,12 +8,14 @@ mod clips;
 mod deck;
 mod master_fx;
 mod midi;
+mod midi_manager;
 pub mod theme;
 
 use clips::draw_clip_grid;
 use deck::{DeckControls, draw_deck};
 use master_fx::{draw_custom_effect, draw_master_modulation};
 use midi::draw_midi;
+use midi_manager::draw_midi_manager;
 use theme::{CASCADE_STRIP_WIDTH, ResolvedDeckLayout, ThemePalette, ThemeState};
 
 use std::collections::HashMap;
@@ -82,6 +84,8 @@ pub struct UiState {
     pub timeline_marker_input: String,
     pub take_export_directory: String,
     pub theme: ThemeState,
+    pub midi_map_mode: bool,
+    pub midi_manager_open: bool,
     thumbnails: HashMap<ClipAddress, CachedThumbnail>,
     thumbnail_failures: HashMap<ClipAddress, (PathBuf, String)>,
     fps: FpsMeter,
@@ -136,6 +140,8 @@ impl Default for UiState {
             timeline_marker_input: String::new(),
             take_export_directory: "take-exports".to_owned(),
             theme: ThemeState::default(),
+            midi_map_mode: false,
+            midi_manager_open: false,
             thumbnails: HashMap::new(),
             thumbnail_failures: HashMap::new(),
             fps: FpsMeter::default(),
@@ -314,7 +320,8 @@ pub enum UiAction {
     DisconnectAudioInput,
     RefreshMidiInputs,
     ConnectMidiInput(String),
-    DisconnectMidiInput,
+    DisconnectMidiInput(String),
+    MidiClearDevice(String),
     ConnectOscInput,
     DisconnectOscInput,
     ConnectOscOutput,
@@ -382,9 +389,32 @@ pub struct PerformanceMetrics<'a> {
 pub struct MidiMetrics<'a> {
     pub inputs: &'a [MidiInputDevice],
     pub status: &'a str,
-    pub connected: bool,
-    pub stats: MidiInputStats,
+    pub devices: &'a [MidiDeviceStatus],
     pub mapper: &'a mut MidiMapper,
+}
+
+impl MidiMetrics<'_> {
+    pub fn any_connected(&self) -> bool {
+        self.devices.iter().any(|device| device.connected)
+    }
+
+    pub fn device_connected(&self, id: &str) -> bool {
+        self.devices
+            .iter()
+            .any(|device| device.connected && device.id == id)
+    }
+}
+
+/// One MIDI device as the manager window sees it.
+#[derive(Clone, Debug, Default)]
+pub struct MidiDeviceStatus {
+    pub id: String,
+    pub label: String,
+    pub connected: bool,
+    /// Whether the operator asked for this device; wanted devices reconnect
+    /// automatically when the hardware reappears.
+    pub wanted: bool,
+    pub stats: MidiInputStats,
 }
 
 pub struct OscMetrics<'a> {
@@ -396,6 +426,94 @@ pub struct OscMetrics<'a> {
     pub output_status: &'a str,
     pub output_connected: bool,
     pub output_stats: crate::osc::OscOutputStats,
+}
+
+/// Everything the click-to-arm overlay needs, resolved once per frame.
+///
+/// Ableton-style mapping: arm the mode, click any highlighted control, then
+/// move a knob on any connected device. While the mode is armed the wrapped
+/// widgets are disabled so browsing for a control cannot change the mix.
+pub(super) struct MidiMapUi {
+    pub active: bool,
+    pub learning: Option<ControlTarget>,
+    /// (target, device) pairs for every existing binding.
+    pub mapped: Vec<(ControlTarget, String)>,
+    pub palette: ThemePalette,
+}
+
+impl MidiMapUi {
+    fn devices_for(&self, target: ControlTarget) -> Vec<&str> {
+        self.mapped
+            .iter()
+            .filter(|(mapped, _)| *mapped == target)
+            .map(|(_, device)| device.as_str())
+            .collect()
+    }
+}
+
+/// Wrap a widget so it participates in MIDI map mode.
+///
+/// Outside map mode this is a transparent pass-through. Inside it, the widget
+/// draws disabled and an overlay takes the clicks: primary arms the target
+/// for the next incoming message, secondary clears its bindings.
+pub(super) fn mappable(
+    ui: &mut egui::Ui,
+    map: &MidiMapUi,
+    target: ControlTarget,
+    actions: &mut Vec<UiAction>,
+    add: impl FnOnce(&mut egui::Ui) -> egui::Response,
+) -> egui::Response {
+    if !map.active {
+        return add(ui);
+    }
+    let response = ui.add_enabled_ui(false, add).inner;
+    let armed = map.learning == Some(target);
+    let devices = map.devices_for(target);
+    let (tint, stroke) = if armed {
+        (
+            map.palette.accent.linear_multiply(0.30),
+            egui::Stroke::new(2.0, map.palette.accent),
+        )
+    } else if devices.is_empty() {
+        (
+            map.palette.control.linear_multiply(0.25),
+            egui::Stroke::new(1.0, map.palette.stroke),
+        )
+    } else {
+        (
+            map.palette.secondary.linear_multiply(0.25),
+            egui::Stroke::new(1.0, map.palette.secondary),
+        )
+    };
+    let rect = response.rect.expand(2.0);
+    ui.painter()
+        .rect(rect, 4.0, tint, stroke, egui::StrokeKind::Outside);
+    let hit = ui.interact(
+        rect,
+        response.id.with("midi-map-overlay"),
+        egui::Sense::click(),
+    );
+    let hit = hit.on_hover_text(if armed {
+        "Armed · move a control on any connected device".to_owned()
+    } else if devices.is_empty() {
+        "Click to arm, then move a control · right-click clears".to_owned()
+    } else {
+        format!(
+            "Mapped to {} · click to remap · right-click clears",
+            devices.join(", ")
+        )
+    });
+    if hit.clicked() {
+        actions.push(if armed {
+            UiAction::MidiCancelLearn
+        } else {
+            UiAction::MidiLearn(target)
+        });
+    }
+    if hit.secondary_clicked() {
+        actions.push(UiAction::MidiClearTarget(target));
+    }
+    response
 }
 
 fn status_dot(ui: &mut egui::Ui, palette: &ThemePalette, label: &str, active: bool, warning: bool) {
@@ -423,6 +541,18 @@ pub fn draw(
     let palette = state.theme.palette();
     state.fps.push(metrics.frame_time.delta);
     let mut actions = Vec::new();
+    let midi_map = MidiMapUi {
+        active: state.midi_map_mode,
+        learning: metrics.midi.mapper.learning(),
+        mapped: metrics
+            .midi
+            .mapper
+            .bindings
+            .iter()
+            .map(|binding| (binding.target, binding.device.clone()))
+            .collect(),
+        palette,
+    };
 
     egui::Window::new("oneiroi")
         .default_pos([16.0, 16.0])
@@ -450,7 +580,7 @@ pub fn draw(
                     state.output_enabled && metrics.output_health.status != "Healthy",
                 );
                 status_dot(ui, &palette, "AUDIO", metrics.audio_connected, false);
-                status_dot(ui, &palette, "MIDI", metrics.midi.connected, false);
+                status_dot(ui, &palette, "MIDI", metrics.midi.any_connected(), false);
                 status_dot(ui, &palette, "OSC", metrics.osc.connected, false);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let blackout_fill = if state.blackout {
@@ -487,6 +617,26 @@ pub fn draw(
                     ui.menu_button("Theme", |ui| {
                         state.theme.picker_ui(ui);
                     });
+                    if ui
+                        .selectable_label(state.midi_manager_open, "MIDI")
+                        .on_hover_text("Open the MIDI Manager window")
+                        .clicked()
+                    {
+                        state.midi_manager_open = !state.midi_manager_open;
+                    }
+                    if state.midi_map_mode {
+                        let response = ui.selectable_label(
+                            true,
+                            egui::RichText::new("MAP").strong().color(palette.accent),
+                        );
+                        if response
+                            .on_hover_text("MIDI map mode armed · click to exit")
+                            .clicked()
+                        {
+                            state.midi_map_mode = false;
+                            actions.push(UiAction::MidiCancelLearn);
+                        }
+                    }
                     ui.weak(format!("{:.0} fps", state.fps.fps()));
                 });
             });
@@ -1089,7 +1239,11 @@ pub fn draw(
                                 .speed(0.25)
                                 .suffix(" BPM"),
                         );
-                        if ui.button("Tap").clicked() {
+                        let tap =
+                            mappable(ui, &midi_map, ControlTarget::TapTempo, &mut actions, |ui| {
+                                ui.button("Tap")
+                            });
+                        if tap.clicked() {
                             actions.push(UiAction::TapTempo);
                         }
                         if ui.button("½").on_hover_text("Half tempo").clicked() {
@@ -1158,7 +1312,7 @@ pub fn draw(
                     });
                         });
                 });
-            draw_clip_grid(ui, state, mixer, clips, launches, &mut actions);
+            draw_clip_grid(ui, state, mixer, clips, launches, &midi_map, &mut actions);
 
             ui.separator();
             {
@@ -1177,6 +1331,7 @@ pub fn draw(
                         deck_id,
                         DeckControls {
                             palette,
+                            midi_map: &midi_map,
                             transport: &mut transports[deck_id.index()],
                             transform: &mut transforms_ref[deck_id.index()],
                             blend_mode: &mut blend_modes_ref[deck_id.index()],
@@ -1234,11 +1389,13 @@ pub fn draw(
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label("A");
-                ui.add(
-                    egui::Slider::new(&mut state.crossfader, 0.0..=1.0)
-                        .text("crossfader")
-                        .clamping(egui::SliderClamping::Always),
-                );
+                mappable(ui, &midi_map, ControlTarget::Crossfader, &mut actions, |ui| {
+                    ui.add(
+                        egui::Slider::new(&mut state.crossfader, 0.0..=1.0)
+                            .text("crossfader")
+                            .clamping(egui::SliderClamping::Always),
+                    )
+                });
                 ui.label("B");
                 ui.checkbox(&mut state.equal_power, "equal power");
                 if ui.button("Center").clicked() {
@@ -1246,15 +1403,30 @@ pub fn draw(
                 }
             });
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::Slider::new(&mut state.master_opacity, 0.0..=1.0)
-                        .text("master")
-                        .clamping(egui::SliderClamping::Always),
+                mappable(ui, &midi_map, ControlTarget::MasterOpacity, &mut actions, |ui| {
+                    ui.add(
+                        egui::Slider::new(&mut state.master_opacity, 0.0..=1.0)
+                            .text("master")
+                            .clamping(egui::SliderClamping::Always),
+                    )
+                });
+                let blackout = mappable(
+                    ui,
+                    &midi_map,
+                    ControlTarget::MasterBlackout,
+                    &mut actions,
+                    |ui| ui.selectable_label(state.blackout, "BLACKOUT"),
                 );
-                if ui.selectable_label(state.blackout, "BLACKOUT").clicked() {
+                if blackout.clicked() {
                     state.blackout = !state.blackout;
                 }
-                ui.checkbox(&mut state.master_freeze, "master freeze");
+                mappable(
+                    ui,
+                    &midi_map,
+                    ControlTarget::MasterFreeze,
+                    &mut actions,
+                    |ui| ui.checkbox(&mut state.master_freeze, "master freeze"),
+                );
             });
             egui::CollapsingHeader::new("Master effects")
                 .default_open(false)
@@ -1361,6 +1533,7 @@ pub fn draw(
                     }
                 });
         });
+    draw_midi_manager(ctx, state, &mut metrics.midi, &palette, &mut actions);
     actions
 }
 

@@ -4,6 +4,7 @@ use super::*;
 
 pub(super) struct DeckControls<'a> {
     pub(super) palette: ThemePalette,
+    pub(super) midi_map: &'a MidiMapUi,
     pub(super) transport: &'a mut DeckTransport,
     pub(super) transform: &'a mut DeckTransform,
     pub(super) blend_mode: &'a mut LayerBlendMode,
@@ -22,6 +23,7 @@ pub(super) fn draw_deck(
 ) {
     let DeckControls {
         palette,
+        midi_map,
         transport,
         transform,
         blend_mode,
@@ -162,10 +164,18 @@ pub(super) fn draw_deck(
 
         let deck = mixer.deck_mut(id);
         ui.horizontal(|ui| {
-            ui.add(
-                egui::Slider::new(&mut deck.level, 0.0..=1.0)
-                    .text("level")
-                    .clamping(egui::SliderClamping::Always),
+            mappable(
+                ui,
+                midi_map,
+                ControlTarget::DeckLevel(id.index() as u8),
+                actions,
+                |ui| {
+                    ui.add(
+                        egui::Slider::new(&mut deck.level, 0.0..=1.0)
+                            .text("level")
+                            .clamping(egui::SliderClamping::Always),
+                    )
+                },
             );
             ui.selectable_value(&mut deck.bus, CrossfadeBus::Left, "Bus A");
             ui.selectable_value(&mut deck.bus, CrossfadeBus::Right, "Bus B");
@@ -207,17 +217,34 @@ pub(super) fn draw_deck(
             });
         } else {
             ui.horizontal(|ui| {
-                if ui
-                    .button(if transport.playing { "Pause" } else { "Play" })
-                    .clicked()
-                {
+                let play = mappable(
+                    ui,
+                    midi_map,
+                    ControlTarget::DeckPlay(id.index() as u8),
+                    actions,
+                    |ui| ui.button(if transport.playing { "Pause" } else { "Play" }),
+                );
+                if play.clicked() {
                     transport.playing = !transport.playing;
                 }
-                if ui.button("Restart").clicked() {
+                let restart = mappable(
+                    ui,
+                    midi_map,
+                    ControlTarget::DeckRestart(id.index() as u8),
+                    actions,
+                    |ui| ui.button("Restart"),
+                );
+                if restart.clicked() {
                     transport.restart();
                     actions.push(UiAction::Restart(id));
                 }
-                ui.checkbox(&mut transport.frozen, "Freeze");
+                mappable(
+                    ui,
+                    midi_map,
+                    ControlTarget::DeckFreeze(id.index() as u8),
+                    actions,
+                    |ui| ui.checkbox(&mut transport.frozen, "Freeze"),
+                );
                 let mut looping = transport.end_mode == EndMode::Loop;
                 if ui.checkbox(&mut looping, "Loop").changed() {
                     transport.end_mode = if looping {
@@ -226,10 +253,18 @@ pub(super) fn draw_deck(
                         EndMode::OneShot
                     };
                 }
-                ui.add(
-                    egui::Slider::new(&mut transport.speed, 0.25..=4.0)
-                        .text("speed")
-                        .logarithmic(true),
+                mappable(
+                    ui,
+                    midi_map,
+                    ControlTarget::DeckSpeed(id.index() as u8),
+                    actions,
+                    |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut transport.speed, 0.25..=4.0)
+                                .text("speed")
+                                .logarithmic(true),
+                        )
+                    },
                 );
             });
         }
@@ -347,69 +382,131 @@ pub(super) fn draw_deck(
                     ui.weak("Top to bottom · each slot has bypass and dry/wet.");
                 });
                 ui.separator();
+                // Every slider is a modulation and MIDI destination; `fx`
+                // pairs each with its stable effect-parameter index so map
+                // mode can arm it in place. The indices match
+                // `effect_parameter` in the app shell and must not be
+                // renumbered.
+                let mut fx = |ui: &mut egui::Ui, effect: u8, slider: egui::Slider<'_>| {
+                    mappable(
+                        ui,
+                        midi_map,
+                        ControlTarget::EffectParameter {
+                            deck: id.index() as u8,
+                            effect,
+                            parameter: 0,
+                        },
+                        actions,
+                        |ui| ui.add(slider),
+                    )
+                };
                 ui.columns(2, |columns| {
                     columns[0].label("Color");
-                    columns[0].add(egui::Slider::new(&mut effects.hue, -1.0..=1.0).text("hue"));
-                    columns[0]
-                        .add(egui::Slider::new(&mut effects.contrast, 0.0..=4.0).text("contrast"));
-                    columns[0].add(
+                    fx(
+                        &mut columns[0],
+                        0,
+                        egui::Slider::new(&mut effects.hue, -1.0..=1.0).text("hue"),
+                    );
+                    fx(
+                        &mut columns[0],
+                        1,
+                        egui::Slider::new(&mut effects.contrast, 0.0..=4.0).text("contrast"),
+                    );
+                    fx(
+                        &mut columns[0],
+                        2,
                         egui::Slider::new(&mut effects.saturation, 0.0..=4.0).text("saturation"),
                     );
-                    columns[0].add(
+                    fx(
+                        &mut columns[0],
+                        3,
                         egui::Slider::new(&mut effects.black_level, 0.0..=0.95).text("black level"),
                     );
-                    columns[0].add(
+                    fx(
+                        &mut columns[0],
+                        4,
                         egui::Slider::new(&mut effects.white_level, 0.01..=1.0).text("white level"),
                     );
                     if effects.white_level <= effects.black_level {
                         effects.white_level = (effects.black_level + 0.01).min(1.0);
                     }
-                    columns[0].add(egui::Slider::new(&mut effects.gamma, 0.1..=4.0).text("gamma"));
-                    columns[0].add(
+                    fx(
+                        &mut columns[0],
+                        5,
+                        egui::Slider::new(&mut effects.gamma, 0.1..=4.0).text("gamma"),
+                    );
+                    fx(
+                        &mut columns[0],
+                        12,
                         egui::Slider::new(&mut effects.bit_reduction, 0.0..=1.0)
                             .text("bit reduction"),
                     );
-                    columns[0].add(
+                    fx(
+                        &mut columns[0],
+                        13,
                         egui::Slider::new(&mut effects.blacklight, 0.0..=1.0).text("black light"),
                     );
 
                     columns[1].label("Geometry / stylize");
                     columns[1].checkbox(&mut effects.mirror, "mirror");
-                    columns[1]
-                        .add(egui::Slider::new(&mut effects.neon, 0.0..=1.0).text("neon glow"));
-                    columns[1].add(
+                    fx(
+                        &mut columns[1],
+                        8,
+                        egui::Slider::new(&mut effects.neon, 0.0..=1.0).text("neon glow"),
+                    );
+                    fx(
+                        &mut columns[1],
+                        9,
                         egui::Slider::new(&mut effects.fractal, 0.0..=1.0).text("fractal fold"),
                     );
-                    columns[1]
-                        .add(egui::Slider::new(&mut effects.jitter, 0.0..=1.0).text("jitter"));
-                    columns[1].add(
+                    fx(
+                        &mut columns[1],
+                        10,
+                        egui::Slider::new(&mut effects.jitter, 0.0..=1.0).text("jitter"),
+                    );
+                    fx(
+                        &mut columns[1],
+                        11,
                         egui::Slider::new(&mut effects.find_edges, 0.0..=1.0).text("find edges"),
                     );
-                    columns[1]
-                        .add(egui::Slider::new(&mut effects.pixelate, 0.0..=0.1).text("pixelate"));
-                    columns[1]
-                        .add(egui::Slider::new(&mut effects.bloom, 0.0..=1.0).text("bloom"))
-                        .on_hover_text(
-                            "Scatters light from the brightest parts of this layer only.",
-                        );
+                    fx(
+                        &mut columns[1],
+                        6,
+                        egui::Slider::new(&mut effects.pixelate, 0.0..=0.1).text("pixelate"),
+                    );
+                    fx(
+                        &mut columns[1],
+                        14,
+                        egui::Slider::new(&mut effects.bloom, 0.0..=1.0).text("bloom"),
+                    )
+                    .on_hover_text("Scatters light from the brightest parts of this layer only.");
                     // The shaping controls only matter once there is bloom to shape.
                     columns[1].add_enabled_ui(effects.bloom > 0.0, |ui| {
-                        ui.add(
+                        fx(
+                            ui,
+                            15,
                             egui::Slider::new(&mut effects.bloom_threshold, 0.0..=1.0)
                                 .text("bloom threshold"),
                         );
-                        ui.add(
+                        fx(
+                            ui,
+                            16,
                             egui::Slider::new(&mut effects.bloom_radius, 0.02..=1.0)
                                 .text("bloom radius"),
                         );
-                        ui.add(
+                        fx(
+                            ui,
+                            17,
                             egui::Slider::new(&mut effects.bloom_chroma, 0.0..=1.0)
                                 .text("bloom chroma"),
                         )
                         .on_hover_text("Spreads red further than blue, like real diffusion.");
                     });
-                    columns[1]
-                        .add(egui::Slider::new(&mut effects.luma_key, 0.0..=1.0).text("luma key"));
+                    fx(
+                        &mut columns[1],
+                        7,
+                        egui::Slider::new(&mut effects.luma_key, 0.0..=1.0).text("luma key"),
+                    );
                 });
                 ui.horizontal(|ui| {
                     if ui.button("Reset effects").clicked() {

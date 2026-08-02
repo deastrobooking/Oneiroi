@@ -64,6 +64,8 @@ pub fn snapshot(
             master_effects: master_effects_to_project(&ui.master_effects),
             master_modulation: master_modulation_to_project(ui.master_modulation),
             theme: theme_to_project(&ui.theme),
+            // Overwritten by the caller, which owns the device set.
+            midi_devices: Vec::new(),
         },
         decks: DeckId::ALL
             .into_iter()

@@ -8,6 +8,7 @@ pub(super) fn draw_clip_grid(
     mixer: &mut FourDeckMixer,
     clips: &mut ClipBank,
     launches: &LaunchQueue,
+    midi_map: &MidiMapUi,
     actions: &mut Vec<UiAction>,
 ) {
     let palette = state.theme.palette();
@@ -17,14 +18,22 @@ pub(super) fn draw_clip_grid(
         .show(ui, |ui| {
             ui.strong("SCENE");
             for slot in 0..CLIPS_PER_DECK {
-                if ui
-                    .add_sized(
-                        [96.0, 28.0],
-                        egui::Button::new(
-                            egui::RichText::new(format!("SCENE {}", slot + 1)).strong(),
+                let scene = mappable(
+                    ui,
+                    midi_map,
+                    ControlTarget::SceneLaunch(slot as u8),
+                    actions,
+                    |ui| {
+                        ui.add_sized(
+                            [96.0, 28.0],
+                            egui::Button::new(
+                                egui::RichText::new(format!("SCENE {}", slot + 1)).strong(),
+                            )
+                            .fill(palette.control_tint(palette.secondary, 0.22)),
                         )
-                        .fill(palette.control_tint(palette.secondary, 0.22)),
-                    )
+                    },
+                );
+                if scene
                     .on_hover_text(format!(
                         "Launch scene {} on the next quantized boundary",
                         slot + 1
@@ -112,10 +121,22 @@ pub(super) fn draw_clip_grid(
                                 palette.stroke
                             },
                         ));
-                    let draggable = slot_state.movie.is_some()
-                        || slot_state.pending_path.is_some()
-                        || slot_state.error.is_some();
-                    let response = if draggable {
+                    let draggable = !midi_map.active
+                        && (slot_state.movie.is_some()
+                            || slot_state.pending_path.is_some()
+                            || slot_state.error.is_some());
+                    let response = if midi_map.active {
+                        mappable(
+                            ui,
+                            midi_map,
+                            ControlTarget::ClipLaunch {
+                                deck: deck.index() as u8,
+                                slot: slot as u8,
+                            },
+                            actions,
+                            |ui| ui.add_sized([96.0, 46.0], button),
+                        )
+                    } else if draggable {
                         // Drag moves the clip to another slot; a plain click
                         // still selects and launches because the drag only
                         // starts past egui's drag threshold.

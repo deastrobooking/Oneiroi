@@ -62,20 +62,28 @@ impl State {
     pub(crate) fn refresh_midi_inputs(&mut self) {
         match discover_midi_inputs() {
             Ok(inputs) => {
-                let connected_id = self
-                    .midi_input
-                    .as_ref()
-                    .map(|input| input.device_id().to_owned());
                 self.midi_inputs = inputs;
-                if let Some(connected_id) = connected_id
-                    && !self
-                        .midi_inputs
+                // Drop connections whose hardware vanished; they stay in the
+                // wanted set so they reconnect the moment they reappear.
+                let available: std::collections::BTreeSet<String> = self
+                    .midi_inputs
+                    .iter()
+                    .map(|device| device.id.clone())
+                    .collect();
+                let before = self.midi_connections.len();
+                self.midi_connections
+                    .retain(|connection| available.contains(connection.device_id()));
+                if self.midi_connections.len() < before {
+                    self.midi_status = "MIDI device unplugged · waiting to reconnect".to_owned();
+                }
+                for wanted in self.midi_wanted.clone() {
+                    let connected = self
+                        .midi_connections
                         .iter()
-                        .any(|device| device.id == connected_id)
-                {
-                    self.midi_input = None;
-                    self.midi_status =
-                        format!("{connected_id} disconnected · waiting to reconnect");
+                        .any(|connection| connection.device_id() == wanted);
+                    if !connected && available.contains(&wanted) {
+                        self.connect_midi_input(wanted);
+                    }
                 }
                 if self.ui.midi_device_id.is_empty() {
                     self.ui.midi_device_id = self
@@ -84,75 +92,103 @@ impl State {
                         .map(|device| device.id.clone())
                         .unwrap_or_default();
                 }
-                if self.midi_input.is_none()
-                    && self.midi_reconnect
-                    && self
-                        .midi_inputs
-                        .iter()
-                        .any(|device| device.id == self.ui.midi_device_id)
-                {
-                    self.connect_midi_input(self.ui.midi_device_id.clone());
-                } else if self.midi_input.is_none() && !self.midi_reconnect {
-                    self.midi_status =
-                        format!("{} MIDI input(s) available", self.midi_inputs.len());
-                }
             }
             Err(error) => self.midi_status = format!("MIDI discovery failed: {error}"),
         }
+        self.refresh_midi_device_stats();
         self.last_midi_refresh = Instant::now();
     }
 
+    /// Connect one more device; existing connections stay up.
     pub(crate) fn connect_midi_input(&mut self, device_id: String) {
-        self.midi_input = None;
+        if self
+            .midi_connections
+            .iter()
+            .any(|connection| connection.device_id() == device_id)
+        {
+            self.midi_wanted.insert(device_id);
+            return;
+        }
         match MidiInputConnection::connect(&device_id) {
             Ok(input) => {
-                self.ui.midi_device_id = device_id.clone();
-                self.midi_stats = input.stats();
-                self.midi_input = Some(input);
-                self.midi_reconnect = true;
-                self.midi_status = format!("{device_id} connected");
+                self.midi_status = format!(
+                    "{device_id} connected · {} device(s) live",
+                    self.midi_connections.len() + 1
+                );
+                self.midi_connections.push(input);
+                self.midi_wanted.insert(device_id);
             }
             Err(error) => {
-                self.midi_reconnect = true;
-                self.midi_status = format!("MIDI connection failed: {error}");
+                self.midi_status = format!("{device_id} failed: {error}");
+                self.midi_wanted.remove(&device_id);
             }
         }
+        self.refresh_midi_device_stats();
     }
 
-    pub(crate) fn disconnect_midi_input(&mut self) {
-        self.midi_input = None;
-        self.midi_reconnect = false;
-        self.midi.cancel_learn();
-        self.midi_status = "MIDI input disconnected".to_owned();
+    pub(crate) fn disconnect_midi_input(&mut self, device_id: &str) {
+        self.midi_connections
+            .retain(|connection| connection.device_id() != device_id);
+        self.midi_wanted.remove(device_id);
+        if self.midi_connections.is_empty() {
+            self.midi.cancel_learn();
+        }
+        self.midi_status = format!("{device_id} disconnected");
+        self.refresh_midi_device_stats();
+    }
+
+    /// Snapshot per-device state for the manager window.
+    pub(crate) fn refresh_midi_device_stats(&mut self) {
+        self.midi_device_stats = self
+            .midi_inputs
+            .iter()
+            .map(|device| {
+                let connection = self
+                    .midi_connections
+                    .iter()
+                    .find(|connection| connection.device_id() == device.id);
+                crate::ui::MidiDeviceStatus {
+                    id: device.id.clone(),
+                    label: device.label.clone(),
+                    connected: connection.is_some(),
+                    wanted: self.midi_wanted.contains(&device.id),
+                    stats: connection.map(|c| c.stats()).unwrap_or_default(),
+                }
+            })
+            .collect();
     }
 
     pub(crate) fn poll_midi(&mut self, now: Instant) {
         if now.saturating_duration_since(self.last_midi_refresh) >= Duration::from_secs(2) {
             self.refresh_midi_inputs();
         }
-        let Some(input) = &self.midi_input else {
-            return;
-        };
-        let device = input.device_id().to_owned();
-        let events: Vec<_> = input.try_iter().collect();
-        self.midi_stats = input.stats();
-        for event in events {
-            let updates = {
-                let ui = &self.ui;
-                let mixer = &self.mixer;
-                let transports = &self.transports;
-                self.midi.ingest(&device, event.message, |target| {
-                    current_control_value(ui, mixer, transports, target)
-                })
-            };
-            for update in updates {
-                self.dispatch_control_update(update, CommandOrigin::Midi(device.clone()), now);
+        // Collect first: ingest needs &mut self.midi while connections are
+        // borrowed, so the events leave the borrow before dispatch.
+        let batches: Vec<(String, Vec<_>)> = self
+            .midi_connections
+            .iter()
+            .map(|input| (input.device_id().to_owned(), input.try_iter().collect()))
+            .collect();
+        for (device, events) in batches {
+            for event in events {
+                let updates = {
+                    let ui = &self.ui;
+                    let mixer = &self.mixer;
+                    let transports = &self.transports;
+                    self.midi.ingest(&device, event.message, |target| {
+                        current_control_value(ui, mixer, transports, target)
+                    })
+                };
+                for update in updates {
+                    self.dispatch_control_update(update, CommandOrigin::Midi(device.clone()), now);
+                }
+                self.midi_status = format!(
+                    "{device} · {:?} · {} µs",
+                    event.message, event.timestamp_micros
+                );
             }
-            self.midi_status = format!(
-                "{device} · {:?} · {} µs",
-                event.message, event.timestamp_micros
-            );
         }
+        self.refresh_midi_device_stats();
     }
 
     pub(crate) fn connect_osc_input(&mut self) {
