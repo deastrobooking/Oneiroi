@@ -328,7 +328,18 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => state.gpu.resize(size.width, size.height),
-            WindowEvent::DroppedFile(path) => state.import_path(path),
+            WindowEvent::DroppedFile(path) => {
+                if state.ui.show_mode {
+                    state.project_status = format!(
+                        "Show Mode locked · ignored dropped file {}",
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("media")
+                    );
+                } else {
+                    state.import_path(path);
+                }
+            }
             WindowEvent::ModifiersChanged(modifiers) => state.modifiers = modifiers.state(),
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed && !event.repeat =>

@@ -78,6 +78,22 @@ For performance testing, use a release build:
 cargo run --release -p oneiroi-app
 ```
 
+## Preflight and Show Mode
+
+The rail beneath the application header summarizes output health, missing or
+still-loading media, requested MIDI devices that have not connected, unsaved
+project changes and rejected effect reloads. **PREFLIGHT READY** means every
+hard show-path check is currently clear; audio, MIDI and OSC remain optional
+unless the project actually uses them.
+
+After setup and saving, press **SHOW MODE** in the top bar. Show Mode keeps
+clip and scene launches, deck transport, levels, solo/bypass, the A/B
+crossfader, master opacity, freeze and emergency blackout available. It hides
+or locks output/project/device setup, file drops, slot movement, relink/clear,
+eject, MIDI mapping, bus/blend structure, transforms, deck effects, modulation
+and master-effect editing. Press **EXIT SHOW MODE** to return to preparation.
+The lock is deliberately temporary and is not stored in a project.
+
 FFmpeg and its development libraries must be installed. HAP uses the direct
 GPU-compressed path; other supported movies and stills use FFmpeg.
 

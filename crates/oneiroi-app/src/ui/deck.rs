@@ -5,6 +5,7 @@ use super::*;
 pub(super) struct DeckControls<'a> {
     pub(super) palette: ThemePalette,
     pub(super) midi_map: &'a MidiMapUi,
+    pub(super) show_mode: bool,
     pub(super) transport: &'a mut DeckTransport,
     pub(super) transform: &'a mut DeckTransform,
     pub(super) blend_mode: &'a mut LayerBlendMode,
@@ -24,6 +25,7 @@ pub(super) fn draw_deck(
     let DeckControls {
         palette,
         midi_map,
+        show_mode,
         transport,
         transform,
         blend_mode,
@@ -83,7 +85,7 @@ pub(super) fn draw_deck(
             } else {
                 "click to target"
             });
-            let eject_enabled = !matches!(mixer.deck(id).state, DeckState::Empty);
+            let eject_enabled = !show_mode && !matches!(mixer.deck(id).state, DeckState::Empty);
             if ui
                 .add_enabled(eject_enabled, egui::Button::new("Eject"))
                 .clicked()
@@ -177,8 +179,15 @@ pub(super) fn draw_deck(
                     )
                 },
             );
-            ui.selectable_value(&mut deck.bus, CrossfadeBus::Left, "Bus A");
-            ui.selectable_value(&mut deck.bus, CrossfadeBus::Right, "Bus B");
+            if show_mode {
+                ui.weak(match deck.bus {
+                    CrossfadeBus::Left => "Bus A",
+                    CrossfadeBus::Right => "Bus B",
+                });
+            } else {
+                ui.selectable_value(&mut deck.bus, CrossfadeBus::Left, "Bus A");
+                ui.selectable_value(&mut deck.bus, CrossfadeBus::Right, "Bus B");
+            }
         });
         ui.horizontal(|ui| {
             if ui.selectable_label(*solo, "Solo").clicked() {
@@ -187,22 +196,26 @@ pub(super) fn draw_deck(
             if ui.selectable_label(*bypassed, "Bypass").clicked() {
                 *bypassed = !*bypassed;
             }
-            egui::ComboBox::from_id_salt(format!("blend-mode-{}", id.label()))
-                .selected_text(blend_mode_label(*blend_mode))
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(190.0);
-                    for group in BlendModeGroup::ALL {
-                        ui.label(egui::RichText::new(group.label()).weak().small());
-                        for mode in LayerBlendMode::ALL
-                            .into_iter()
-                            .filter(|mode| mode.group() == group)
-                        {
-                            ui.selectable_value(blend_mode, mode, blend_mode_label(mode))
-                                .on_hover_text(mode.hint());
+            if show_mode {
+                ui.weak(format!("Blend · {}", blend_mode_label(*blend_mode)));
+            } else {
+                egui::ComboBox::from_id_salt(format!("blend-mode-{}", id.label()))
+                    .selected_text(blend_mode_label(*blend_mode))
+                    .show_ui(ui, |ui| {
+                        ui.set_min_width(190.0);
+                        for group in BlendModeGroup::ALL {
+                            ui.label(egui::RichText::new(group.label()).weak().small());
+                            for mode in LayerBlendMode::ALL
+                                .into_iter()
+                                .filter(|mode| mode.group() == group)
+                            {
+                                ui.selectable_value(blend_mode, mode, blend_mode_label(mode))
+                                    .on_hover_text(mode.hint());
+                            }
+                            ui.separator();
                         }
-                        ui.separator();
-                    }
-                });
+                    });
+            }
             if *bypassed {
                 ui.weak("Layer excluded from composition");
             } else if *solo {
@@ -279,6 +292,9 @@ pub(super) fn draw_deck(
                 transport.seek_normalized(progress);
                 actions.push(UiAction::Seek(id));
             }
+        }
+        if show_mode {
+            return;
         }
         egui::CollapsingHeader::new("Layer transform")
             .id_salt(format!("transform-{}", id.label()))

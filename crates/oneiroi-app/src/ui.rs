@@ -84,6 +84,9 @@ pub struct UiState {
     pub timeline_marker_input: String,
     pub take_export_directory: String,
     pub theme: ThemeState,
+    /// Performance lock: keeps launch/mix/transport controls live while
+    /// hiding setup and structural editors that can destabilize a show.
+    pub show_mode: bool,
     pub midi_map_mode: bool,
     pub midi_manager_open: bool,
     thumbnails: HashMap<ClipAddress, CachedThumbnail>,
@@ -140,6 +143,7 @@ impl Default for UiState {
             timeline_marker_input: String::new(),
             take_export_directory: "take-exports".to_owned(),
             theme: ThemeState::default(),
+            show_mode: false,
             midi_map_mode: false,
             midi_manager_open: false,
             thumbnails: HashMap::new(),
@@ -543,6 +547,35 @@ pub fn draw(
     let palette = state.theme.palette();
     state.fps.push(metrics.frame_time.delta);
     let mut actions = Vec::new();
+    let mut missing_media = 0;
+    let mut loading_media = 0;
+    for deck in DeckId::ALL {
+        for slot in 0..CLIPS_PER_DECK {
+            let address = ClipAddress { deck, slot };
+            if let Some(slot_state) = clips.slot(address) {
+                if slot_state.error.is_some() {
+                    missing_media += 1;
+                } else if slot_state.movie.is_none() && slot_state.pending_path.is_some() {
+                    loading_media += 1;
+                }
+            }
+        }
+    }
+    let midi_waiting = metrics
+        .midi
+        .devices
+        .iter()
+        .filter(|device| device.wanted && !device.connected)
+        .count();
+    let output_ready = state.output_enabled
+        && !metrics.output_displays.is_empty()
+        && metrics.output_health.status == "Healthy";
+    let effect_rejected = state.effect_reload_status.contains("rejected");
+    let preflight_ready = output_ready
+        && missing_media == 0
+        && loading_media == 0
+        && !effect_rejected
+        && !metrics.project_dirty;
     let midi_map = MidiMapUi {
         active: state.midi_map_mode,
         learning: metrics.midi.mapper.learning(),
@@ -616,27 +649,56 @@ pub fn draw(
                     {
                         state.master_freeze = !state.master_freeze;
                     }
-                    ui.menu_button("Theme", |ui| {
-                        state.theme.picker_ui(ui);
-                    });
+                    let show_label = if state.show_mode {
+                        "EXIT SHOW MODE"
+                    } else {
+                        "SHOW MODE"
+                    };
                     if ui
-                        .selectable_label(state.midi_manager_open, "MIDI")
-                        .on_hover_text("Open the MIDI Manager window")
+                        .add(
+                            egui::Button::new(egui::RichText::new(show_label).strong()).fill(
+                                if state.show_mode {
+                                    palette.control_tint(palette.success, 0.36)
+                                } else {
+                                    palette.control
+                                },
+                            ),
+                        )
+                        .on_hover_text(
+                            "Lock setup, media management and structural effect editors",
+                        )
                         .clicked()
                     {
-                        state.midi_manager_open = !state.midi_manager_open;
+                        state.show_mode = !state.show_mode;
+                        if state.show_mode {
+                            state.midi_map_mode = false;
+                            state.midi_manager_open = false;
+                            actions.push(UiAction::MidiCancelLearn);
+                        }
                     }
-                    if state.midi_map_mode {
-                        let response = ui.selectable_label(
-                            true,
-                            egui::RichText::new("MAP").strong().color(palette.accent),
-                        );
-                        if response
-                            .on_hover_text("MIDI map mode armed · click to exit")
+                    if !state.show_mode {
+                        ui.menu_button("Theme", |ui| {
+                            state.theme.picker_ui(ui);
+                        });
+                        if ui
+                            .selectable_label(state.midi_manager_open, "MIDI")
+                            .on_hover_text("Open the MIDI Manager window")
                             .clicked()
                         {
-                            state.midi_map_mode = false;
-                            actions.push(UiAction::MidiCancelLearn);
+                            state.midi_manager_open = !state.midi_manager_open;
+                        }
+                        if state.midi_map_mode {
+                            let response = ui.selectable_label(
+                                true,
+                                egui::RichText::new("MAP").strong().color(palette.accent),
+                            );
+                            if response
+                                .on_hover_text("MIDI map mode armed · click to exit")
+                                .clicked()
+                            {
+                                state.midi_map_mode = false;
+                                actions.push(UiAction::MidiCancelLearn);
+                            }
                         }
                     }
                     ui.weak(format!("{:.0} fps", state.fps.fps()));
@@ -647,14 +709,44 @@ pub fn draw(
                 ui.separator();
                 ui.weak(metrics.runtime_status);
             });
+            ui.horizontal_wrapped(|ui| {
+                let (label, color) = if preflight_ready {
+                    ("● PREFLIGHT READY", palette.success)
+                } else {
+                    ("● PREFLIGHT ATTENTION", palette.warning)
+                };
+                ui.colored_label(color, egui::RichText::new(label).strong());
+                ui.separator();
+                ui.label(if output_ready {
+                    "output healthy"
+                } else {
+                    "output not ready"
+                });
+                ui.label(format!("missing {missing_media}"));
+                ui.label(format!("loading {loading_media}"));
+                ui.label(format!("MIDI waiting {midi_waiting}"));
+                ui.label(if metrics.project_dirty {
+                    "project modified"
+                } else {
+                    "project saved"
+                });
+                if effect_rejected {
+                    ui.colored_label(palette.danger, "effect reload rejected");
+                }
+                if state.show_mode {
+                    ui.separator();
+                    ui.colored_label(palette.success, "SHOW LOCKED");
+                }
+            });
             ui.separator();
             // Everything an operator sets up before the show - output,
             // project, devices, diagnostics - lives in one collapsible
             // region with its own scrollbar, so on a small screen it can
             // be scrolled through or folded away entirely while the
             // performance surface below keeps the space.
-            let setup_height = (ui.available_height() * 0.45).clamp(160.0, 420.0);
-            egui::CollapsingHeader::new("Setup · output, project, devices")
+            if !state.show_mode {
+                let setup_height = (ui.available_height() * 0.45).clamp(160.0, 420.0);
+                egui::CollapsingHeader::new("Setup · output, project, devices")
                 .default_open(true)
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical()
@@ -1314,6 +1406,7 @@ pub fn draw(
                     });
                         });
                 });
+            }
             draw_clip_grid(ui, state, mixer, clips, launches, &midi_map, &mut actions);
 
             ui.separator();
@@ -1334,6 +1427,7 @@ pub fn draw(
                         DeckControls {
                             palette,
                             midi_map: &midi_map,
+                            show_mode: state.show_mode,
                             transport: &mut transports[deck_id.index()],
                             transform: &mut transforms_ref[deck_id.index()],
                             blend_mode: &mut blend_modes_ref[deck_id.index()],
@@ -1430,7 +1524,8 @@ pub fn draw(
                     |ui| ui.checkbox(&mut state.master_freeze, "master freeze"),
                 );
             });
-            egui::CollapsingHeader::new("Master effects")
+            if !state.show_mode {
+                egui::CollapsingHeader::new("Master effects")
                 .default_open(false)
                 .show(ui, |ui| {
                     let effect_packages = &state.effect_packages;
@@ -1531,6 +1626,7 @@ pub fn draw(
                         ui.weak(&state.effect_reload_status);
                     }
                 });
+            }
         });
     draw_midi_manager(ctx, state, &mut metrics.midi, &palette, &mut actions);
     actions

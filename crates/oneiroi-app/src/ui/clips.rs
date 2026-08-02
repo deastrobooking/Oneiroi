@@ -121,7 +121,8 @@ pub(super) fn draw_clip_grid(
                                 palette.stroke
                             },
                         ));
-                    let draggable = !midi_map.active
+                    let draggable = !state.show_mode
+                        && !midi_map.active
                         && (slot_state.movie.is_some()
                             || slot_state.pending_path.is_some()
                             || slot_state.error.is_some());
@@ -208,8 +209,11 @@ pub(super) fn draw_clip_grid(
                             } else {
                                 details.push_str("\nFirst frame is still preloading");
                             }
-                            details
-                                .push_str("\nDrag onto another slot to move; occupied slots swap");
+                            if !state.show_mode {
+                                details.push_str(
+                                    "\nDrag onto another slot to move; occupied slots swap",
+                                );
+                            }
                             details
                         } else if let Some(error) = &slot_state.error {
                             format!(
@@ -225,6 +229,10 @@ pub(super) fn draw_clip_grid(
                             "Empty slot · select then drop a movie".to_owned()
                         })
                         .context_menu(|ui| {
+                            if state.show_mode {
+                                ui.weak("Show Mode locks media management");
+                                return;
+                            }
                             if clips.path(address).is_some() && ui.button("Relink media…").clicked()
                             {
                                 actions.push(UiAction::BrowseRelink(address));
@@ -239,6 +247,10 @@ pub(super) fn draw_clip_grid(
                 ui.end_row();
             }
         });
+
+    if state.show_mode {
+        return;
+    }
 
     let deck = mixer.selected();
     let address = ClipAddress {

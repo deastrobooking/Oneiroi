@@ -70,6 +70,9 @@ target OS:
 - A scrollable, stage-oriented operator UI with live program/audio/MIDI/OSC
   status, top-level blackout/freeze controls, deck accents and explicit
   selected/queued/active clip states.
+- An always-visible rig preflight rail plus a transient Show Mode that protects
+  setup, media management and structural editors while keeping performance
+  controls live.
 - Two reorderable master-effect slots with persisted bypass/dry-wet controls
   plus separable Gaussian blur and persistent feedback/trails backed by fixed
   ping-pong and history textures.
