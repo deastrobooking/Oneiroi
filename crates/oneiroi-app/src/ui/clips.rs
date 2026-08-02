@@ -149,6 +149,11 @@ pub(super) fn draw_clip_grid(
                     } else {
                         ui.add_sized([96.0, 46.0], button)
                     };
+                    let response = if draggable {
+                        response.on_hover_cursor(egui::CursorIcon::Grab)
+                    } else {
+                        response
+                    };
                     if let Some(source) = response.dnd_hover_payload::<ClipAddress>()
                         && *source != address
                     {
@@ -203,6 +208,8 @@ pub(super) fn draw_clip_grid(
                             } else {
                                 details.push_str("\nFirst frame is still preloading");
                             }
+                            details
+                                .push_str("\nDrag onto another slot to move; occupied slots swap");
                             details
                         } else if let Some(error) = &slot_state.error {
                             format!(

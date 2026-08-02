@@ -90,6 +90,12 @@ GPU-compressed path; other supported movies and stills use FFmpeg.
    readiness marker.
 5. Click the slot to launch it.
 
+To reorganize a bank, drag any populated or missing-media slot onto another
+slot. An empty destination receives the clip; an occupied destination swaps
+the two clips so media is never overwritten. Playback settings and previews
+follow their clips. Slots with an active import or restore cannot move until
+that background operation finishes.
+
 To populate multiple slots, select the desired starting slot and drag a folder
 onto the window. Oneiroi recursively finds supported media, sorts paths
 lexically, fills from the selected slot, wraps across decks and skips occupied
@@ -413,11 +419,17 @@ adapter or projector updates the target list without restarting the app.
 
 ## MIDI controllers
 
-Expand **MIDI control**, choose a controller and press **Connect**. To create a
-mapping, choose a target, press **Learn**, then move a knob, encoder, fader or
-button. **Cancel learn** exits without changing a mapping; **Clear target**
-removes every mapping for the selected target. Individual rows can also be
-removed.
+Open **MIDI** in the top bar for the multi-controller manager. Connect any
+number of detected devices; each remains independently identified, metered and
+mapped. Press **MIDI MAP MODE**, click a highlighted control in the operator
+surface, then move a knob, encoder, fader or button. Right-click a highlighted
+control to clear its assignments. The top-bar **MAP** indicator exits mapping
+mode from anywhere in the interface.
+
+The compact **MIDI control** panel remains available in Setup for target-list
+learning and detailed mapping edits. **Cancel learn** exits without changing a
+mapping; **Clear target** removes every mapping for the selected target.
+Individual rows can also be removed.
 
 Each row supports:
 
@@ -433,17 +445,20 @@ levels, clip and scene launches, effects, LFO parameters and modulation-matrix
 routes. Blackout and master freeze act immediately; clip and scene launches
 still follow the current quantization setting.
 
-The activity line shows received packets, queue drops and parse errors. If a
-connected controller disappears, Oneiroi keeps its mappings and attempts to
-reconnect the selected identity every two seconds. Use **Disconnect** to stop
-that automatic reconnect intent.
+The activity line shows received packets, queue drops and parse errors per
+device. If a requested controller disappears, Oneiroi keeps its mappings,
+shows it as waiting in MIDI Manager and attempts to reconnect every two
+seconds. Use **Disconnect** or **Forget** to stop that automatic reconnect
+intent. The requested controller set is stored with the project; controllers
+from a previous project do not remain live after another rig is opened.
 
 ## Projects and recovery
 
-The project toolbar can open and save `.oneiroi` files. Version-three projects store all 32
+The project toolbar can open and save `.oneiroi` files. Version-five projects store all 32
 clip paths, per-slot trim/launch/beat settings, deck state, camera reconnect
 settings, mixer values, transport, effects, LFOs, modulation routes, tempo,
-output settings and MIDI mapping data.
+output settings, theme/layout choices, MIDI mapping data and requested MIDI
+devices.
 Version-one projects are upgraded when loaded.
 
 Oneiroi writes a recovery autosave after changes and on close. Use **Recover

@@ -102,9 +102,10 @@ target OS:
 - Bounded per-clip conventional-codec keyframe indexes; trims, resume,
   restarts, loops and playhead seeks reopen at the nearest preceding keyframe
   and decode forward to the exact generation-tagged target.
-- Native MIDI input discovery/capture with bounded callback delivery,
-  controller reconnection, live activity diagnostics and in-app learn,
-  cancel, clear and mapping removal.
+- Native multi-device MIDI input discovery/capture with bounded callback
+  delivery, per-project controller reconnection, live per-device diagnostics,
+  click-to-map overlays and an assignment manager with learn, cancel, clear
+  and mapping removal.
 - Absolute, momentary, toggle, binary-offset and two's-complement mappings,
   editable ranges, inversion and soft takeover for mixer, transport, clip,
   scene, effect, LFO, matrix and emergency targets.

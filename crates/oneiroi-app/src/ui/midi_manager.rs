@@ -43,7 +43,7 @@ pub(super) fn draw_midi_manager(
                             .strong(),
                         )
                         .fill(if armed {
-                            palette.accent.linear_multiply(0.45)
+                            palette.control_tint(palette.accent, 0.42)
                         } else {
                             palette.control
                         }),
@@ -79,6 +79,8 @@ pub(super) fn draw_midi_manager(
                     for device in devices {
                         let color = if device.connected {
                             palette.success
+                        } else if device.wanted {
+                            palette.warning
                         } else {
                             palette.idle
                         };
@@ -88,8 +90,10 @@ pub(super) fn draw_midi_manager(
                             "events {} · dropped {}",
                             device.stats.received, device.stats.dropped
                         ));
-                        ui.label(if device.wanted && !device.connected {
+                        ui.label(if device.wanted && !device.available {
                             "waiting for hardware"
+                        } else if device.wanted && !device.connected {
+                            "waiting to reconnect"
                         } else if device.wanted {
                             "auto-reconnect"
                         } else {
@@ -99,7 +103,11 @@ pub(super) fn draw_midi_manager(
                             if ui.button("Disconnect").clicked() {
                                 actions.push(UiAction::DisconnectMidiInput(device.id.clone()));
                             }
-                        } else if ui.button("Connect").clicked() {
+                        } else if device.wanted {
+                            if ui.button("Forget").clicked() {
+                                actions.push(UiAction::DisconnectMidiInput(device.id.clone()));
+                            }
+                        } else if device.available && ui.button("Connect").clicked() {
                             actions.push(UiAction::ConnectMidiInput(device.id.clone()));
                         }
                         ui.end_row();

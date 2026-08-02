@@ -67,7 +67,7 @@ pub(super) fn draw_midi(
                         }
                     });
                 if midi.learning().is_some() {
-                    ui.colored_label(egui::Color32::YELLOW, "Move a control…");
+                    ui.colored_label(ui.visuals().warn_fg_color, "Move a control…");
                     if ui.button("Cancel learn").clicked() {
                         actions.push(UiAction::MidiCancelLearn);
                     }

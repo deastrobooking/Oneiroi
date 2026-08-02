@@ -101,7 +101,9 @@ impl State {
             self.project_status = "Cannot move a clip while its slot is importing".to_owned();
             return;
         }
-        let swapped = self.clips.movie(to).is_some();
+        let swapped = self.clips.slot(to).is_some_and(|slot| {
+            slot.movie.is_some() || slot.pending_path.is_some() || slot.error.is_some()
+        });
         if !self.clips.move_clip(from, to) {
             self.project_status = "Clip move refused (empty or still restoring)".to_owned();
             return;

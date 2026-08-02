@@ -4,8 +4,11 @@
 
 ### Operator interface
 
-- Added a stage-oriented dark visual theme with higher-contrast controls,
-  consistent spacing and clearer interaction states.
+- Added five project-persisted palette presets, an optional accent override,
+  compact/cozy/roomy control density and automatic, grid, cascade or stacked
+  deck layouts.
+- Added theme-aware semantic colors and contrast-safe selected, warning and
+  MIDI-map states across dark and daylight palettes.
 - Expanded the default operator workspace and added vertical scrolling so the
   full mixer, device, diagnostics and effect surfaces remain reachable at
   smaller window sizes.
@@ -15,6 +18,9 @@
 - Added distinct deck accents and clearer selected-deck borders.
 - Improved the clip grid with larger scene launch controls and separate visual
   states for selected, queued and actively playing clips.
+- Added drag-to-move clip slots with a visible grab cursor and safe swap
+  behavior for occupied destinations. Media settings and cached previews move
+  with the clip, while in-flight imports are protected from stale results.
 
 ### Mixer and control integration
 
@@ -24,6 +30,12 @@
   Halation preset.
 - Extended MIDI learn, feedback snapshots and project validation to all 18
   built-in deck effect parameters.
+- Added simultaneous multi-controller input, an Ableton-style click-to-map
+  overlay and a dedicated MIDI Manager for device status and assignment
+  auditing.
+- Persisted the requested controller rig per project. Missing controllers stay
+  visible, retry every two seconds and can be forgotten explicitly; opening a
+  different project disconnects controllers that do not belong to its rig.
 - Centralized the persisted deck-effect target count and added boundary tests
   to prevent future control-surface drift.
 

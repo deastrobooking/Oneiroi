@@ -143,6 +143,10 @@ impl State {
         let _ = self.apply_output_settings();
         self.midi = project::apply_midi(&project_file);
         self.midi_wanted = project_file.settings.midi_devices.iter().cloned().collect();
+        // A project owns its controller rig. Do not let a controller retained
+        // from the previous project keep driving the freshly loaded mappings.
+        self.midi_connections
+            .retain(|connection| self.midi_wanted.contains(connection.device_id()));
         // Reconnect whatever hardware from the saved rig is present right now;
         // the rest reconnects automatically when it appears.
         self.refresh_midi_inputs();

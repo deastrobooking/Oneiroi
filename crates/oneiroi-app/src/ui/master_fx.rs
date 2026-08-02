@@ -45,7 +45,7 @@ pub(super) fn draw_custom_effect(
         .find(|package| package.id == slot.package_id)
     else {
         ui.colored_label(
-            egui::Color32::from_rgb(255, 190, 80),
+            ui.visuals().warn_fg_color,
             format!(
                 "Package {:?} is unavailable; this slot passes through.",
                 slot.package_id

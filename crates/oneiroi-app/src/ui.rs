@@ -410,6 +410,8 @@ impl MidiMetrics<'_> {
 pub struct MidiDeviceStatus {
     pub id: String,
     pub label: String,
+    /// Present in the latest native discovery snapshot.
+    pub available: bool,
     pub connected: bool,
     /// Whether the operator asked for this device; wanted devices reconnect
     /// automatically when the hardware reappears.
@@ -471,17 +473,17 @@ pub(super) fn mappable(
     let devices = map.devices_for(target);
     let (tint, stroke) = if armed {
         (
-            map.palette.accent.linear_multiply(0.30),
+            map.palette.control_tint(map.palette.accent, 0.34),
             egui::Stroke::new(2.0, map.palette.accent),
         )
     } else if devices.is_empty() {
         (
-            map.palette.control.linear_multiply(0.25),
+            map.palette.control_tint(map.palette.stroke, 0.10),
             egui::Stroke::new(1.0, map.palette.stroke),
         )
     } else {
         (
-            map.palette.secondary.linear_multiply(0.25),
+            map.palette.control_tint(map.palette.secondary, 0.28),
             egui::Stroke::new(1.0, map.palette.secondary),
         )
     };
@@ -586,7 +588,7 @@ pub fn draw(
                     let blackout_fill = if state.blackout {
                         palette.danger
                     } else {
-                        palette.danger.linear_multiply(0.18)
+                        palette.control_tint(palette.danger, 0.18)
                     };
                     if ui
                         .add(
@@ -752,15 +754,15 @@ pub fn draw(
                         .show(ui, |ui| {
                             let health = &metrics.output_health;
                             let (status, color) = if !state.output_enabled {
-                                ("Disabled", egui::Color32::GRAY)
+                                ("Disabled", palette.idle)
                             } else if metrics.output_displays.is_empty() {
-                                ("No connected display", egui::Color32::RED)
+                                ("No connected display", palette.danger)
                             } else if health.status == "Healthy" {
-                                (health.status, egui::Color32::LIGHT_GREEN)
+                                (health.status, palette.success)
                             } else if health.validation_errors > 0 {
-                                (health.status, egui::Color32::RED)
+                                (health.status, palette.danger)
                             } else {
-                                (health.status, egui::Color32::YELLOW)
+                                (health.status, palette.warning)
                             };
                             ui.horizontal_wrapped(|ui| {
                                 ui.colored_label(color, status);
@@ -1524,10 +1526,7 @@ pub fn draw(
                     });
                     ui.weak(&state.effect_registry_status);
                     if state.effect_reload_status.contains("rejected") {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(255, 190, 80),
-                            &state.effect_reload_status,
-                        );
+                        ui.colored_label(palette.warning, &state.effect_reload_status);
                     } else {
                         ui.weak(&state.effect_reload_status);
                     }

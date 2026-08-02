@@ -101,12 +101,15 @@ impl State {
 
     /// Connect one more device; existing connections stay up.
     pub(crate) fn connect_midi_input(&mut self, device_id: String) {
+        // A requested controller stays wanted even if the native open fails;
+        // the two-second discovery cycle will retry it. This is essential for
+        // saved show rigs whose hardware appears a moment after project load.
+        self.midi_wanted.insert(device_id.clone());
         if self
             .midi_connections
             .iter()
             .any(|connection| connection.device_id() == device_id)
         {
-            self.midi_wanted.insert(device_id);
             return;
         }
         match MidiInputConnection::connect(&device_id) {
@@ -116,11 +119,9 @@ impl State {
                     self.midi_connections.len() + 1
                 );
                 self.midi_connections.push(input);
-                self.midi_wanted.insert(device_id);
             }
             Err(error) => {
-                self.midi_status = format!("{device_id} failed: {error}");
-                self.midi_wanted.remove(&device_id);
+                self.midi_status = format!("{device_id} unavailable · will retry: {error}");
             }
         }
         self.refresh_midi_device_stats();
@@ -139,20 +140,27 @@ impl State {
 
     /// Snapshot per-device state for the manager window.
     pub(crate) fn refresh_midi_device_stats(&mut self) {
-        self.midi_device_stats = self
+        let mut known: std::collections::BTreeSet<String> = self
             .midi_inputs
             .iter()
-            .map(|device| {
+            .map(|device| device.id.clone())
+            .collect();
+        known.extend(self.midi_wanted.iter().cloned());
+        self.midi_device_stats = known
+            .into_iter()
+            .map(|id| {
+                let discovered = self.midi_inputs.iter().find(|device| device.id == id);
                 let connection = self
                     .midi_connections
                     .iter()
-                    .find(|connection| connection.device_id() == device.id);
+                    .find(|connection| connection.device_id() == id);
                 crate::ui::MidiDeviceStatus {
-                    id: device.id.clone(),
-                    label: device.label.clone(),
+                    label: discovered.map_or_else(|| id.clone(), |device| device.label.clone()),
+                    available: discovered.is_some(),
                     connected: connection.is_some(),
-                    wanted: self.midi_wanted.contains(&device.id),
+                    wanted: self.midi_wanted.contains(&id),
                     stats: connection.map(|c| c.stats()).unwrap_or_default(),
+                    id,
                 }
             })
             .collect();
