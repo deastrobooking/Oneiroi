@@ -112,7 +112,40 @@ pub(super) fn draw_clip_grid(
                                 palette.stroke
                             },
                         ));
-                    let response = ui.add_sized([96.0, 46.0], button);
+                    let draggable = slot_state.movie.is_some()
+                        || slot_state.pending_path.is_some()
+                        || slot_state.error.is_some();
+                    let response = if draggable {
+                        // Drag moves the clip to another slot; a plain click
+                        // still selects and launches because the drag only
+                        // starts past egui's drag threshold.
+                        ui.dnd_drag_source(
+                            egui::Id::new(("clip-slot-drag", deck.index(), slot)),
+                            address,
+                            |ui| ui.add_sized([96.0, 46.0], button),
+                        )
+                        .inner
+                    } else {
+                        ui.add_sized([96.0, 46.0], button)
+                    };
+                    if let Some(source) = response.dnd_hover_payload::<ClipAddress>()
+                        && *source != address
+                    {
+                        ui.painter().rect_stroke(
+                            response.rect.expand(2.0),
+                            6.0,
+                            egui::Stroke::new(2.0, palette.accent),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                    if let Some(source) = response.dnd_release_payload::<ClipAddress>()
+                        && *source != address
+                    {
+                        actions.push(UiAction::MoveClip {
+                            from: *source,
+                            to: address,
+                        });
+                    }
                     if response.clicked() {
                         clips.select(address);
                         mixer.select(deck);

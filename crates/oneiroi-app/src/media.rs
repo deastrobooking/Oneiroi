@@ -87,6 +87,62 @@ impl State {
         }
     }
 
+    /// Work that would land results at a now-wrong address if the slot moved
+    /// under it: folder import, relink probe, or a deck import targeting the
+    /// slot.
+    fn clip_move_blocked(&self, address: ClipAddress) -> bool {
+        self.folder_pending.contains(&address)
+            || self.relink_pending.contains(&address)
+            || self.import_slots[address.deck.index()].is_some_and(|(_, slot)| slot == address.slot)
+    }
+
+    pub(crate) fn move_clip(&mut self, from: ClipAddress, to: ClipAddress, now: Instant) {
+        if self.clip_move_blocked(from) || self.clip_move_blocked(to) {
+            self.project_status = "Cannot move a clip while its slot is importing".to_owned();
+            return;
+        }
+        let swapped = self.clips.movie(to).is_some();
+        if !self.clips.move_clip(from, to) {
+            self.project_status = "Clip move refused (empty or still restoring)".to_owned();
+            return;
+        }
+
+        // Queued launches reference addresses whose content just changed;
+        // firing them now would launch the wrong clip on a quantized boundary.
+        if self.launches.queued(from) {
+            self.launches.cancel(from.deck);
+        }
+        if self.launches.queued(to) {
+            self.launches.cancel(to.deck);
+        }
+
+        // Cached previews follow the clips; in-flight thumbnail requests are
+        // dropped because their results would land at the old address.
+        self.ui.swap_thumbnails(from, to);
+        self.thumbnail_requests.remove(&from);
+        self.thumbnail_requests.remove(&to);
+
+        self.record_show_operation(
+            CommandOrigin::Operator,
+            now,
+            CommandOperation::MoveClip {
+                from_deck: from.deck.index() as u8,
+                from_slot: from.slot as u8,
+                to_deck: to.deck.index() as u8,
+                to_slot: to.slot as u8,
+            },
+        );
+        self.project_status = format!(
+            "{} clip {}{} {} {}{}",
+            if swapped { "Swapped" } else { "Moved" },
+            from.deck.label(),
+            from.slot + 1,
+            if swapped { "↔" } else { "→" },
+            to.deck.label(),
+            to.slot + 1,
+        );
+    }
+
     pub(crate) fn import_folder(&mut self, path: PathBuf) {
         let start = ClipAddress {
             deck: self.mixer.selected(),

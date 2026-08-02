@@ -58,6 +58,12 @@ pub enum CommandOperation {
         deck: u8,
         slot: u8,
     },
+    MoveClip {
+        from_deck: u8,
+        from_slot: u8,
+        to_deck: u8,
+        to_slot: u8,
+    },
     EjectDeck {
         deck: u8,
     },
@@ -170,6 +176,37 @@ impl SessionState {
                     .ok_or(SessionError::InvalidDeck(*deck))?;
                 if *active == Some(*slot) {
                     *active = None;
+                }
+            }
+            CommandOperation::MoveClip {
+                from_deck,
+                from_slot,
+                to_deck,
+                to_slot,
+            } => {
+                if usize::from(*from_deck) >= self.active_clips.len() {
+                    return Err(SessionError::InvalidDeck(*from_deck));
+                }
+                if usize::from(*to_deck) >= self.active_clips.len() {
+                    return Err(SessionError::InvalidDeck(*to_deck));
+                }
+                if from_deck == to_deck {
+                    let active = &mut self.active_clips[usize::from(*from_deck)];
+                    if *active == Some(*from_slot) {
+                        *active = Some(*to_slot);
+                    } else if *active == Some(*to_slot) {
+                        *active = Some(*from_slot);
+                    }
+                } else {
+                    // Cross-deck: the slots no longer hold what the decks are
+                    // playing, so neither marker survives - same rule as the
+                    // live clip bank.
+                    if self.active_clips[usize::from(*from_deck)] == Some(*from_slot) {
+                        self.active_clips[usize::from(*from_deck)] = None;
+                    }
+                    if self.active_clips[usize::from(*to_deck)] == Some(*to_slot) {
+                        self.active_clips[usize::from(*to_deck)] = None;
+                    }
                 }
             }
             CommandOperation::EjectDeck { deck } => {

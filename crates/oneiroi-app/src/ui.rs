@@ -188,6 +188,27 @@ impl UiState {
         self.thumbnail_failures.remove(&address);
     }
 
+    /// Exchange the cached previews of two slots after a clip move. Entries
+    /// stay validated by media path, so a mismatch simply re-requests.
+    pub fn swap_thumbnails(&mut self, a: ClipAddress, b: ClipAddress) {
+        let first = self.thumbnails.remove(&a);
+        let second = self.thumbnails.remove(&b);
+        if let Some(entry) = first {
+            self.thumbnails.insert(b, entry);
+        }
+        if let Some(entry) = second {
+            self.thumbnails.insert(a, entry);
+        }
+        let first = self.thumbnail_failures.remove(&a);
+        let second = self.thumbnail_failures.remove(&b);
+        if let Some(entry) = first {
+            self.thumbnail_failures.insert(b, entry);
+        }
+        if let Some(entry) = second {
+            self.thumbnail_failures.insert(a, entry);
+        }
+    }
+
     pub fn clear_thumbnails(&mut self) {
         self.thumbnails.clear();
         self.thumbnail_failures.clear();
@@ -254,6 +275,10 @@ pub enum UiAction {
     Launch(ClipAddress),
     LaunchScene(usize),
     ClearSlot(ClipAddress),
+    MoveClip {
+        from: ClipAddress,
+        to: ClipAddress,
+    },
     BrowseRelink(ClipAddress),
     Eject(DeckId),
     SaveProject,

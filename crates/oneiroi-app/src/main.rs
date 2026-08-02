@@ -950,6 +950,9 @@ impl State {
                         now,
                     );
                 }
+                ui::UiAction::MoveClip { from, to } => {
+                    self.move_clip(from, to, now);
+                }
                 ui::UiAction::ClearSlot(address) => {
                     self.record_show_operation(
                         CommandOrigin::Operator,

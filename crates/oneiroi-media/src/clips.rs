@@ -304,6 +304,77 @@ impl ClipBank {
         true
     }
 
+    /// True when the slot is mid-restore or mid-relink: it has a path on the
+    /// way in but neither media nor a failure yet. Moving such a slot would
+    /// let the in-flight probe result land at a stale address.
+    fn slot_in_flight(&self, address: ClipAddress) -> bool {
+        self.slot(address).is_some_and(|slot| {
+            slot.movie.is_none() && slot.pending_path.is_some() && slot.error.is_none()
+        })
+    }
+
+    /// Move a clip to another slot, on any deck. An occupied destination
+    /// swaps rather than being overwritten, so no drop can destroy media.
+    ///
+    /// Selection and active markers follow the content within a deck. Across
+    /// decks an active marker is cleared instead of followed: active means
+    /// "this deck is playing this slot's media", and after a cross-deck move
+    /// that statement is no longer true of either endpoint - the deck keeps
+    /// playing what its decoder holds, it just stops claiming a slot.
+    pub fn move_clip(&mut self, from: ClipAddress, to: ClipAddress) -> bool {
+        if from == to
+            || from.slot >= CLIPS_PER_DECK
+            || to.slot >= CLIPS_PER_DECK
+            || self.slot_in_flight(from)
+            || self.slot_in_flight(to)
+        {
+            return false;
+        }
+        let source_occupied = self.slot(from).is_some_and(|slot| {
+            slot.movie.is_some() || slot.pending_path.is_some() || slot.error.is_some()
+        });
+        if !source_occupied {
+            return false;
+        }
+
+        if from.deck == to.deck {
+            let deck = from.deck.index();
+            self.slots[deck].swap(from.slot, to.slot);
+            for marker in [&mut self.selected[deck]] {
+                if *marker == from.slot {
+                    *marker = to.slot;
+                } else if *marker == to.slot {
+                    *marker = from.slot;
+                }
+            }
+            if self.active[deck] == Some(from.slot) {
+                self.active[deck] = Some(to.slot);
+            } else if self.active[deck] == Some(to.slot) {
+                self.active[deck] = Some(from.slot);
+            }
+        } else {
+            let (low, high) = if from.deck.index() < to.deck.index() {
+                (from.deck.index(), to.deck.index())
+            } else {
+                (to.deck.index(), from.deck.index())
+            };
+            let (first, second) = self.slots.split_at_mut(high);
+            let (from_row, to_row) = if from.deck.index() < to.deck.index() {
+                (&mut first[low], &mut second[0])
+            } else {
+                (&mut second[0], &mut first[low])
+            };
+            std::mem::swap(&mut from_row[from.slot], &mut to_row[to.slot]);
+            if self.active[from.deck.index()] == Some(from.slot) {
+                self.active[from.deck.index()] = None;
+            }
+            if self.active[to.deck.index()] == Some(to.slot) {
+                self.active[to.deck.index()] = None;
+            }
+        }
+        true
+    }
+
     pub fn clear(&mut self, address: ClipAddress) -> bool {
         let Some(slot) = self
             .slots
@@ -662,5 +733,145 @@ mod tests {
         assert_ne!(bank.path(address), Some(Path::new("new.mov")));
         assert_eq!(bank.path(address), Some(Path::new("newer.mov")));
         assert_eq!(bank.playback(address), Some(playback));
+    }
+
+    #[test]
+    fn move_to_empty_slot_carries_media_playback_and_resume_position() {
+        let mut bank = ClipBank::default();
+        let from = ClipAddress {
+            deck: DeckId::A,
+            slot: 2,
+        };
+        let to = ClipAddress {
+            deck: DeckId::C,
+            slot: 5,
+        };
+        bank.assign(from, movie("alpha.mov"));
+        bank.set_playback(
+            from,
+            ClipPlayback {
+                in_point: 1.5,
+                out_point: Some(9.0),
+                launch_mode: ClipLaunchMode::Resume,
+                beat_duration: None,
+            },
+        );
+
+        assert!(bank.move_clip(from, to));
+
+        assert!(bank.movie(from).is_none());
+        assert_eq!(
+            bank.movie(to).map(|movie| movie.display_name.as_str()),
+            Some("alpha.mov")
+        );
+        let playback = bank.playback(to).expect("playback follows the clip");
+        assert_eq!(playback.in_point, 1.5);
+        assert_eq!(playback.launch_mode, ClipLaunchMode::Resume);
+        assert_eq!(bank.playback(from), Some(ClipPlayback::default()));
+    }
+
+    #[test]
+    fn move_to_occupied_slot_swaps_instead_of_destroying() {
+        let mut bank = ClipBank::default();
+        let from = ClipAddress {
+            deck: DeckId::A,
+            slot: 0,
+        };
+        let to = ClipAddress {
+            deck: DeckId::B,
+            slot: 7,
+        };
+        bank.assign(from, movie("alpha.mov"));
+        bank.assign(to, movie("beta.mov"));
+
+        assert!(bank.move_clip(from, to));
+
+        assert_eq!(
+            bank.movie(from).map(|movie| movie.display_name.as_str()),
+            Some("beta.mov")
+        );
+        assert_eq!(
+            bank.movie(to).map(|movie| movie.display_name.as_str()),
+            Some("alpha.mov")
+        );
+    }
+
+    #[test]
+    fn same_deck_move_remaps_active_and_selected_markers() {
+        let mut bank = ClipBank::default();
+        let from = ClipAddress {
+            deck: DeckId::A,
+            slot: 1,
+        };
+        let to = ClipAddress {
+            deck: DeckId::A,
+            slot: 4,
+        };
+        bank.assign(from, movie("alpha.mov"));
+        bank.activate(from);
+        assert_eq!(bank.active(DeckId::A), Some(1));
+        assert_eq!(bank.selected(DeckId::A), 1);
+
+        assert!(bank.move_clip(from, to));
+
+        assert_eq!(bank.active(DeckId::A), Some(4));
+        assert_eq!(bank.selected(DeckId::A), 4);
+    }
+
+    #[test]
+    fn cross_deck_move_clears_active_markers_at_both_endpoints() {
+        let mut bank = ClipBank::default();
+        let from = ClipAddress {
+            deck: DeckId::A,
+            slot: 1,
+        };
+        let to = ClipAddress {
+            deck: DeckId::B,
+            slot: 3,
+        };
+        bank.assign(from, movie("alpha.mov"));
+        bank.assign(to, movie("beta.mov"));
+        bank.activate(from);
+        bank.activate(to);
+
+        assert!(bank.move_clip(from, to));
+
+        // Both decks keep playing whatever their decoders hold; the markers
+        // are cleared because the slots no longer contain that media.
+        assert_eq!(bank.active(DeckId::A), None);
+        assert_eq!(bank.active(DeckId::B), None);
+    }
+
+    #[test]
+    fn refuses_moves_involving_in_flight_or_empty_slots() {
+        let mut bank = ClipBank::default();
+        let restoring = ClipAddress {
+            deck: DeckId::A,
+            slot: 0,
+        };
+        let empty = ClipAddress {
+            deck: DeckId::A,
+            slot: 1,
+        };
+        let occupied = ClipAddress {
+            deck: DeckId::B,
+            slot: 0,
+        };
+        bank.assign(occupied, movie("alpha.mov"));
+        bank.begin_restore(restoring, PathBuf::from("gone.mov"));
+
+        assert!(!bank.move_clip(restoring, empty), "mid-restore source");
+        assert!(!bank.move_clip(occupied, restoring), "mid-restore target");
+        assert!(!bank.move_clip(empty, occupied), "empty source");
+        assert!(!bank.move_clip(occupied, occupied), "same address");
+
+        // A missing-media placeholder (path plus error, no movie) is movable:
+        // it is a real slot waiting for relink, not an in-flight probe.
+        bank.fail_restore(restoring, PathBuf::from("gone.mov"), "missing".to_owned());
+        assert!(bank.move_clip(restoring, empty));
+        assert_eq!(
+            bank.slot(empty).and_then(|slot| slot.error.as_deref()),
+            Some("missing")
+        );
     }
 }
