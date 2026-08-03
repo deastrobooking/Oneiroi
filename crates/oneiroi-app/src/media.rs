@@ -114,14 +114,22 @@ impl State {
                 slot: address.slot as u8,
             },
         );
-        if self.clips.active(address.deck) == Some(address.slot) {
+        let clearing_active = self.clips.active(address.deck) == Some(address.slot);
+        let clearing_import =
+            self.import_slots[address.deck.index()].is_some_and(|(_, slot)| slot == address.slot);
+        if clearing_active {
             self.master_effect_processor.reset_history();
+            self.clips
+                .remember_position(address.deck, self.transports[address.deck.index()].position);
         }
-        if self.import_slots[address.deck.index()].is_some_and(|(_, slot)| slot == address.slot) {
+        if clearing_active || clearing_import {
+            // ClipBank::clear deactivates the address, but the mixer owns the
+            // decoded source and the compositor owns its last uploaded GPU
+            // texture. Invalidate all three together or the deleted clip's
+            // final frame remains a live video signal indefinitely.
             self.mixer.eject(address.deck);
+            self.live_configs[address.deck.index()] = None;
             self.import_slots[address.deck.index()] = None;
-            let generation = self.mixer.deck(address.deck).generation;
-            self.reset_playback(address.deck, generation);
         }
         if self.launches.queued(address) {
             self.launches.cancel(address.deck);
@@ -132,6 +140,10 @@ impl State {
         self.relink_active.remove(&address);
         self.ui.clear_thumbnail(address);
         self.thumbnail_requests.remove(&address);
+        if clearing_active || clearing_import {
+            let generation = self.mixer.deck(address.deck).generation;
+            self.reset_playback(address.deck, generation);
+        }
         self.project_status = format!(
             "Deleted Deck {} clip {}",
             address.deck.label(),

@@ -95,6 +95,11 @@ transforms, effect-chain reordering and resets, modulation and master-effect
 editing. Press **EXIT SHOW MODE** to return to preparation.
 The lock is deliberately temporary and is not stored in a project.
 
+Master freeze intentionally holds the exact final program frame. While it is
+active, deck FX, deletion and source changes are accepted but cannot appear on
+program output until freeze is released. A warning appears directly above the
+selected deck editor whenever this hold is active.
+
 The main workspace always renders the selected deck as the primary performance
 editor with its deck controls and FX visible. Click a **DECK A–D** row label in
 the clip grid—or any slot in that row—to change the selected editor. Setup and
@@ -123,8 +128,9 @@ that background operation finishes.
 The selected slot is shown directly below the grid with a **Delete selected
 clip** button. `Delete` or `Backspace` performs the same action when a text
 field is not consuming the key. Deletion clears pending slot work, queued
-launches and cached previews through the same journaled path. Show Mode blocks
-clip deletion.
+launches and cached previews through the same journaled path. Deleting the
+currently playing slot also stops its decoder, clears its uploaded GPU texture
+and empties that deck's live signal. Show Mode blocks clip deletion.
 
 To populate multiple slots, select the desired starting slot and drag a folder
 onto the window. Oneiroi recursively finds supported media, sorts paths

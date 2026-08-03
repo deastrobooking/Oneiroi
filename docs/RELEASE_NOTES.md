@@ -38,6 +38,10 @@
 - Fixed deck selection becoming direction-dependent during UI command capture.
   Switching from a later deck back to an earlier deck no longer restores the
   previous one-hot selection while processing its falling edge.
+- Fixed active clip deletion leaving the deck decoder and last compositor
+  texture alive. Deleting the playing slot now invalidates the complete deck
+  source, and the selected FX editor warns when master freeze is intentionally
+  holding program output against visible control changes.
 
 ### Mixer and control integration
 

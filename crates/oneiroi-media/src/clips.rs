@@ -662,6 +662,23 @@ mod tests {
     }
 
     #[test]
+    fn clearing_the_active_slot_removes_media_and_deactivates_the_deck() {
+        let mut bank = ClipBank::default();
+        let address = ClipAddress {
+            deck: DeckId::C,
+            slot: 5,
+        };
+        bank.assign(address, movie("active.mov"));
+        bank.activate(address);
+
+        assert!(bank.clear(address));
+
+        assert!(bank.movie(address).is_none());
+        assert!(bank.path(address).is_none());
+        assert_eq!(bank.active(DeckId::C), None);
+    }
+
+    #[test]
     fn trim_is_clamped_inside_known_media_duration() {
         let playback = ClipPlayback {
             in_point: 99.0,

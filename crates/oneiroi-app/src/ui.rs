@@ -1444,6 +1444,12 @@ pub fn draw(
                     "SELECTED DECK {} · PERFORMANCE CONTROLS & FX",
                     selected_deck.label()
                 ));
+                if state.master_freeze {
+                    ui.colored_label(
+                        palette.warning,
+                        "PROGRAM FROZEN · Deck FX and source changes are staged until master freeze is released.",
+                    );
+                }
                 deck_strip(ui, selected_deck);
 
                 if !state.show_mode {
