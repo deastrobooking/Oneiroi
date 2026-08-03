@@ -209,18 +209,26 @@ displays.
 
 ## Connect a camera or capture card
 
-1. Select the destination deck.
-2. Choose an AVFoundation device in the Camera toolbar.
+1. Select the destination deck and an empty clip slot.
+2. Choose an AVFoundation device in the **Deck input** strip below the clip
+   grid.
 3. Set the requested width, height and frame rate.
-4. Click **Connect to Deck**.
+4. Click **Switch Deck**. The same controls remain available in Show Mode.
+5. Click **Record clip**, then **Stop**. Oneiroi finalizes the movie in the
+   workspace `recordings` directory and installs it in the selected slot after
+   probing and thumbnail generation complete.
 
 Use **Refresh** after attaching hardware. A manual AVFoundation device ID such
 as `0` can be entered when discovery does not return a label. macOS may require
 camera permission for Oneiroi or Terminal. HDMI capture cards that appear as
 AVFoundation video devices use the same path.
 
-Live capture uses a bounded queue. If rendering stalls, stale camera frames are
-dropped to keep latency from growing.
+Live capture and recording use bounded queues. If rendering or storage stalls,
+stale frames are dropped to keep latency from growing; the Deck input strip
+reports recording drops. Recordings use uncompressed RGBA MOV for predictable,
+encoder-free capture, so allow roughly 6.6 GB per minute at 720p30 or 14.9 GB
+per minute at 1080p30. Short capture loops are the intended first workflow;
+compressed recording is a planned upgrade.
 
 ## Effects
 

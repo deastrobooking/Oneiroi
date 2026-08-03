@@ -236,6 +236,25 @@ Acceptance criteria:
     previous-slot-output history texture per master slot, with validity
     signaling, deterministic resets and bundled Temporal Melt reference)
 
+### FX upgrade queue from the August 2026 audit
+
+1. Make package reload a fully atomic last-known-good transaction across
+   manifest, shaders and multipass resources, with the rejected generation and
+   compile error visible beside the affected slot.
+2. Discover bundled and user-installed effect packages from explicit resource
+   roots so signed release bundles do not depend on the launch directory.
+3. Expose the full master rack in Show Mode with compact slot cards, bypass,
+   wet/dry and a one-click path into advanced parameters.
+4. Add per-pass GPU timing and inactive-bus culling before expanding the
+   multipass budget.
+5. Replace positional custom-effect values with a typed parameter registry and
+   migrations keyed by package and parameter identity.
+6. Persist package fingerprints in projects and surface missing or changed
+   packages before a show.
+7. Decide whether deck effects should remain a fixed low-latency topology or
+   adopt the bounded package graph; prototype and measure before changing the
+   live deck ABI.
+
 Acceptance criteria:
 
 - Invalid effect code cannot blank program output.

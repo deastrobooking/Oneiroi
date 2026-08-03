@@ -14,7 +14,7 @@ mod setup;
 pub mod theme;
 mod toolbar;
 
-use clips::draw_clip_grid;
+use clips::{ClipGridContext, draw_clip_grid};
 use deck::{DeckControls, draw_deck};
 use master_fx::{draw_custom_effect, draw_master_modulation};
 use midi::draw_midi;
@@ -346,6 +346,8 @@ pub enum UiAction {
         extent: [u32; 2],
         fps: u32,
     },
+    StartCameraRecording(ClipAddress),
+    StopCameraRecording(DeckId),
 }
 
 #[derive(Clone, Debug)]
@@ -385,6 +387,7 @@ pub struct PerformanceMetrics<'a> {
     pub project_takes: &'a [oneiroi_io::TakeMetadataProject],
     pub cameras: &'a [CameraDevice],
     pub camera_status: &'a str,
+    pub camera_recordings: [CameraRecordingStatus; 4],
     pub audio_inputs: &'a [AudioInputDevice],
     pub audio_status: &'a str,
     pub audio_connected: bool,
@@ -393,6 +396,14 @@ pub struct PerformanceMetrics<'a> {
     pub osc: OscMetrics<'a>,
     pub output_displays: &'a [OutputDisplay],
     pub output_health: OutputHealthMetrics<'a>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CameraRecordingStatus {
+    pub address: Option<ClipAddress>,
+    pub finalizing: bool,
+    pub elapsed_seconds: f64,
+    pub dropped_frames: u64,
 }
 
 pub struct MidiMetrics<'a> {
@@ -568,7 +579,20 @@ pub fn draw(
             // be scrolled through or folded away entirely while the
             // performance surface below keeps the space.
             draw_setup(ui, state, mixer, &midi_map, &mut actions, &mut metrics);
-            draw_clip_grid(ui, state, mixer, clips, launches, &midi_map, &mut actions);
+            draw_clip_grid(
+                ui,
+                state,
+                mixer,
+                clips,
+                ClipGridContext {
+                    launches,
+                    midi_map: &midi_map,
+                    cameras: metrics.cameras,
+                    camera_status: metrics.camera_status,
+                    camera_recordings: metrics.camera_recordings,
+                },
+                &mut actions,
+            );
 
             ui.separator();
             {

@@ -64,6 +64,7 @@ impl State {
                 }
                 ui::UiAction::BrowseRelink(address) => self.browse_relink(address),
                 ui::UiAction::Eject(deck) => {
+                    self.stop_camera_recording(deck);
                     self.record_show_operation(
                         CommandOrigin::Operator,
                         now,
@@ -261,6 +262,12 @@ impl State {
                         },
                     );
                     self.connect_camera(deck, device_id, label, extent, fps);
+                }
+                ui::UiAction::StartCameraRecording(address) => {
+                    self.start_camera_recording(address, now);
+                }
+                ui::UiAction::StopCameraRecording(deck) => {
+                    self.stop_camera_recording(deck);
                 }
             }
         }

@@ -101,6 +101,8 @@ struct State {
     folder_pending: HashSet<ClipAddress>,
     relink_pending: HashSet<ClipAddress>,
     relink_active: HashSet<ClipAddress>,
+    recording_pending: HashSet<ClipAddress>,
+    camera_recordings: [Option<media::ActiveCameraRecording>; 4],
     folder_status: String,
     decoders: [DeckDecoder; 4],
     schedulers: [FrameScheduler<VideoFramePayload>; 4],
@@ -611,6 +613,8 @@ impl State {
             folder_pending: HashSet::new(),
             relink_pending: HashSet::new(),
             relink_active: HashSet::new(),
+            recording_pending: HashSet::new(),
+            camera_recordings: std::array::from_fn(|_| None),
             folder_status: String::new(),
             decoders: std::array::from_fn(|_| DeckDecoder::spawn(4)),
             schedulers: std::array::from_fn(|_| {
@@ -671,6 +675,7 @@ impl State {
         }
         self.poll_imports();
         self.poll_folder_scans();
+        self.poll_camera_recordings();
         self.poll_restores();
         self.poll_thumbnails();
         let now = Instant::now();
@@ -741,6 +746,19 @@ impl State {
                     project_takes: &self.project_takes,
                     cameras: &self.cameras,
                     camera_status: &self.camera_status,
+                    camera_recordings: std::array::from_fn(|index| {
+                        self.camera_recordings[index].as_ref().map_or(
+                            ui::CameraRecordingStatus::default(),
+                            |recording| ui::CameraRecordingStatus {
+                                address: Some(recording.address),
+                                finalizing: recording.finalizing,
+                                elapsed_seconds: now
+                                    .saturating_duration_since(recording.started)
+                                    .as_secs_f64(),
+                                dropped_frames: recording.recorder.dropped_frames(),
+                            },
+                        )
+                    }),
                     audio_inputs: &self.audio_inputs,
                     audio_status: &self.audio_status,
                     audio_connected: self.audio_input.is_some(),

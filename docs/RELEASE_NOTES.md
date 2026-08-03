@@ -35,6 +35,10 @@
 - Added a visible selected-clip delete button plus `Delete`/`Backspace`
   shortcuts, backed by one journaled cleanup path for pending imports, queued
   launches and preview caches. Show Mode protects all three entry points.
+- Added an always-visible Deck input strip to the clip view for choosing and
+  switching a selected deck to a camera. Live camera frames can now be recorded
+  into the selected empty clip slot with non-blocking Start/Stop controls,
+  bounded frame delivery and asynchronous finalization/import.
 - Fixed deck selection becoming direction-dependent during UI command capture.
   Switching from a later deck back to an earlier deck no longer restores the
   previous one-hot selection while processing its falling edge.

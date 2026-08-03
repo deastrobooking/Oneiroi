@@ -1,16 +1,26 @@
 //! Media import, clip launching, thumbnails and camera connection.
 
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use oneiroi_core::MediaTime;
 use oneiroi_media::{
-    CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipRestoreRequest, DeckId, DeckState,
-    FolderScanRequest, SubmitError, ThumbnailRequest, VideoFramePayload, discover_cameras,
+    CLIPS_PER_DECK, CameraConfig, CameraDevice, CameraRecorder, ClipAddress, ClipRestoreRequest,
+    DeckId, DeckState, FolderScanRequest, SubmitError, ThumbnailRequest, VideoFramePayload,
+    discover_cameras,
 };
 use oneiroi_session::{CommandOperation, CommandOrigin};
 
 use super::{State, display_path, media_time_from_seconds};
+
+pub(crate) struct ActiveCameraRecording {
+    pub recorder: CameraRecorder,
+    pub address: ClipAddress,
+    pub path: PathBuf,
+    pub started: Instant,
+    pub finalizing: bool,
+    pub canceled: bool,
+}
 
 impl State {
     pub(crate) fn import_path(&mut self, path: PathBuf) {
@@ -93,6 +103,7 @@ impl State {
     fn clip_move_blocked(&self, address: ClipAddress) -> bool {
         self.folder_pending.contains(&address)
             || self.relink_pending.contains(&address)
+            || self.recording_pending.contains(&address)
             || self.import_slots[address.deck.index()].is_some_and(|(_, slot)| slot == address.slot)
     }
 
@@ -104,6 +115,14 @@ impl State {
         });
         if !occupied {
             return;
+        }
+
+        if let Some(recording) = self.camera_recordings[address.deck.index()].as_mut()
+            && recording.address == address
+        {
+            recording.canceled = true;
+            recording.finalizing = true;
+            recording.recorder.stop();
         }
 
         self.record_show_operation(
@@ -138,6 +157,7 @@ impl State {
         self.folder_pending.remove(&address);
         self.relink_pending.remove(&address);
         self.relink_active.remove(&address);
+        self.recording_pending.remove(&address);
         self.ui.clear_thumbnail(address);
         self.thumbnail_requests.remove(&address);
         if clearing_active || clearing_import {
@@ -286,6 +306,7 @@ impl State {
     pub(crate) fn import_movie(&mut self, path: PathBuf) {
         let path = path.canonicalize().unwrap_or(path);
         let deck = self.mixer.selected();
+        self.stop_camera_recording(deck);
         self.live_configs[deck.index()] = None;
         let address = ClipAddress {
             deck,
@@ -355,6 +376,7 @@ impl State {
         let Some(movie) = self.clips.movie(address).cloned() else {
             return;
         };
+        self.stop_camera_recording(address.deck);
         self.master_effect_processor.reset_history();
         self.clips
             .remember_position(address.deck, self.transports[address.deck.index()].position);
@@ -452,6 +474,7 @@ impl State {
         extent: [u32; 2],
         fps: u32,
     ) {
+        self.stop_camera_recording(deck);
         self.master_effect_processor.reset_history();
         self.clips
             .remember_position(deck, self.transports[deck.index()].position);
@@ -472,6 +495,129 @@ impl State {
         self.transports[deck.index()].end_mode = oneiroi_media::EndMode::OneShot;
         self.decoders[deck.index()].connect_camera(config, generation);
         self.camera_status = format!("Connecting Deck {}…", deck.label());
+    }
+
+    pub(crate) fn start_camera_recording(&mut self, address: ClipAddress, now: Instant) {
+        let deck = address.deck;
+        if self.camera_recordings[deck.index()].is_some() {
+            self.camera_status = format!("Deck {} is already recording", deck.label());
+            return;
+        }
+        if !matches!(self.mixer.deck(deck).state, DeckState::Live(_)) {
+            self.camera_status =
+                format!("Switch Deck {} to a camera before recording", deck.label());
+            return;
+        }
+        let occupied = self.clips.slot(address).is_some_and(|slot| {
+            slot.movie.is_some() || slot.pending_path.is_some() || slot.error.is_some()
+        });
+        if occupied {
+            self.camera_status = "Select an empty clip slot before recording".to_owned();
+            return;
+        }
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let path = self.workspace.join("recordings").join(format!(
+            "oneiroi-{stamp}-deck-{}-clip-{}.mov",
+            deck.label(),
+            address.slot + 1
+        ));
+        match CameraRecorder::start(path.clone(), self.ui.camera_fps) {
+            Ok(recorder) => {
+                self.clips.begin_restore(address, path.clone());
+                self.recording_pending.insert(address);
+                self.camera_recordings[deck.index()] = Some(ActiveCameraRecording {
+                    recorder,
+                    address,
+                    path,
+                    started: now,
+                    finalizing: false,
+                    canceled: false,
+                });
+                self.camera_status = format!(
+                    "Recording Deck {} into clip {}",
+                    deck.label(),
+                    address.slot + 1
+                );
+            }
+            Err(error) => self.camera_status = format!("Recording failed to start: {error}"),
+        }
+    }
+
+    pub(crate) fn stop_camera_recording(&mut self, deck: DeckId) {
+        let Some(recording) = self.camera_recordings[deck.index()].as_mut() else {
+            return;
+        };
+        if !recording.finalizing {
+            recording.finalizing = true;
+            recording.recorder.stop();
+            self.camera_status = format!("Finalizing Deck {} recording…", deck.label());
+        }
+    }
+
+    pub(crate) fn poll_camera_recordings(&mut self) {
+        for deck in DeckId::ALL {
+            let result = self.camera_recordings[deck.index()]
+                .as_mut()
+                .and_then(|recording| recording.recorder.try_finish());
+            let Some(result) = result else {
+                continue;
+            };
+            let recording = self.camera_recordings[deck.index()]
+                .take()
+                .expect("completed recording remains active");
+            if recording.canceled {
+                let _ = std::fs::remove_file(&result.path);
+                continue;
+            }
+            match result.result {
+                Ok(()) if result.frames > 0 => {
+                    match self.restorer.submit(ClipRestoreRequest {
+                        address: recording.address,
+                        path: result.path.clone(),
+                        project_epoch: self.project_epoch,
+                    }) {
+                        Ok(()) => {
+                            self.camera_status = format!(
+                                "Recorded {} frames to Deck {} clip {}{}",
+                                result.frames,
+                                deck.label(),
+                                recording.address.slot + 1,
+                                if result.dropped_frames == 0 {
+                                    String::new()
+                                } else {
+                                    format!(" · {} dropped", result.dropped_frames)
+                                }
+                            );
+                        }
+                        Err(request) => {
+                            self.recording_pending.remove(&recording.address);
+                            self.clips.fail_restore(
+                                request.address,
+                                request.path,
+                                "Recording probe queue is full.".to_owned(),
+                            );
+                        }
+                    }
+                }
+                Ok(()) => {
+                    self.recording_pending.remove(&recording.address);
+                    self.clips.fail_restore(
+                        recording.address,
+                        recording.path,
+                        "Recording contained no frames.".to_owned(),
+                    );
+                }
+                Err(error) => {
+                    self.recording_pending.remove(&recording.address);
+                    self.clips
+                        .fail_restore(recording.address, recording.path, error.clone());
+                    self.camera_status = format!("Recording failed: {error}");
+                }
+            }
+        }
     }
 
     pub(crate) fn request_thumbnail(&mut self, address: ClipAddress, path: PathBuf) {

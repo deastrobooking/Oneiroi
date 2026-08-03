@@ -122,6 +122,13 @@ impl State {
                 if frame.generation != generation {
                     continue;
                 }
+                if self.live_configs[index].is_some()
+                    && let oneiroi_media::VideoFramePayload::Rgba8(rgba) = &frame.payload
+                    && let Some(recording) = &self.camera_recordings[index]
+                    && !recording.finalizing
+                {
+                    recording.recorder.try_push(rgba);
+                }
                 self.media_origins[index].get_or_insert(frame.pts);
                 if self.schedulers[index].enqueue(frame).is_err() {
                     break;

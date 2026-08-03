@@ -2,15 +2,27 @@
 
 use super::*;
 
+pub(super) struct ClipGridContext<'a> {
+    pub launches: &'a LaunchQueue,
+    pub midi_map: &'a MidiMapUi,
+    pub cameras: &'a [CameraDevice],
+    pub camera_status: &'a str,
+    pub camera_recordings: [CameraRecordingStatus; 4],
+}
+
 pub(super) fn draw_clip_grid(
     ui: &mut egui::Ui,
-    state: &UiState,
+    state: &mut UiState,
     mixer: &mut FourDeckMixer,
     clips: &mut ClipBank,
-    launches: &LaunchQueue,
-    midi_map: &MidiMapUi,
+    context: ClipGridContext<'_>,
     actions: &mut Vec<UiAction>,
 ) {
+    let launches = context.launches;
+    let midi_map = context.midi_map;
+    let cameras = context.cameras;
+    let camera_status = context.camera_status;
+    let camera_recordings = context.camera_recordings;
     let palette = state.theme.palette();
     egui::Grid::new("clip-grid")
         .num_columns(CLIPS_PER_DECK + 1)
@@ -285,6 +297,98 @@ pub(super) fn draw_clip_grid(
             .clicked()
         {
             actions.push(UiAction::ClearSlot(address));
+        }
+    });
+
+    let recording = camera_recordings[deck.index()];
+    ui.horizontal_wrapped(|ui| {
+        ui.strong("Deck input");
+        egui::ComboBox::from_id_salt(("clip-camera-device", deck.index()))
+            .selected_text(
+                cameras
+                    .iter()
+                    .find(|camera| camera.id == state.camera_device_id)
+                    .map_or(state.camera_device_id.as_str(), |camera| {
+                        camera.label.as_str()
+                    }),
+            )
+            .show_ui(ui, |ui| {
+                for camera in cameras {
+                    ui.selectable_value(
+                        &mut state.camera_device_id,
+                        camera.id.clone(),
+                        &camera.label,
+                    );
+                }
+            });
+        if ui.button("Refresh").clicked() {
+            actions.push(UiAction::RefreshCameras);
+        }
+        let can_switch = !state.camera_device_id.trim().is_empty();
+        if ui
+            .add_enabled(
+                can_switch,
+                egui::Button::new(format!("Switch Deck {}", deck.label())),
+            )
+            .on_hover_text("Use the selected camera as this deck's live input")
+            .clicked()
+        {
+            let label = cameras
+                .iter()
+                .find(|camera| camera.id == state.camera_device_id)
+                .map_or_else(
+                    || format!("Camera {}", state.camera_device_id),
+                    |camera| camera.label.clone(),
+                );
+            actions.push(UiAction::ConnectCamera {
+                deck,
+                device_id: state.camera_device_id.clone(),
+                label,
+                extent: [state.camera_width, state.camera_height],
+                fps: state.camera_fps,
+            });
+        }
+        if recording.address.is_some() {
+            let label = if recording.finalizing {
+                "Finalizing…".to_owned()
+            } else {
+                format!("■ Stop · {:.1}s", recording.elapsed_seconds)
+            };
+            if ui
+                .add_enabled(!recording.finalizing, egui::Button::new(label))
+                .clicked()
+            {
+                actions.push(UiAction::StopCameraRecording(deck));
+            }
+            if recording.dropped_frames > 0 {
+                ui.colored_label(
+                    palette.warning,
+                    format!("{} dropped", recording.dropped_frames),
+                );
+            }
+        } else {
+            let live = matches!(mixer.deck(deck).state, DeckState::Live(_));
+            let can_record = live && !selected_occupied;
+            if ui
+                .add_enabled(
+                    can_record,
+                    egui::Button::new("● Record clip")
+                        .fill(palette.control_tint(palette.danger, 0.28)),
+                )
+                .on_hover_text(if !live {
+                    "Switch this deck to a camera first"
+                } else if selected_occupied {
+                    "Select an empty clip slot to record into"
+                } else {
+                    "Record the live camera into the selected clip slot"
+                })
+                .clicked()
+            {
+                actions.push(UiAction::StartCameraRecording(address));
+            }
+        }
+        if !camera_status.is_empty() {
+            ui.weak(camera_status);
         }
     });
 

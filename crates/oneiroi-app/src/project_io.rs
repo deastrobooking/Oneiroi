@@ -123,6 +123,11 @@ impl State {
     }
 
     pub(crate) fn apply_project(&mut self, project_file: ProjectFile, recovered: bool) {
+        for recording in self.camera_recordings.iter_mut().flatten() {
+            recording.canceled = true;
+            recording.finalizing = true;
+            recording.recorder.stop();
+        }
         self.master_effect_processor.reset_history();
         self.project_id.clone_from(&project_file.project_id);
         self.project_takes.clone_from(&project_file.takes);
@@ -133,6 +138,7 @@ impl State {
         self.folder_pending.clear();
         self.relink_pending.clear();
         self.relink_active.clear();
+        self.recording_pending.clear();
         self.folder_status.clear();
         self.live_configs = std::array::from_fn(|_| None);
         self.launches = LaunchQueue::default();
@@ -225,6 +231,7 @@ impl State {
                 continue;
             }
             let folder_result = self.folder_pending.remove(&result.address);
+            let recording_result = self.recording_pending.remove(&result.address);
             if self.clips.path(result.address) != Some(result.path.as_path()) {
                 if folder_result && self.folder_pending.is_empty() {
                     self.folder_status = "Folder import complete".to_owned();
@@ -237,7 +244,7 @@ impl State {
                 Ok(movie) => {
                     let address = result.address;
                     let duration = movie.duration.map(MediaTime::as_seconds);
-                    if folder_result || relink_result {
+                    if folder_result || relink_result || recording_result {
                         self.record_show_operation(
                             CommandOrigin::Operator,
                             Instant::now(),
@@ -278,6 +285,12 @@ impl State {
                             address.deck.label(),
                             address.slot + 1
                         );
+                    } else if recording_result {
+                        self.project_status = format!(
+                            "Recorded Deck {} clip {}",
+                            address.deck.label(),
+                            address.slot + 1
+                        );
                     }
                 }
                 Err(error) => {
@@ -286,6 +299,8 @@ impl State {
                         .fail_restore(result.address, result.path, message.clone());
                     if relink_result {
                         self.project_status = format!("Relink failed: {message}");
+                    } else if recording_result {
+                        self.project_status = format!("Recording import failed: {message}");
                     }
                 }
             }

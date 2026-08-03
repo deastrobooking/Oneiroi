@@ -14,6 +14,7 @@ mod frame;
 mod keyframe;
 mod mixer;
 mod probe;
+mod record;
 mod schedule;
 mod thumbnail;
 mod transport;
@@ -40,6 +41,7 @@ pub use mixer::{
     MediaImporter, SubmitError, crossfade_gains,
 };
 pub use probe::{AlphaMode, DecodePath, MediaHealth, MovieMetadata, ProbeError, probe_movie};
+pub use record::{CameraRecorder, CameraRecordingResult};
 pub use schedule::{
     DiscontinuityPolicy, EnqueueError, FrameScheduler, FrameSelection, ScheduledFrame,
     SchedulerError, SchedulerStats,
