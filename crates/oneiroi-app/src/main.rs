@@ -882,13 +882,21 @@ impl State {
             if value.to_bits() == previous.to_bits() {
                 continue;
             }
-            self.apply_control_update_unrecorded(
-                oneiroi_core::ControlUpdate {
-                    target,
-                    value: previous,
-                },
-                now,
-            );
+            // Deck selection is represented by four one-hot trigger controls.
+            // Restoring the old selected deck before dispatching each changed
+            // target makes the final result depend on BTreeMap iteration order:
+            // switching D -> B would select B, then restore D while processing
+            // D's falling edge. Trigger updates have no continuous value to
+            // roll back, so only dispatch their changed edge.
+            let Some(rollback) = rollback_update_for_ui_change(target, previous) else {
+                self.dispatch_control_update(
+                    oneiroi_core::ControlUpdate { target, value },
+                    CommandOrigin::Operator,
+                    now,
+                );
+                continue;
+            };
+            self.apply_control_update_unrecorded(rollback, now);
             self.dispatch_control_update(
                 oneiroi_core::ControlUpdate { target, value },
                 CommandOrigin::Operator,
@@ -1553,6 +1561,16 @@ fn performance_control_snapshot(
         .collect()
 }
 
+fn rollback_update_for_ui_change(
+    target: ControlTarget,
+    previous: f32,
+) -> Option<oneiroi_core::ControlUpdate> {
+    (!matches!(target, ControlTarget::DeckSelect(_))).then_some(oneiroi_core::ControlUpdate {
+        target,
+        value: previous,
+    })
+}
+
 fn effect_parameter(effects: DeckEffects, effect: u8) -> f32 {
     match effect {
         0 => effects.hue,
@@ -1707,5 +1725,16 @@ mod output_health_tests {
             route: 7,
             parameter: 1,
         }));
+    }
+
+    #[test]
+    fn deck_selection_trigger_is_not_rolled_back_during_ui_capture() {
+        assert!(rollback_update_for_ui_change(ControlTarget::DeckSelect(1), 0.0).is_none());
+        assert!(rollback_update_for_ui_change(ControlTarget::DeckSelect(3), 1.0).is_none());
+
+        let rollback = rollback_update_for_ui_change(ControlTarget::DeckLevel(1), 0.75)
+            .expect("continuous deck controls still need rollback before journaling");
+        assert_eq!(rollback.target, ControlTarget::DeckLevel(1));
+        assert_eq!(rollback.value, 0.75);
     }
 }
