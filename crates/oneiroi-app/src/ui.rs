@@ -746,8 +746,8 @@ pub fn draw(
             // performance surface below keeps the space.
             if !state.show_mode {
                 let setup_height = (ui.available_height() * 0.45).clamp(160.0, 420.0);
-                egui::CollapsingHeader::new("Setup · output, project, devices")
-                .default_open(true)
+                egui::CollapsingHeader::new("Setup & diagnostics · output, project, devices")
+                .default_open(false)
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .id_salt("setup-region")
@@ -1412,6 +1412,7 @@ pub fn draw(
             ui.separator();
             {
                 let layout = state.theme.deck_layout.resolve(ui.available_width());
+                let selected_deck = mixer.selected();
                 let transforms_ref = &mut state.transforms;
                 let blend_modes_ref = &mut state.blend_modes;
                 let solo_ref = &mut state.solo;
@@ -1439,46 +1440,63 @@ pub fn draw(
                         actions_ref,
                     );
                 };
-                match layout {
-                    ResolvedDeckLayout::Cascade => {
-                        // Channel strips side by side, like a mixing desk.
-                        // Narrower windows scroll through the cascade instead
-                        // of crushing the strips.
-                        egui::ScrollArea::horizontal()
-                            .id_salt("deck-cascade")
-                            .show(ui, |ui| {
-                                ui.horizontal_top(|ui| {
-                                    for deck_id in DeckId::ALL {
-                                        ui.allocate_ui_with_layout(
-                                            egui::vec2(CASCADE_STRIP_WIDTH, 10.0),
-                                            egui::Layout::top_down(egui::Align::Min),
-                                            |ui| {
-                                                ui.set_width(CASCADE_STRIP_WIDTH);
-                                                deck_strip(ui, deck_id);
-                                            },
-                                        );
-                                    }
-                                });
-                            });
-                    }
-                    ResolvedDeckLayout::Grid => {
-                        egui::Grid::new("four-decks")
-                            .num_columns(2)
-                            .spacing([12.0, 12.0])
-                            .show(ui, |ui| {
-                                for (index, deck_id) in DeckId::ALL.into_iter().enumerate() {
+                ui.strong(format!(
+                    "SELECTED DECK {} · PERFORMANCE CONTROLS & FX",
+                    selected_deck.label()
+                ));
+                deck_strip(ui, selected_deck);
+
+                if !state.show_mode {
+                    egui::CollapsingHeader::new("Other deck editors")
+                        .default_open(false)
+                        .show(ui, |ui| match layout {
+                            ResolvedDeckLayout::Cascade => {
+                                egui::ScrollArea::horizontal()
+                                    .id_salt("other-deck-cascade")
+                                    .show(ui, |ui| {
+                                        ui.horizontal_top(|ui| {
+                                            for deck_id in DeckId::ALL
+                                                .into_iter()
+                                                .filter(|id| *id != selected_deck)
+                                            {
+                                                ui.allocate_ui_with_layout(
+                                                    egui::vec2(CASCADE_STRIP_WIDTH, 10.0),
+                                                    egui::Layout::top_down(egui::Align::Min),
+                                                    |ui| {
+                                                        ui.set_width(CASCADE_STRIP_WIDTH);
+                                                        deck_strip(ui, deck_id);
+                                                    },
+                                                );
+                                            }
+                                        });
+                                    });
+                            }
+                            ResolvedDeckLayout::Grid => {
+                                egui::Grid::new("other-decks")
+                                    .num_columns(2)
+                                    .spacing([12.0, 12.0])
+                                    .show(ui, |ui| {
+                                        for (index, deck_id) in DeckId::ALL
+                                            .into_iter()
+                                            .filter(|id| *id != selected_deck)
+                                            .enumerate()
+                                        {
+                                            deck_strip(ui, deck_id);
+                                            if index % 2 == 1 {
+                                                ui.end_row();
+                                            }
+                                        }
+                                    });
+                            }
+                            ResolvedDeckLayout::Stack => {
+                                for deck_id in DeckId::ALL
+                                    .into_iter()
+                                    .filter(|id| *id != selected_deck)
+                                {
                                     deck_strip(ui, deck_id);
-                                    if index % 2 == 1 {
-                                        ui.end_row();
-                                    }
                                 }
-                            });
-                    }
-                    ResolvedDeckLayout::Stack => {
-                        for deck_id in DeckId::ALL {
-                            deck_strip(ui, deck_id);
-                        }
-                    }
+                            }
+                        });
                 }
             }
 

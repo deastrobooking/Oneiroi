@@ -28,6 +28,10 @@
 - Added an always-visible preflight rail for output health, missing/loading
   media, waiting MIDI hardware, unsaved project state and rejected effect
   reloads.
+- Reworked the main hierarchy around one always-visible selected-deck
+  performance editor with FX expanded. Setup now starts closed, clip-grid deck
+  labels select the editor directly, and the other full deck editors live in
+  an optional secondary section instead of pushing controls off-screen.
 
 ### Mixer and control integration
 

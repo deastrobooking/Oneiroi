@@ -95,6 +95,13 @@ transforms, effect-chain reordering and resets, modulation and master-effect
 editing. Press **EXIT SHOW MODE** to return to preparation.
 The lock is deliberately temporary and is not stored in a project.
 
+The main workspace always renders the selected deck as the primary performance
+editor with its deck controls and FX visible. Click a **DECK A–D** row label in
+the clip grid—or any slot in that row—to change the selected editor. Setup and
+diagnostics start collapsed, and the remaining three full deck editors are
+available under **Other deck editors** when detailed side-by-side preparation
+is needed.
+
 FFmpeg and its development libraries must be installed. HAP uses the direct
 GPU-compressed path; other supported movies and stills use FFmpeg.
 

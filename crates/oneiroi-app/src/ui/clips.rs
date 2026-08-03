@@ -46,7 +46,16 @@ pub(super) fn draw_clip_grid(
             ui.end_row();
 
             for deck in DeckId::ALL {
-                ui.strong(format!("DECK {}", deck.label()));
+                if ui
+                    .selectable_label(
+                        mixer.selected() == deck,
+                        egui::RichText::new(format!("DECK {}", deck.label())).strong(),
+                    )
+                    .on_hover_text("Select this deck's performance controls")
+                    .clicked()
+                {
+                    mixer.select(deck);
+                }
                 for slot in 0..CLIPS_PER_DECK {
                     let address = ClipAddress { deck, slot };
                     let selected = clips.selected(deck) == slot && mixer.selected() == deck;

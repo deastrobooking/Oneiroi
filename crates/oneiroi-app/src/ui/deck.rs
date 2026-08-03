@@ -545,7 +545,7 @@ pub(super) fn draw_deck(
                 ui.weak("Effects run independently on this deck before mixing.");
             });
         };
-        if show_mode {
+        if show_mode || selected {
             ui.group(effect_controls);
         } else {
             egui::CollapsingHeader::new("GPU effects")
