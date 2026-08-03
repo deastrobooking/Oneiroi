@@ -22,8 +22,9 @@
   behavior for occupied destinations. Media settings and cached previews move
   with the clip, while in-flight imports are protected from stale results.
 - Added a transient **Show Mode** performance lock. It keeps clip/scene launch,
-  transport, levels, solo/bypass, crossfader, freeze and blackout live while
-  locking setup, imports, media management and structural effect editors.
+  transport, levels, solo/bypass, per-deck effect sliders, crossfader, freeze
+  and blackout live while locking setup, imports, media management and
+  structural effect edits.
 - Added an always-visible preflight rail for output health, missing/loading
   media, waiting MIDI hardware, unsaved project state and rejected effect
   reloads.
