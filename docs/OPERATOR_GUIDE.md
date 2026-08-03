@@ -120,6 +120,12 @@ the two clips so media is never overwritten. Playback settings and previews
 follow their clips. Slots with an active import or restore cannot move until
 that background operation finishes.
 
+The selected slot is shown directly below the grid with a **Delete selected
+clip** button. `Delete` or `Backspace` performs the same action when a text
+field is not consuming the key. Deletion clears pending slot work, queued
+launches and cached previews through the same journaled path. Show Mode blocks
+clip deletion.
+
 To populate multiple slots, select the desired starting slot and drag a folder
 onto the window. Oneiroi recursively finds supported media, sorts paths
 lexically, fills from the selected slot, wraps across decks and skips occupied

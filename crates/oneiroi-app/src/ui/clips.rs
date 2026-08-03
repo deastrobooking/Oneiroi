@@ -247,7 +247,7 @@ pub(super) fn draw_clip_grid(
                                 actions.push(UiAction::BrowseRelink(address));
                                 ui.close();
                             }
-                            if clips.path(address).is_some() && ui.button("Clear slot").clicked() {
+                            if clips.path(address).is_some() && ui.button("Delete clip").clicked() {
                                 actions.push(UiAction::ClearSlot(address));
                                 ui.close();
                             }
@@ -257,15 +257,40 @@ pub(super) fn draw_clip_grid(
             }
         });
 
-    if state.show_mode {
-        return;
-    }
-
     let deck = mixer.selected();
     let address = ClipAddress {
         deck,
         slot: clips.selected(deck),
     };
+    let selected_occupied = clips.slot(address).is_some_and(|slot| {
+        slot.movie.is_some() || slot.pending_path.is_some() || slot.error.is_some()
+    });
+    ui.horizontal(|ui| {
+        ui.strong(format!(
+            "Selected · Deck {} clip {}",
+            deck.label(),
+            address.slot + 1
+        ));
+        let delete = ui.add_enabled(
+            selected_occupied && !state.show_mode,
+            egui::Button::new("Delete selected clip")
+                .fill(palette.control_tint(palette.danger, 0.28)),
+        );
+        if delete
+            .on_hover_text(if state.show_mode {
+                "Exit Show Mode to manage clips"
+            } else {
+                "Delete this slot · keyboard: Delete or Backspace"
+            })
+            .clicked()
+        {
+            actions.push(UiAction::ClearSlot(address));
+        }
+    });
+
+    if state.show_mode {
+        return;
+    }
     if let Some(movie) = clips.movie(address) {
         let name = movie.display_name.clone();
         let media_duration = movie.duration.map(oneiroi_core::MediaTime::as_seconds);

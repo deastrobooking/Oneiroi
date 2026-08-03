@@ -306,7 +306,9 @@ impl ApplicationHandler for App {
                 WindowEvent::KeyboardInput { event, .. }
                     if event.state == ElementState::Pressed && !event.repeat =>
                 {
-                    if let PhysicalKey::Code(code) = event.physical_key {
+                    if let PhysicalKey::Code(code) = event.physical_key
+                        && !matches!(code, KeyCode::Delete | KeyCode::Backspace)
+                    {
                         state.handle_key(code);
                     }
                 }
@@ -344,7 +346,9 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed && !event.repeat =>
             {
-                if let PhysicalKey::Code(code) = event.physical_key {
+                if let PhysicalKey::Code(code) = event.physical_key
+                    && (!matches!(code, KeyCode::Delete | KeyCode::Backspace) || !response.consumed)
+                {
                     state.handle_key(code);
                 }
             }
@@ -457,6 +461,14 @@ impl State {
             }
             KeyCode::KeyO if self.modifiers.control_key() || self.modifiers.super_key() => {
                 self.open_project_from_ui();
+            }
+            KeyCode::Delete | KeyCode::Backspace if !self.ui.show_mode => {
+                let deck = self.mixer.selected();
+                let address = ClipAddress {
+                    deck,
+                    slot: self.clips.selected(deck),
+                };
+                self.clear_clip(address, now, CommandOrigin::Keyboard);
             }
             KeyCode::Digit1
             | KeyCode::Digit2
@@ -966,23 +978,7 @@ impl State {
                     self.move_clip(from, to, now);
                 }
                 ui::UiAction::ClearSlot(address) => {
-                    self.record_show_operation(
-                        CommandOrigin::Operator,
-                        now,
-                        CommandOperation::ClearClip {
-                            deck: address.deck.index() as u8,
-                            slot: address.slot as u8,
-                        },
-                    );
-                    if self.clips.active(address.deck) == Some(address.slot) {
-                        self.master_effect_processor.reset_history();
-                    }
-                    self.clips.clear(address);
-                    self.folder_pending.remove(&address);
-                    self.relink_pending.remove(&address);
-                    self.relink_active.remove(&address);
-                    self.ui.clear_thumbnail(address);
-                    self.thumbnail_requests.remove(&address);
+                    self.clear_clip(address, now, CommandOrigin::Operator);
                 }
                 ui::UiAction::BrowseRelink(address) => self.browse_relink(address),
                 ui::UiAction::Eject(deck) => {

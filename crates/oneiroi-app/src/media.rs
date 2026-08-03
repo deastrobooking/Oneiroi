@@ -96,6 +96,49 @@ impl State {
             || self.import_slots[address.deck.index()].is_some_and(|(_, slot)| slot == address.slot)
     }
 
+    /// Remove one bank slot through the same cleanup path for UI buttons,
+    /// context menus and keyboard shortcuts.
+    pub(crate) fn clear_clip(&mut self, address: ClipAddress, now: Instant, origin: CommandOrigin) {
+        let occupied = self.clips.slot(address).is_some_and(|slot| {
+            slot.movie.is_some() || slot.pending_path.is_some() || slot.error.is_some()
+        });
+        if !occupied {
+            return;
+        }
+
+        self.record_show_operation(
+            origin,
+            now,
+            CommandOperation::ClearClip {
+                deck: address.deck.index() as u8,
+                slot: address.slot as u8,
+            },
+        );
+        if self.clips.active(address.deck) == Some(address.slot) {
+            self.master_effect_processor.reset_history();
+        }
+        if self.import_slots[address.deck.index()].is_some_and(|(_, slot)| slot == address.slot) {
+            self.mixer.eject(address.deck);
+            self.import_slots[address.deck.index()] = None;
+            let generation = self.mixer.deck(address.deck).generation;
+            self.reset_playback(address.deck, generation);
+        }
+        if self.launches.queued(address) {
+            self.launches.cancel(address.deck);
+        }
+        self.clips.clear(address);
+        self.folder_pending.remove(&address);
+        self.relink_pending.remove(&address);
+        self.relink_active.remove(&address);
+        self.ui.clear_thumbnail(address);
+        self.thumbnail_requests.remove(&address);
+        self.project_status = format!(
+            "Deleted Deck {} clip {}",
+            address.deck.label(),
+            address.slot + 1
+        );
+    }
+
     pub(crate) fn move_clip(&mut self, from: ClipAddress, to: ClipAddress, now: Instant) {
         if self.clip_move_blocked(from) || self.clip_move_blocked(to) {
             self.project_status = "Cannot move a clip while its slot is importing".to_owned();

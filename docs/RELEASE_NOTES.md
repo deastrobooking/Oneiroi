@@ -32,6 +32,9 @@
   performance editor with FX expanded. Setup now starts closed, clip-grid deck
   labels select the editor directly, and the other full deck editors live in
   an optional secondary section instead of pushing controls off-screen.
+- Added a visible selected-clip delete button plus `Delete`/`Backspace`
+  shortcuts, backed by one journaled cleanup path for pending imports, queued
+  launches and preview caches. Show Mode protects all three entry points.
 
 ### Mixer and control integration
 
