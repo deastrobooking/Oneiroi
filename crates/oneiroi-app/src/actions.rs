@@ -136,9 +136,9 @@ impl State {
                         now,
                         CommandOperation::SetOutputEnabled { enabled },
                     );
-                    self.output_window.set_visible(enabled);
+                    self.output.window.set_visible(enabled);
                     if enabled {
-                        self.output_window.request_redraw();
+                        self.output.window.request_redraw();
                     }
                     self.publish_osc_value("/vjx/output/enabled", f32::from(enabled));
                 }

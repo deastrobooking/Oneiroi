@@ -38,10 +38,11 @@ use oneiroi_media::{
 };
 use oneiroi_render::{
     BuiltInRenderStage, DeckEffects, FourDeckCompositor, Gpu, MasterEffectProcessor, MixerBus,
-    MixerParams, PROGRAM_FORMAT, PresentSurface, PresentationOptions, ProgramPresenter,
-    ProgramTarget, SurfaceAcquireStatus, discover_effect_packages,
+    MixerParams, PROGRAM_FORMAT, PresentationOptions, ProgramPresenter, ProgramTarget,
+    discover_effect_packages,
 };
 use oneiroi_session::{CommandOperation, CommandOrigin, ShowTime};
+use output::{OutputLifecycle, describe_monitors, monitor_id};
 use structural::StructuralSnapshot;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
@@ -74,18 +75,11 @@ fn main() -> Result<()> {
 /// Everything that only exists once a window and GPU device are alive.
 struct State {
     window: Arc<Window>,
-    output_window: Arc<Window>,
-    output_monitors: Vec<OutputMonitor>,
-    output_displays: Vec<ui::OutputDisplay>,
-    output_current_display: String,
-    output_health: OutputHealth,
-    last_display_refresh: Instant,
+    output: OutputLifecycle,
     gpu: Gpu,
-    output_surface: PresentSurface,
     program: ProgramTarget,
     master_effect_processor: MasterEffectProcessor,
     operator_presenter: ProgramPresenter,
-    output_presenter: ProgramPresenter,
     compositor: FourDeckCompositor,
     egui_state: egui_winit::State,
     egui_renderer: egui_wgpu::Renderer,
@@ -160,92 +154,6 @@ struct State {
     performance_runtime: runtime::PerformanceRuntime,
 }
 
-struct OutputMonitor {
-    id: String,
-    handle: MonitorHandle,
-}
-
-struct OutputHealth {
-    status: &'static str,
-    presented: u64,
-    skipped: u64,
-    reconfigurations: u64,
-    recoveries: u64,
-    timeouts: u64,
-    occlusions: u64,
-    validation_errors: u64,
-    topology_changes: u64,
-    awaiting_recovery: bool,
-}
-
-impl Default for OutputHealth {
-    fn default() -> Self {
-        Self {
-            status: "Waiting for first frame",
-            presented: 0,
-            skipped: 0,
-            reconfigurations: 0,
-            recoveries: 0,
-            timeouts: 0,
-            occlusions: 0,
-            validation_errors: 0,
-            topology_changes: 0,
-            awaiting_recovery: false,
-        }
-    }
-}
-
-impl OutputHealth {
-    fn observe(&mut self, status: SurfaceAcquireStatus) {
-        match status {
-            SurfaceAcquireStatus::Healthy => {
-                self.presented = self.presented.saturating_add(1);
-                if self.awaiting_recovery {
-                    self.recoveries = self.recoveries.saturating_add(1);
-                    self.awaiting_recovery = false;
-                }
-                self.status = "Healthy";
-            }
-            SurfaceAcquireStatus::Suboptimal => {
-                self.presented = self.presented.saturating_add(1);
-                self.reconfigurations = self.reconfigurations.saturating_add(1);
-                self.awaiting_recovery = true;
-                self.status = "Suboptimal · reconfigured";
-            }
-            SurfaceAcquireStatus::Outdated => {
-                self.skipped = self.skipped.saturating_add(1);
-                self.reconfigurations = self.reconfigurations.saturating_add(1);
-                self.awaiting_recovery = true;
-                self.status = "Outdated · reconfiguring";
-            }
-            SurfaceAcquireStatus::Lost => {
-                self.skipped = self.skipped.saturating_add(1);
-                self.reconfigurations = self.reconfigurations.saturating_add(1);
-                self.awaiting_recovery = true;
-                self.status = "Surface lost · reconfiguring";
-            }
-            SurfaceAcquireStatus::Timeout => {
-                self.skipped = self.skipped.saturating_add(1);
-                self.timeouts = self.timeouts.saturating_add(1);
-                self.awaiting_recovery = true;
-                self.status = "Presentation timeout";
-            }
-            SurfaceAcquireStatus::Occluded => {
-                self.skipped = self.skipped.saturating_add(1);
-                self.occlusions = self.occlusions.saturating_add(1);
-                self.awaiting_recovery = true;
-                self.status = "Output occluded";
-            }
-            SurfaceAcquireStatus::Validation => {
-                self.skipped = self.skipped.saturating_add(1);
-                self.validation_errors = self.validation_errors.saturating_add(1);
-                self.awaiting_recovery = true;
-                self.status = "Surface validation error";
-            }
-        }
-    }
-}
-
 struct App {
     state: Option<State>,
     initial_files: Vec<PathBuf>,
@@ -284,7 +192,7 @@ impl ApplicationHandler for App {
         let Some(state) = self.state.as_mut() else {
             return;
         };
-        if state.output_window.id() == id {
+        if state.output.window.id() == id {
             match event {
                 WindowEvent::CloseRequested => {
                     state.record_show_operation(
@@ -293,11 +201,12 @@ impl ApplicationHandler for App {
                         CommandOperation::SetOutputEnabled { enabled: false },
                     );
                     state.ui.output_enabled = false;
-                    state.output_window.set_visible(false);
+                    state.output.window.set_visible(false);
                 }
                 WindowEvent::Resized(size) => {
                     state
-                        .output_surface
+                        .output
+                        .surface
                         .resize(&state.gpu.device, size.width, size.height);
                 }
                 WindowEvent::Moved(_) => state.update_current_output_display(),
@@ -445,7 +354,7 @@ impl State {
                     CommandOperation::SetOutputFullscreen { fullscreen: false },
                 );
                 self.ui.output_fullscreen = false;
-                self.output_window.set_fullscreen(None);
+                self.output.window.set_fullscreen(None);
             }
             KeyCode::KeyO if !self.modifiers.control_key() && !self.modifiers.super_key() => {
                 let enabled = !self.ui.output_enabled;
@@ -455,7 +364,7 @@ impl State {
                     CommandOperation::SetOutputEnabled { enabled },
                 );
                 self.ui.output_enabled = enabled;
-                self.output_window.set_visible(enabled);
+                self.output.window.set_visible(enabled);
             }
             KeyCode::KeyS if self.modifiers.control_key() || self.modifiers.super_key() => {
                 self.save_project_from_ui();
@@ -662,20 +571,22 @@ impl State {
         }
 
         let started = Instant::now();
-        Ok(Self {
-            window,
+        let output = OutputLifecycle::new(
             output_window,
             output_monitors,
             output_displays,
             output_current_display,
-            output_health: OutputHealth::default(),
-            last_display_refresh: Instant::now(),
-            gpu,
             output_surface,
+            output_presenter,
+        );
+
+        Ok(Self {
+            window,
+            output,
+            gpu,
             program,
             master_effect_processor,
             operator_presenter,
-            output_presenter,
             compositor,
             egui_state,
             egui_renderer,
@@ -765,7 +676,8 @@ impl State {
         let now = Instant::now();
         self.poll_midi(now);
         self.poll_osc(now);
-        if now.saturating_duration_since(self.last_display_refresh) >= Duration::from_secs(2) {
+        if now.saturating_duration_since(self.output.last_display_refresh) >= Duration::from_secs(2)
+        {
             self.refresh_output_displays();
         }
         self.maybe_autosave(now);
@@ -849,22 +761,22 @@ impl State {
                         output_connected: self.osc_output.is_some(),
                         output_stats: self.osc_output_stats,
                     },
-                    output_displays: &self.output_displays,
+                    output_displays: &self.output.displays,
                     output_health: ui::OutputHealthMetrics {
-                        status: self.output_health.status,
-                        current_display: &self.output_current_display,
+                        status: self.output.health.status,
+                        current_display: &self.output.current_display,
                         surface_extent: {
-                            let (width, height) = self.output_surface.size();
+                            let (width, height) = self.output.surface.size();
                             [width, height]
                         },
-                        presented: self.output_health.presented,
-                        skipped: self.output_health.skipped,
-                        reconfigurations: self.output_health.reconfigurations,
-                        recoveries: self.output_health.recoveries,
-                        timeouts: self.output_health.timeouts,
-                        occlusions: self.output_health.occlusions,
-                        validation_errors: self.output_health.validation_errors,
-                        topology_changes: self.output_health.topology_changes,
+                        presented: self.output.health.presented,
+                        skipped: self.output.health.skipped,
+                        reconfigurations: self.output.health.reconfigurations,
+                        recoveries: self.output.health.recoveries,
+                        timeouts: self.output.health.timeouts,
+                        occlusions: self.output.health.occlusions,
+                        validation_errors: self.output.health.validation_errors,
+                        topology_changes: self.output.health.topology_changes,
                     },
                 },
             );
@@ -1116,8 +1028,8 @@ impl State {
         }
 
         let output_frame = if self.ui.output_enabled {
-            let acquisition = self.output_surface.acquire_with_status(&self.gpu.device);
-            self.output_health.observe(acquisition.status);
+            let acquisition = self.output.surface.acquire_with_status(&self.gpu.device);
+            self.output.health.observe(acquisition.status);
             acquisition.frame
         } else {
             None
@@ -1125,9 +1037,9 @@ impl State {
         if render_plan.has_program_output()
             && let Some(frame) = output_frame.as_ref()
         {
-            let view = self.output_surface.content_view(&frame.texture);
-            let (width, height) = self.output_surface.size();
-            self.output_presenter.draw(
+            let view = self.output.surface.content_view(&frame.texture);
+            let (width, height) = self.output.surface.size();
+            self.output.presenter.draw(
                 &self.gpu.queue,
                 &mut encoder,
                 &view,
@@ -1364,42 +1276,6 @@ fn set_effect_parameter(effects: &mut DeckEffects, effect: u8, value: f32) {
     *effects = effects.sanitized();
 }
 
-fn monitor_id(monitor: &MonitorHandle) -> String {
-    let name = monitor.name().unwrap_or_else(|| "Display".to_owned());
-    let size = monitor.size();
-    let position = monitor.position();
-    format!(
-        "{name}|{}x{}|{},{}",
-        size.width, size.height, position.x, position.y
-    )
-}
-
-fn monitor_label(monitor: &MonitorHandle) -> String {
-    let name = monitor.name().unwrap_or_else(|| "Display".to_owned());
-    let size = monitor.size();
-    let refresh = monitor
-        .refresh_rate_millihertz()
-        .map(|millihertz| format!(" · {:.1} Hz", millihertz as f64 / 1000.0))
-        .unwrap_or_default();
-    format!("{name} · {} × {}{refresh}", size.width, size.height)
-}
-
-fn describe_monitors(handles: Vec<MonitorHandle>) -> (Vec<OutputMonitor>, Vec<ui::OutputDisplay>) {
-    let mut monitors = Vec::with_capacity(handles.len());
-    let mut displays = Vec::with_capacity(handles.len());
-    for handle in handles {
-        let id = monitor_id(&handle);
-        displays.push(ui::OutputDisplay {
-            id: id.clone(),
-            label: monitor_label(&handle),
-        });
-        monitors.push(OutputMonitor { id, handle });
-    }
-    monitors.sort_by(|left, right| left.id.cmp(&right.id));
-    displays.sort_by(|left, right| left.id.cmp(&right.id));
-    (monitors, displays)
-}
-
 fn display_path(path: &std::path::Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -1419,35 +1295,6 @@ fn resolve_project_paths(project: &mut ProjectFile, base: &std::path::Path) {
 #[cfg(test)]
 mod output_health_tests {
     use super::*;
-
-    #[test]
-    fn counts_surface_failures_and_the_next_healthy_recovery() {
-        let mut health = OutputHealth::default();
-        health.observe(SurfaceAcquireStatus::Lost);
-        health.observe(SurfaceAcquireStatus::Timeout);
-        assert_eq!(health.skipped, 2);
-        assert_eq!(health.reconfigurations, 1);
-        assert_eq!(health.timeouts, 1);
-        assert_eq!(health.recoveries, 0);
-
-        health.observe(SurfaceAcquireStatus::Healthy);
-        assert_eq!(health.presented, 1);
-        assert_eq!(health.recoveries, 1);
-        assert_eq!(health.status, "Healthy");
-
-        health.observe(SurfaceAcquireStatus::Healthy);
-        assert_eq!(health.recoveries, 1);
-    }
-
-    #[test]
-    fn suboptimal_frames_are_presented_and_reconfigured() {
-        let mut health = OutputHealth::default();
-        health.observe(SurfaceAcquireStatus::Suboptimal);
-        assert_eq!(health.presented, 1);
-        assert_eq!(health.skipped, 0);
-        assert_eq!(health.reconfigurations, 1);
-        assert!(health.awaiting_recovery);
-    }
 
     #[test]
     fn performance_snapshot_covers_mixer_deck_effect_lfo_and_matrix_controls() {

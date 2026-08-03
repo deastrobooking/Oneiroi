@@ -42,6 +42,10 @@
   texture alive. Deleting the playing slot now invalidates the complete deck
   source, and the selected FX editor warns when master freeze is intentionally
   holding program output against visible control changes.
+- Isolated transient UI intent in a dedicated action dispatcher and grouped the
+  program window, monitor inventory, surface, presenter and recovery counters
+  under one output lifecycle owner. This is a behavior-preserving architecture
+  change that reduces render-loop coupling ahead of the diagnostics split.
 
 ### Mixer and control integration
 
