@@ -46,6 +46,9 @@
   program window, monitor inventory, surface, presenter and recovery counters
   under one output lifecycle owner. This is a behavior-preserving architecture
   change that reduces render-loop coupling ahead of the diagnostics split.
+- Completed the operator UI decomposition with focused toolbar/preflight,
+  pre-show setup and output/frame-pipeline diagnostics modules. Show Mode and
+  the existing `UiAction` boundary continue to govern the same controls.
 
 ### Mixer and control integration
 

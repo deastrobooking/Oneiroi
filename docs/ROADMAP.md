@@ -13,8 +13,8 @@ The August 2026 upgrade audit is being applied in this order:
    matrix on the target show machine and record the binary hash.
 2. **Reduce app and UI coupling.** Route UI intent through one action boundary,
    move output lifecycle ownership out of `State`, then split the remaining
-   toolbar, setup and diagnostics panels. The action boundary and focused
-   output lifecycle owner are implemented; the remaining UI panels are next.
+   toolbar, setup and diagnostics panels. The action boundary, focused output
+   lifecycle owner, and remaining UI panel splits are implemented.
 3. **Improve live diagnostics.** Add frame-time history, decoder/upload timing,
    dropped-frame visibility and actionable output-recovery detail.
 4. **Finish distribution readiness.** Add bundle metadata and permissions,
@@ -44,8 +44,8 @@ Before another large subsystem lands:
    action modules; keep `main.rs` as event-loop wiring. (in progress: UI action
    dispatch and output lifecycle ownership extracted; media-session ownership
    remains)
-5. Complete the operator UI split. Clip grid, deck, master FX, MIDI and theme
-   modules are implemented; toolbar/setup/diagnostics remain in `ui.rs`.
+5. Complete the operator UI split. Clip grid, deck, master FX, MIDI, theme,
+   toolbar, setup and diagnostics modules are implemented. (implemented)
 6. Add checked-in golden v1-v5 projects and migration/save-reload tests before
    introducing project schema v6. (implemented)
 
