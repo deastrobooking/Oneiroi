@@ -200,8 +200,12 @@ cargo run -p oneiroi-render --example dump_frame > frame.raw \
 
 Safety/performance keys: `B` toggles blackout, `Space` toggles master freeze,
 `O` toggles program output, arrow keys move the crossfader, `Home` centers it,
-and `1`–`8` launch scenes. `Cmd/Ctrl+S` saves to the project path shown in the
-operator window.
+`1`–`8` launch scenes, and `Delete`/`Backspace` removes the selected clip when
+Show Mode is off and no text field owns the key. `Cmd/Ctrl+S` saves to the
+project path shown in the operator window.
+
+Release candidates should follow the automated, fixture, hardware-failure and
+packaging gates in [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md).
 
 The **Program output** toolbar control shows or hides the clean output window.
 Choose the connected display, then enable **Fullscreen**. Use **Test card** to

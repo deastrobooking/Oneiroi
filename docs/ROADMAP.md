@@ -9,23 +9,25 @@ which feature is most visually interesting.
 The completed feature slices have been preserved as intentional checkpoints.
 Before another large subsystem lands:
 
-1. Preserve the current validated state as an intentional checkpoint. (implemented)
-2. Record release-mode performance for two and four simultaneous 1080p sources.
-3. Add a repeatable fixture command for HAP, conventional video, still and
-   synthetic camera playback.
+1. Preserve validated feature slices as intentional checkpoints. (implemented)
+2. Record release-mode performance for two and four simultaneous 1080p60 HAP
+   sources using the matrix in `RELEASE_CHECKLIST.md`.
+3. Maintain a repeatable local fixture set for HAP, conventional video, still
+   and live-camera playback. The checklist is implemented; redistributable
+   fixture media still needs to be produced.
 4. Split application orchestration into focused output, media-session and
-   persistence modules; keep `main.rs` as event-loop wiring.
-5. Split the large operator UI into toolbar, clip-grid, deck, effects and
-   diagnostics panels.
-6. Add golden v1/v2/v3 fixtures at the current version-three migration
-   boundary before another schema change.
+   action modules; keep `main.rs` as event-loop wiring. (not started)
+5. Complete the operator UI split. Clip grid, deck, master FX, MIDI and theme
+   modules are implemented; toolbar/setup/diagnostics remain in `ui.rs`.
+6. Add checked-in golden v1-v5 projects and migration/save-reload tests before
+   introducing project schema v6.
 
 Acceptance criteria:
 
 - Full tests and strict Clippy remain clean.
 - A release-build smoke test can be repeated from documented commands.
 - No behavior changes are introduced by the module split.
-- The repository has a recoverable checkpoint before dual-window work begins.
+- Every release candidate has a dated show-machine checklist and binary hash.
 
 ## Phase 1: dedicated program output
 
@@ -216,7 +218,8 @@ Acceptance criteria:
 ## Phase 7: release hardening
 
 1. Add GPU upload/render timing and per-deck decoder-health diagnostics.
-2. Add test-card and failure-mode rehearsal documentation.
+2. Add test-card and failure-mode rehearsal documentation. (implemented in
+   `OPERATOR_GUIDE.md` and `RELEASE_CHECKLIST.md`; execution remains per build)
 3. Create macOS bundle metadata with camera and microphone usage strings.
 4. Package, sign and notarize the application.
 5. Decide FFmpeg dynamic/static distribution and verify license obligations.
@@ -225,8 +228,9 @@ Acceptance criteria:
 
 ## Phase 8: typed graph and deterministic session runtime
 
-Status: foundation implemented; GPU lowering and complete command routing are
-next.
+Status: the compatibility runtime, GPU lowering, command routing, recovery,
+takes and bounded OSC transport are implemented. General graph execution and
+live graph editing remain.
 
 Delivered:
 
@@ -301,6 +305,31 @@ Acceptance criteria:
 ## Deferred beyond the focused release
 
 Projection warping, multiple simultaneous program outputs, edge blending, ISF
-import, generative sources, NDI, Syphon/Spout, OSC, Ableton Link, DMX, Art-Net,
-the visual score, spatial engine and redundant render cluster remain beyond
-the current graph-foundation slice.
+import, generative sources, NDI, Syphon/Spout, Ableton Link, MIDI clock, DMX,
+Art-Net, the visual score, spatial engine and redundant render cluster remain
+beyond the current graph-foundation slice. OSC transport is implemented;
+effect/modulation route expansion and discovery remain in Phase 8.
+
+## Phase 9: stage integration
+
+Start only after the Phase 7 release gate is repeatable.
+
+1. Decide Ableton Link licensing. If approved, add it behind an optional
+   feature and adapt its tempo/beat phase through the existing clock boundary.
+2. Add MIDI clock output and Song Position Pointer through the device-neutral
+   control layer.
+3. Expand OSC effect/modulation routes and publish route discovery metadata.
+4. Prototype NDI output in an optional crate after accepting the NDI SDK and
+   redistribution terms; preserve a default build without the SDK.
+5. Prototype native Syphon/Spout texture sharing separately per platform.
+6. Add a final bounded projection-warp pass before pursuing multi-output edge
+   blending.
+
+Dependency policy:
+
+- Keep `wgpu` 29 with `egui-wgpu` 0.35. Upgrade `wgpu`, `naga` and the egui
+  renderer compatibility line together.
+- Evaluate `cpal` and `midir` upgrades independently with audio/MIDI hardware
+  reconnect tests; do not combine them with a render-stack migration.
+- External SDK and copyleft license decisions are release gates, not implicit
+  implementation details.

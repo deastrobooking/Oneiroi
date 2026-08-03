@@ -1,216 +1,129 @@
 # Application review
 
-Review date: 2026-07-30
+Review date: 2026-08-02
 
 ## Executive assessment
 
-Oneiroi has moved beyond a proof of concept. Its strongest area is the media
-engine: direct HAP playback, conventional-codec fallback, exact timestamp
-scheduling, bounded workers, stale-generation rejection, four active decks,
-camera inputs and project recovery are meaningful foundations for a real VJ
-instrument.
+Oneiroi is a functional four-deck VJ instrument with a credible media and
+rendering foundation. Direct HAP upload, bounded FFmpeg fallback, independent
+A/B composition, deck and master effects, audio/MIDI/OSC control, clean program
+output and deterministic session recovery are implemented and covered by more
+than 200 automated tests.
 
-It is not yet stage-ready as a standalone mixer. The first output slice now
-separates an offscreen program render from the operator preview and clean second
-window with aspect-preserving presentation. Display selection, custom sizing
-test patterns and output diagnostics are implemented; show-machine validation
-remains before the milestone is stage-certified.
+The main release risk is no longer missing mixer fundamentals. It is show-machine
+certification, application packaging and concentrated application orchestration.
+External stage integrations such as tempo sync and video sharing should follow
+those gates rather than displace them.
 
-## What is strong
+## Current strengths
 
-### Media and timing
+### Media and rendering
 
-- HAP remains block-compressed through GPU upload.
-- FFmpeg fallback and still-image paths are isolated from the direct HAP path.
-- Media uses exact rational timestamps.
-- Decoder queues and schedulers are bounded.
-- Generations prevent obsolete seek/restart frames from flashing.
-- Camera capture drops backlog rather than accumulating latency.
-
-### Rendering
-
-- Composition and effects run on the GPU.
-- Stable-resolution textures are reused.
-- Linear/sRGB handling is deliberate and tested.
-- GPU readback tests cover compressed upload, composition and effect changes.
+- HAP remains block-compressed through GPU upload; conventional media and stills
+  use isolated FFmpeg fallback paths.
+- Exact media timestamps, bounded workers, reusable frame leases and generation
+  checks prevent unbounded backlog and obsolete-frame presentation.
+- Four decks feed independent linear-light A/B composites with 35 blend modes,
+  transforms, crop, Solo/Bypass and per-deck effect chains.
+- The program render is shared by an operator preview and clean second window.
+  Display targeting, fullscreen, calibration overlays and surface recovery are
+  observable rather than implicit.
+- Two bounded master slots support built-in and validated one/two-pass WGSL
+  packages with last-known-good reload and one optional history texture.
 
 ### Performance workflow
 
-- Four decks and 32 persistent slots are functional.
-- Every successfully preloaded slot retains a bounded first-frame launch
-  preview, avoiding a blank deck while full decoding starts.
-- Per-slot trim, restart/resume launch mode and musical beat duration now feed
-  the same generation-safe transport and seek path.
-- Conventional clips build capped keyframe indexes and reopen from a preceding
-  anchor before exact-target frame discard.
-- Conventional RGBA frames now use per-deck reusable leases with observable
-  steady-state allocation/reuse behavior.
-- Bounded recursive folder import deterministically fills available slots and
-  reuses the independent probe/preload pipeline.
-- Native per-slot relinking preserves playback settings, records the selected
-  path immediately and rejects superseded or cross-project probe results.
-- Generation-scoped decoder failure injection proves mid-stream error
-  reporting and recovery. Accelerated lease, seek-generation and real FFmpeg
-  reopen soaks enforce bounded allocations and stale-frame rejection; an
-  opt-in 10,000-reopen target is available for release candidates.
-- The fixed deck effects are now organized as three reorderable persisted
-  groups with shared bypass/dry-wet/reset behavior and factory presets.
-- Two persisted master slots now route through a bounded post-composite graph.
-  Separable blur reuses fixed horizontal scratch and ping textures, while an
-  inactive chain retains the direct composition path.
-- Persistent feedback samples the previous final program frame and owns
-  explicit reset behavior for source/project/resolution/blackout/disable
-  transitions. Master freeze now holds both final output and history.
-- The master shader now has a versioned, path-safe package manifest with
-  validated parameter ranges and WGSL entry points. Candidate pipelines compile
-  on a watcher worker and replace the render pipeline only after validation;
-  failures preserve the last-known-good output and remain visible to the
-  operator.
-- Custom one-pass master effects are registry-discovered by stable ID, receive
-  schema-generated controls and persist named parameter values in project v3.
-  Missing packages fall back to a neutral copy. Chromatic Split is bundled as
-  an executable package/ABI example.
-- Three master LFOs and eight routes address custom controls through stable
-  package/parameter keys, with audio, transient, beat and bar sources. The same
-  identity drives generated MIDI learning and readable persisted mappings.
-- Custom packages may declare one or two fragment passes. Complete pipeline
-  sets compile atomically, reuse the fixed scratch/ping targets and retain the
-  previous set if either pass fails. Spectral Echo exercises the two-pass path.
-- Temporal packages may request one fixed previous-slot-output history texture.
-  Validity is explicit, resets follow source/project/blackout/disable lifecycle,
-  and Temporal Melt verifies clean seeding and subsequent-frame sampling.
-- Scene launch, quantization, tempo, transport, effects, LFOs and modulation
-  routes form a coherent playable instrument.
-- Save, autosave, recovery and asynchronous restoration are already integrated.
-- The first deterministic-runtime spine is now present. Versioned typed node
-  contracts compile the current four-deck topology into an immutable,
-  budget-checked 11-node plan. Illegal implicit feedback is rejected, explicit
-  delay nodes break temporal cycles, cross-rate edges receive adapter records,
-  and non-overlapping transient texture lifetimes can share slots.
-- Shadow graph preparation cannot replace the active or last-known-good plan
-  unless the complete candidate validates and compiles. Ready transactions can
-  commit on a frame, beat, bar or timecode boundary.
-- The renderer now lowers the 11-node compatibility plan into three
-  authoritative executable stages. It verifies four independent source/effect
-  branches, linear color and matching extents before reusing the tested
-  compositor, master processor and presenters. Unsupported lowering restores
-  the previous graph plan.
-- Primary launch, tempo and output-enable actions now enter a serializable
-  command log with periodic checkpoints. Session state can replay to a target
-  time, and takes can branch without rewriting recorded commands.
-- The live take is also persisted through a bounded background writer. Its
-  versioned JSONL stream and atomically replaced checkpoint recover after a
-  torn final write without putting file I/O on the render thread. Queue
-  overruns and worker errors are visible in the operator UI.
-- MIDI and keyboard performance mutations now pass through one origin-aware
-  command gateway before concrete application. Continuous UI controls are
-  snapshotted, reverted and reapplied through that gateway, covering 208 fixed
-  mixer/transport/effect/LFO/matrix targets plus dynamic custom-effect values.
-  Launch, clear, eject, seek, tempo and output operations use typed semantic
-  commands for deterministic replay.
-- Structural UI edits are captured before/after each editor frame, restored,
-  journaled as deterministic field commands, and only then accepted. This
-  covers deck transforms/crop/source/blend, effect-slot and LFO/modulation
-  structure, master effects/modulation, and successful media assignments.
-- The operator can scan prior session journals, inspect recovery metadata and
-  restore checkpoint-plus-tail state into concrete mixer/output/effect state.
-  Recovery excludes the active writer and continues in a new baseline journal.
+- The 4 × 8 clip grid supports scene launches, quantization, folder import,
+  missing-media relink, safe slot movement and explicit clip deletion.
+- The selected deck has one primary, always-visible editor. Deck row labels and
+  clip slots retarget it directly; secondary deck editors no longer bury the
+  active controls.
+- Show Mode locks setup and destructive/structural edits while retaining clip,
+  scene, transport, mixer, Solo/Bypass and live deck-FX controls.
+- MIDI supports multiple persisted controllers, learn/clear, relative modes,
+  soft takeover and reconnect. OSC input/output shares the command gateway and
+  supports bounded timetag scheduling.
+- Audio RMS, bands and transient analysis plus beat/bar phase feed the deck and
+  master modulation systems.
 
-### Compatibility and validation
+### Persistence and validation
 
-- Project values are validated before application.
-- Version-one through version-four projects migrate to version five with
-  stable identity, take metadata, deterministic seeds and the active graph.
-- The workspace currently passes more than 200 tests and strict Clippy, with one extended
-  decoder soak available as an opt-in ignored test.
+- Project schema v5 migrates supported v1-v4 projects, validates values and
+  persists graph, take identity and deterministic seeds.
+- Structural edits and performance controls enter an origin-aware command log.
+  Bounded JSONL journals, checkpoints, recovery branches, markers and exported
+  take copies are implemented.
+- The workspace passes full tests and strict Clippy. One extended decoder reopen
+  soak remains intentionally opt-in for release candidates.
 
 ## Stage-critical gaps
 
-### 1. Program output requires hardware certification
+### 1. Hardware certification
 
-The shared GPU now owns independent operator/output surfaces, and the compositor
-renders once into an offscreen program texture. The clean window can be hidden
-or made borderless fullscreen at 720p, 1080p or UHD.
+The clean output, audio capture and multi-controller MIDI paths need a recorded
+show-machine matrix: sustained 1080p/UHD playback, display disconnect/reconnect,
+sleep/wake, audio permission and device loss, MIDI reconnect and storage failure.
+Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for every candidate.
 
-Connected displays can now be selected and refreshed, preset or custom
-composition sizes are supported, and GPU test-card/identification overlays are
-available. Exact surface errors, recovery and topology changes are now visible
-in the operator UI. Remaining work: stronger identity across topology changes
-and show-machine soak testing.
+### 2. Packaging and distribution
 
-### 2. Physical I/O still needs show-machine validation
+The repository does not yet produce a signed/notarized macOS application bundle.
+Camera and microphone usage strings, FFmpeg distribution strategy and license
+notices must be settled before calling a build stage-ready.
 
-MIDI and audio now both have native input capture, bounded queues, diagnostics
-and safe missing-device behavior. MIDI adds automatic known-controller
-reconnection and a complete learn/mapping editor. Both paths still require
-permission, disconnect/reconnect and long-duration testing with physical
-interfaces on the target show machine. MIDI output feedback and clock are not
-implemented.
+### 3. Diagnostics depth
 
-### 3. Operational diagnostics are too shallow
-
-FPS, aggregate dropped/repeated/late counts, audio status, MIDI
-received/dropped/parse counts and output-display health are visible. GPU
-timing, upload timing, explicit queue occupancy and detailed per-deck decoder
-timing remain absent. RGBA lease allocation/reuse/live/discard counters are
-now visible.
+FPS, surface health, decoder drop/repeat/late totals and RGBA lease counters are
+visible. GPU pass/upload timings, queue occupancy and per-deck decode latency are
+still needed to explain a marginal show machine without attaching a profiler.
 
 ## Engineering risks
 
-### Concentrated application modules
+### Concentrated application orchestration
 
-`oneiroi-app/src/main.rs` is over 1,000 lines and `ui.rs` is over 900 lines.
-They mix orchestration for media, projects, cameras, tempo, rendering and
-operator controls. Dual-window output and audio device lifecycle will make
-these files harder to reason about unless seams are introduced first.
+`oneiroi-app/src/main.rs` remains roughly 1,700 lines and still coordinates
+windowing, media, projects, cameras, tempo, rendering and action dispatch. The UI
+has begun splitting into `clips`, `deck`, `master_fx`, `midi`, `midi_manager` and
+`theme`, but `ui.rs` is also still roughly 1,700 lines.
 
-Recommended boundaries:
+Next seams:
 
-- `output.rs`: window/surface lifecycle and display selection
-- `session.rs`: per-deck decoder/scheduler/transport orchestration
-- `actions.rs`: UI and keyboard action dispatch
-- UI panels split by toolbar, clips, deck/effects and diagnostics
+- `output.rs`: output window/surface lifecycle and display selection
+- `media_session.rs`: per-deck decoder, scheduler and transport orchestration
+- `actions.rs`: UI and keyboard action dispatch through the command gateway
+- UI toolbar/setup/diagnostics modules to complete the panel split
 
-### Arbitrary package texture declarations are not implemented
+These are behavior-preserving refactors and should land in small validated
+checkpoints.
 
-Deck and master chains now provide ordered slots, common controls, bounded blur
-and deterministic feedback history. Custom master shaders now register through
-validated manifests, generate controls dynamically, receive stable-ID
-LFO/audio/tempo modulation plus MIDI, and may use one or two atomic passes. The
-current ABI deliberately grants 32 scalar parameters, the existing sampled
-textures and at most one fixed previous-output history per slot; packages
-cannot request arbitrary auxiliary texture counts, formats or resolutions.
+### Project migration discipline
 
-Resolution: define a small, memory-budgeted resource declaration model without
-allowing runtime allocation or unbounded shader resources.
+Schema evolution reached v5 without checked-in golden files for every supported
+version. Before v6, add v1-v5 fixtures and prove both load-time migration and a
+current-schema save/reload for each fixture.
 
-### Project schema discipline
+### External integration and licensing
 
-Custom effect instances established project version 3 and upgrade version-one
-and version-two files on load. The next persistence work should extract
-explicit migration steps and add golden fixture files for every supported
-version before a fourth schema is introduced.
+- Ableton Link fits the tempo model, but `rusty_link` is GPL-2.0+ unless a
+  proprietary Ableton license is obtained. Resolve distribution policy first.
+- NDI requires its SDK and redistribution terms. Keep any integration in an
+  optional crate/feature with a build that remains functional without the SDK.
+- Syphon/Spout requires platform-specific native texture interop and should not
+  be estimated as a thin Rust dependency addition.
+- `wgpu` and `naga` must move together with the `egui-wgpu` compatibility line;
+  do not introduce two incompatible `wgpu` versions.
 
-### Integration surface
-
-The camera, clip-grid, persistence, thumbnail, effects, modulation, tempo and
-documentation slices are committed as intentional checkpoints. Future large
-refactors should continue to preserve small validated integration boundaries.
-
-## Recommended decision
-
-Proceed with the roadmap in this order:
+## Recommended order
 
 ```text
-checkpoint and module seams
-    -> dedicated program output
-    -> true bus composition and layer transforms
-    -> audio-reactive matrix sources
-    -> physical MIDI/audio soak validation
-    -> clip/media hardening
-    -> effect-chain generalization
-    -> packaging and soak testing
+repeatable release certification and golden project fixtures
+    -> behavior-preserving app/UI module seams
+    -> GPU/upload/decode timing diagnostics
+    -> signed macOS release and FFmpeg licensing decision
+    -> tempo sync (after Ableton Link licensing decision)
+    -> feature-gated NDI output
+    -> projection mapping and additional stage I/O
 ```
 
-This order delivers the largest increase in real show usability while
-protecting the media engine that is already working.
+This ordering protects the working show path while turning the next external
+integrations into optional, testable additions.

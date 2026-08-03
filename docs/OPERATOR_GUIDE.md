@@ -274,10 +274,11 @@ documented master-v1 bindings and declared vertex/fragment entry points.
 Packages with role `master_effect` in an immediate subdirectory of `effects/`
 appear when a master slot is set to **Custom package**. Select the package and
 its manifest controls are created automatically. **Refresh registry** rescans
-after adding or removing a package. Parameter values and package IDs are saved
-in project version 3. If a saved package is missing or rejected, that slot
-passes its input through unchanged. The package panel reports whether the
-selected effect uses one or two bounded render passes.
+after adding or removing a package. Parameter values and package IDs were
+introduced in project version 3 and remain part of the current version-5
+schema. If a saved package is missing or rejected, that slot passes its input
+through unchanged. The package panel reports whether the selected effect uses
+one or two bounded render passes.
 
 Expand **Master modulation matrix** for three free-running or tempo-synced LFOs
 and eight routes. A route can use a master LFO, RMS, bass, mid, high, transient,

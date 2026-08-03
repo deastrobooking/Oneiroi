@@ -35,6 +35,9 @@
 - Added a visible selected-clip delete button plus `Delete`/`Backspace`
   shortcuts, backed by one journaled cleanup path for pending imports, queued
   launches and preview caches. Show Mode protects all three entry points.
+- Fixed deck selection becoming direction-dependent during UI command capture.
+  Switching from a later deck back to an earlier deck no longer restores the
+  previous one-hot selection while processing its falling edge.
 
 ### Mixer and control integration
 
@@ -63,6 +66,8 @@
 
 ### Release-candidate follow-up
 
+- Added `docs/RELEASE_CHECKLIST.md` as the repeatable automated, media,
+  output/device failure and packaging gate for candidate builds.
 - Run the ignored extended decoder reopen soak on the target show machine.
 - Perform a hardware smoke test for display reconnect, audio permissions,
   MIDI reconnect/feedback and sustained 1080p output.
