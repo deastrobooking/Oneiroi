@@ -1,0 +1,96 @@
+{
+  "format": "oneiroi-project",
+  "version": 3,
+  "settings": {
+    "bpm": 124.0,
+    "quantization": "bar",
+    "crossfader": 0.4,
+    "equal_power": true,
+    "master_opacity": 0.95,
+    "output": {"enabled": true, "fullscreen": false, "display_id": "", "test_card": false, "identify": false, "composition_extent": [1920, 1080]},
+    "audio_analysis": {"gain": 1.25, "noise_floor": 0.015, "attack_ms": 16.0, "release_ms": 200.0, "transient_sensitivity": 2.25, "normalization": false, "normalization_target": 0.5, "normalization_speed_ms": 1000.0},
+    "master_effects": {
+      "slots": [
+        {
+          "kind": "custom",
+          "bypassed": false,
+          "mix": 0.7,
+          "amount": 8.0,
+          "feedback": 0.85,
+          "package_id": "chromatic-split",
+          "parameters": [
+            {"id": "amount", "value": 0.025},
+            {"id": "angle", "value": 1.2}
+          ]
+        },
+        {
+          "kind": "feedback",
+          "bypassed": false,
+          "mix": 0.5,
+          "amount": 8.0,
+          "feedback": 0.88,
+          "package_id": "",
+          "parameters": []
+        }
+      ]
+    },
+    "master_modulation": {
+      "lfos": [
+        {"enabled": true, "waveform": "sine", "rate_hz": 0.5, "tempo_sync": true, "beats_per_cycle": 2.0, "depth": 0.75, "phase": 0.1},
+        {"enabled": false, "waveform": "triangle", "rate_hz": 0.25, "tempo_sync": false, "beats_per_cycle": 1.0, "depth": 0.5, "phase": 0.0},
+        {"enabled": false, "waveform": "square", "rate_hz": 0.125, "tempo_sync": false, "beats_per_cycle": 1.0, "depth": 0.5, "phase": 0.0}
+      ],
+      "routes": [
+        {"enabled": true, "source": 0, "target_slot": 0, "parameter_key": 4242, "amount": -0.6},
+        {"enabled": false, "source": 0, "target_slot": 0, "parameter_key": 0, "amount": 0.5},
+        {"enabled": false, "source": 0, "target_slot": 0, "parameter_key": 0, "amount": 0.5},
+        {"enabled": false, "source": 0, "target_slot": 0, "parameter_key": 0, "amount": 0.5},
+        {"enabled": false, "source": 0, "target_slot": 0, "parameter_key": 0, "amount": 0.5},
+        {"enabled": false, "source": 0, "target_slot": 0, "parameter_key": 0, "amount": 0.5},
+        {"enabled": false, "source": 0, "target_slot": 0, "parameter_key": 0, "amount": 0.5},
+        {"enabled": false, "source": 0, "target_slot": 0, "parameter_key": 0, "amount": 0.5}
+      ]
+    }
+  },
+  "decks": [
+    {
+      "clips": ["media/v3-custom.mov", null, null, null, null, null, null, null],
+      "selected_slot": 0, "active_slot": 0, "level": 0.9, "bus": "left",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 2.0},
+      "effects": {"contrast": 1.1, "saturation": 1.2, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "selected_slot": 0, "active_slot": null, "level": 1.0, "bus": "right",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "selected_slot": 0, "active_slot": null, "level": 1.0, "bus": "left",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "selected_slot": 0, "active_slot": null, "level": 1.0, "bus": "right",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    }
+  ],
+  "midi_mappings": [
+    {
+      "device": "legacy-v3-controller",
+      "channel": 0,
+      "message": "control_change",
+      "number": 21,
+      "target": {"kind": "master_effect_parameter", "slot": 0, "parameter_key": 4242},
+      "input_range": [0.0, 1.0],
+      "output_range": [0.0, 0.08],
+      "invert": false,
+      "mode": "continuous",
+      "soft_takeover": true,
+      "feedback": null
+    }
+  ]
+}

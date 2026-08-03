@@ -58,6 +58,21 @@
 
 ### Validation
 
+- Added a checked-in, legacy-shaped project-v1 fixture that verifies migration
+  to v5, preservation of v1 values, safe defaults for later fields and an
+  atomic current-schema save/reload.
+- Added a project-v2 fixture covering dedicated output settings, audio
+  analysis, built-in master effects, clip playback, transforms and deck effect
+  slots while proving v3-v5 fields migrate to safe defaults.
+- Added a project-v3 fixture covering custom master-effect package identity,
+  named parameters, stable-key modulation and MIDI targets while proving v4-v5
+  identity, take, graph and seed fields migrate safely.
+- Added a project-v4 fixture covering stable project/take identities and linked
+  journal metadata while proving v5 graph injection and deterministic-seed
+  defaults preserve the historical project.
+- Added a native project-v5 fixture with stable identities, deterministic seeds
+  and the explicit 11-node compatibility graph. It loads without mutation,
+  compiles through the built-in graph registry and round-trips atomically.
 - Mixer shader validation and GPU readback cover every blend-mode identity and
   bloom falloff behavior.
 - The workspace passes formatting, full tests and strict Clippy; the extended

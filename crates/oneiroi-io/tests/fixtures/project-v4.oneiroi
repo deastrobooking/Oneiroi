@@ -1,0 +1,54 @@
+{
+  "format": "oneiroi-project",
+  "version": 4,
+  "project_id": "11111111111111111111111111111111",
+  "takes": [
+    {
+      "take_id": "22222222222222222222222222222222",
+      "name": "V4 opening take",
+      "journal_file": "session-v4-opening.jsonl",
+      "created_unix_ms": 1785528000000
+    }
+  ],
+  "settings": {
+    "bpm": 126.0,
+    "quantization": "beat",
+    "crossfader": 0.55,
+    "equal_power": true,
+    "master_opacity": 1.0,
+    "output": {"enabled": true, "fullscreen": false, "display_id": "stage-main", "test_card": false, "identify": false, "composition_extent": [1920, 1080]},
+    "master_effects": {
+      "slots": [
+        {"kind": "custom", "bypassed": false, "mix": 0.8, "amount": 8.0, "feedback": 0.85, "package_id": "chromatic-split", "parameters": [{"id": "amount", "value": 0.03}]},
+        {"kind": "none", "bypassed": false, "mix": 1.0, "amount": 8.0, "feedback": 0.85, "package_id": "", "parameters": []}
+      ]
+    }
+  },
+  "decks": [
+    {
+      "clips": [null, null, "media/v4-take.mov", null, null, null, null, null],
+      "selected_slot": 2, "active_slot": 2, "level": 0.8, "bus": "left",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 6.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "selected_slot": 0, "active_slot": null, "level": 1.0, "bus": "right",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "selected_slot": 0, "active_slot": null, "level": 1.0, "bus": "left",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "selected_slot": 0, "active_slot": null, "level": 1.0, "bus": "right",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    }
+  ],
+  "midi_mappings": []
+}

@@ -20,7 +20,7 @@ Before another large subsystem lands:
 5. Complete the operator UI split. Clip grid, deck, master FX, MIDI and theme
    modules are implemented; toolbar/setup/diagnostics remain in `ui.rs`.
 6. Add checked-in golden v1-v5 projects and migration/save-reload tests before
-   introducing project schema v6.
+   introducing project schema v6. (implemented)
 
 Acceptance criteria:
 

@@ -1,0 +1,97 @@
+{
+  "format": "oneiroi-project",
+  "version": 2,
+  "settings": {
+    "bpm": 132.0,
+    "quantization": "beat",
+    "crossfader": 0.65,
+    "equal_power": true,
+    "master_opacity": 0.9,
+    "output": {
+      "enabled": true,
+      "fullscreen": true,
+      "display_id": "legacy-stage-display",
+      "test_card": false,
+      "identify": true,
+      "composition_extent": [1280, 720]
+    },
+    "audio_analysis": {
+      "gain": 1.5,
+      "noise_floor": 0.02,
+      "attack_ms": 12.0,
+      "release_ms": 220.0,
+      "transient_sensitivity": 2.5,
+      "normalization": true,
+      "normalization_target": 0.55,
+      "normalization_speed_ms": 800.0
+    },
+    "master_effects": {
+      "slots": [
+        {
+          "kind": "blur",
+          "bypassed": false,
+          "mix": 0.6,
+          "amount": 12.0,
+          "feedback": 0.85
+        },
+        {
+          "kind": "feedback",
+          "bypassed": true,
+          "mix": 0.75,
+          "amount": 8.0,
+          "feedback": 0.9
+        }
+      ]
+    }
+  },
+  "decks": [
+    {
+      "clips": [null, "media/v2-feature.mov", null, null, null, null, null, null],
+      "clip_playback": [
+        {"in_point": 0.0, "out_point": null, "launch_mode": "restart", "beat_duration": null},
+        {"in_point": 1.5, "out_point": 9.0, "launch_mode": "resume", "beat_duration": 8.0},
+        {"in_point": 0.0, "out_point": null, "launch_mode": "restart", "beat_duration": null},
+        {"in_point": 0.0, "out_point": null, "launch_mode": "restart", "beat_duration": null},
+        {"in_point": 0.0, "out_point": null, "launch_mode": "restart", "beat_duration": null},
+        {"in_point": 0.0, "out_point": null, "launch_mode": "restart", "beat_duration": null},
+        {"in_point": 0.0, "out_point": null, "launch_mode": "restart", "beat_duration": null},
+        {"in_point": 0.0, "out_point": null, "launch_mode": "restart", "beat_duration": null}
+      ],
+      "selected_slot": 1,
+      "active_slot": 1,
+      "level": 0.85,
+      "bus": "left",
+      "solo": true,
+      "bypassed": false,
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 0.75, "position": 4.25},
+      "transform": {"position": [0.2, -0.1], "scale": 1.2, "rotation": 0.125, "flip_horizontal": true, "flip_vertical": false, "crop": [0.1, 0.05, 0.0, 0.15], "source_mode": "fit"},
+      "blend_mode": "screen",
+      "effects": {"slots": [{"group": "geometry", "bypassed": false, "mix": 1.0}, {"group": "color", "bypassed": false, "mix": 0.8}, {"group": "stylize", "bypassed": true, "mix": 0.5}], "contrast": 1.2, "saturation": 1.4, "hue": 0.1, "black_level": 0.05, "white_level": 0.95, "gamma": 1.1, "pixelate": 0.05, "luma_key": 0.2, "neon": 0.3, "fractal": 0.0, "jitter": 0.1, "find_edges": 0.0, "bit_reduction": 0.2, "blacklight": 0.0, "mirror": true},
+      "lfos": [],
+      "mod_routes": [],
+      "camera": null
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "clip_playback": [{"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}],
+      "selected_slot": 0, "active_slot": null, "level": 1.0, "bus": "right",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "clip_playback": [{"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}],
+      "selected_slot": 0, "active_slot": null, "level": 1.0, "bus": "left",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "clip_playback": [{"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}, {"in_point": 0.0, "out_point": null, "beat_duration": null}],
+      "selected_slot": 0, "active_slot": null, "level": 1.0, "bus": "right",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    }
+  ],
+  "midi_mappings": []
+}

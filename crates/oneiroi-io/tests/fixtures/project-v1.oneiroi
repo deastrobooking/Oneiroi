@@ -1,0 +1,97 @@
+{
+  "format": "oneiroi-project",
+  "version": 1,
+  "settings": {
+    "bpm": 128.0,
+    "quantization": "bar",
+    "crossfader": 0.25,
+    "equal_power": false,
+    "master_opacity": 0.8
+  },
+  "decks": [
+    {
+      "clips": ["media/legacy-a.mov", null, null, null, null, null, null, null],
+      "selected_slot": 2,
+      "active_slot": 0,
+      "level": 0.7,
+      "bus": "left",
+      "transport": {
+        "playing": false,
+        "frozen": true,
+        "end_mode": "one_shot",
+        "speed": 1.25,
+        "position": 3.5
+      },
+      "effects": {
+        "contrast": 1.25,
+        "saturation": 0.8,
+        "pixelate": 0.1,
+        "luma_key": 0.2,
+        "mirror": true
+      }
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "selected_slot": 0,
+      "active_slot": null,
+      "level": 1.0,
+      "bus": "right",
+      "transport": {
+        "playing": true,
+        "frozen": false,
+        "end_mode": "loop",
+        "speed": 1.0,
+        "position": 0.0
+      },
+      "effects": {
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "pixelate": 0.0,
+        "luma_key": 0.0,
+        "mirror": false
+      }
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "selected_slot": 0,
+      "active_slot": null,
+      "level": 1.0,
+      "bus": "left",
+      "transport": {
+        "playing": true,
+        "frozen": false,
+        "end_mode": "loop",
+        "speed": 1.0,
+        "position": 0.0
+      },
+      "effects": {
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "pixelate": 0.0,
+        "luma_key": 0.0,
+        "mirror": false
+      }
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "selected_slot": 0,
+      "active_slot": null,
+      "level": 1.0,
+      "bus": "right",
+      "transport": {
+        "playing": true,
+        "frozen": false,
+        "end_mode": "loop",
+        "speed": 1.0,
+        "position": 0.0
+      },
+      "effects": {
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "pixelate": 0.0,
+        "luma_key": 0.0,
+        "mirror": false
+      }
+    }
+  ]
+}

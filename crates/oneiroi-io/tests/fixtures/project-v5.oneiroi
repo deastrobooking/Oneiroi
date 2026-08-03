@@ -1,0 +1,82 @@
+{
+  "format": "oneiroi-project",
+  "version": 5,
+  "project_id": "33333333333333333333333333333333",
+  "takes": [
+    {
+      "take_id": "44444444444444444444444444444444",
+      "name": "V5 graph take",
+      "journal_file": "session-v5-graph.jsonl",
+      "created_unix_ms": 1785614400000
+    }
+  ],
+  "graph": {
+    "revision": 7,
+    "nodes": [
+      {"id": 1, "kind": "oneiroi.deck_source", "contract_version": 1, "label": "Deck A source", "parameters": {"deck_index": {"type": "integer", "value": 0}}},
+      {"id": 2, "kind": "oneiroi.deck_effects", "contract_version": 1, "label": "Deck A effects", "parameters": {}},
+      {"id": 3, "kind": "oneiroi.deck_source", "contract_version": 1, "label": "Deck B source", "parameters": {"deck_index": {"type": "integer", "value": 1}}},
+      {"id": 4, "kind": "oneiroi.deck_effects", "contract_version": 1, "label": "Deck B effects", "parameters": {}},
+      {"id": 5, "kind": "oneiroi.deck_source", "contract_version": 1, "label": "Deck C source", "parameters": {"deck_index": {"type": "integer", "value": 2}}},
+      {"id": 6, "kind": "oneiroi.deck_effects", "contract_version": 1, "label": "Deck C effects", "parameters": {}},
+      {"id": 7, "kind": "oneiroi.deck_source", "contract_version": 1, "label": "Deck D source", "parameters": {"deck_index": {"type": "integer", "value": 3}}},
+      {"id": 8, "kind": "oneiroi.deck_effects", "contract_version": 1, "label": "Deck D effects", "parameters": {}},
+      {"id": 20, "kind": "oneiroi.four_deck_mixer", "contract_version": 1, "label": "Four-deck mixer", "parameters": {}},
+      {"id": 21, "kind": "oneiroi.master_effects", "contract_version": 1, "label": "Master effects", "parameters": {}},
+      {"id": 22, "kind": "oneiroi.program_output", "contract_version": 1, "label": "Program output", "parameters": {}}
+    ],
+    "edges": [
+      {"from": {"node": 1, "port": "video"}, "to": {"node": 2, "port": "video"}},
+      {"from": {"node": 2, "port": "video"}, "to": {"node": 20, "port": "deck_a"}},
+      {"from": {"node": 3, "port": "video"}, "to": {"node": 4, "port": "video"}},
+      {"from": {"node": 4, "port": "video"}, "to": {"node": 20, "port": "deck_b"}},
+      {"from": {"node": 5, "port": "video"}, "to": {"node": 6, "port": "video"}},
+      {"from": {"node": 6, "port": "video"}, "to": {"node": 20, "port": "deck_c"}},
+      {"from": {"node": 7, "port": "video"}, "to": {"node": 8, "port": "video"}},
+      {"from": {"node": 8, "port": "video"}, "to": {"node": 20, "port": "deck_d"}},
+      {"from": {"node": 20, "port": "program"}, "to": {"node": 21, "port": "video"}},
+      {"from": {"node": 21, "port": "video"}, "to": {"node": 22, "port": "video"}}
+    ]
+  },
+  "random_seeds": {
+    "particles": 42,
+    "show.primary": 8675309
+  },
+  "settings": {
+    "bpm": 128.0,
+    "quantization": "bar",
+    "crossfader": 0.5,
+    "equal_power": true,
+    "master_opacity": 1.0,
+    "output": {"enabled": true, "fullscreen": false, "display_id": "stage-primary", "test_card": false, "identify": false, "composition_extent": [1920, 1080]},
+    "theme": {"preset": "ultraviolet", "accent": [255, 64, 180], "density": "cozy", "deck_layout": "auto"},
+    "midi_devices": ["v5-performance-controller"]
+  },
+  "decks": [
+    {
+      "clips": ["media/v5-a.mov", null, null, null, null, null, null, null],
+      "selected_slot": 0, "active_slot": 0, "level": 1.0, "bus": "left",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "bloom": 0.4, "bloom_threshold": 0.7, "bloom_radius": 0.3, "bloom_chroma": 0.2, "mirror": false}
+    },
+    {
+      "clips": [null, "media/v5-b.mov", null, null, null, null, null, null],
+      "selected_slot": 1, "active_slot": 1, "level": 0.9, "bus": "right",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 1.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "selected_slot": 0, "active_slot": null, "level": 1.0, "bus": "left",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    },
+    {
+      "clips": [null, null, null, null, null, null, null, null],
+      "selected_slot": 0, "active_slot": null, "level": 1.0, "bus": "right",
+      "transport": {"playing": true, "frozen": false, "end_mode": "loop", "speed": 1.0, "position": 0.0},
+      "effects": {"contrast": 1.0, "saturation": 1.0, "pixelate": 0.0, "luma_key": 0.0, "mirror": false}
+    }
+  ],
+  "midi_mappings": []
+}

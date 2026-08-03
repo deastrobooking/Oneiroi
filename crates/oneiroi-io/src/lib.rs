@@ -18,7 +18,7 @@ pub use project::{
     EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject,
     MasterEffectKindProject, MasterEffectSlotProject, MasterEffectsProject, MasterLfoProject,
     MasterModulationProject, MasterModulationRouteProject, MidiMappingProject, MidiMessageProject,
-    ModRouteProject, OutputProject, ProjectError, ProjectFile, ProjectSettings,
+    ModRouteProject, OutputProject, PROJECT_VERSION, ProjectError, ProjectFile, ProjectSettings,
     QuantizationProject, SourceModeProject, TakeMetadataProject, ThemeProject, TransformProject,
     TransportProject, autosave_path, load_project, new_project_id, recovery_is_newer,
     save_project_atomic,

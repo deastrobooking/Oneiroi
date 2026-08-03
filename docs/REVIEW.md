@@ -98,9 +98,10 @@ checkpoints.
 
 ### Project migration discipline
 
-Schema evolution reached v5 without checked-in golden files for every supported
-version. Before v6, add v1-v5 fixtures and prove both load-time migration and a
-current-schema save/reload for each fixture.
+Schema evolution reached v5 before golden project files were established. The
+repository now checks in v1-v5 fixtures and proves migration, current-schema
+save/reload and typed-graph compilation. Keep that fixture chain mandatory for
+every future schema revision.
 
 ### External integration and licensing
 
