@@ -4,6 +4,31 @@ This plan was revised after reviewing the application against the original MVP
 notes. The ordering is based on stage usability and dependency risk, not on
 which feature is most visually interesting.
 
+## Current execution sequence
+
+The August 2026 upgrade audit is being applied in this order:
+
+1. **Certify the baseline.** Keep strict Clippy, workspace tests, v1-v5 golden
+   projects and the release build green. Run the separate physical-hardware
+   matrix on the target show machine and record the binary hash.
+2. **Reduce app and UI coupling.** Route UI intent through one action boundary,
+   move output lifecycle ownership out of `State`, then split the remaining
+   toolbar, setup and diagnostics panels. The action boundary is implemented;
+   output ownership is next.
+3. **Improve live diagnostics.** Add frame-time history, decoder/upload timing,
+   dropped-frame visibility and actionable output-recovery detail.
+4. **Finish distribution readiness.** Add bundle metadata and permissions,
+   settle FFmpeg distribution obligations, then sign and notarize the macOS
+   build.
+5. **Deepen performance control.** Add MIDI feedback, clock/sync and controller
+   templates after the current input path passes hardware soak testing.
+6. **Expand graph/session authoring.** Continue from the compatibility graph to
+   general execution and live editing only after the show-critical seams above
+   are stable.
+7. **Add stage integrations last.** Treat NDI/Syphon/Spout, SMPTE/Link and
+   capture/recording as post-certification work so they do not destabilize the
+   core release path.
+
 ## Phase 0: establish a reliable baseline
 
 The completed feature slices have been preserved as intentional checkpoints.
@@ -16,7 +41,8 @@ Before another large subsystem lands:
    and live-camera playback. The checklist is implemented; redistributable
    fixture media still needs to be produced.
 4. Split application orchestration into focused output, media-session and
-   action modules; keep `main.rs` as event-loop wiring. (not started)
+   action modules; keep `main.rs` as event-loop wiring. (in progress: UI action
+   dispatch extracted; output lifecycle ownership is next)
 5. Complete the operator UI split. Clip grid, deck, master FX, MIDI and theme
    modules are implemented; toolbar/setup/diagnostics remain in `ui.rs`.
 6. Add checked-in golden v1-v5 projects and migration/save-reload tests before
