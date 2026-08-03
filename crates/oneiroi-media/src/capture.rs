@@ -40,6 +40,13 @@ impl CameraConfig {
         PathBuf::from(format!("{CAMERA_SCHEME}{}", self.device.id))
     }
 
+    /// AVFoundation defaults to yuv420p even though macOS cameras commonly
+    /// expose NV12 instead. Requesting NV12 explicitly avoids a noisy fallback
+    /// and keeps the capture format predictable.
+    pub fn requested_pixel_format(&self) -> Option<&'static str> {
+        (self.device.backend == "avfoundation").then_some("nv12")
+    }
+
     pub fn metadata(&self) -> MovieMetadata {
         MovieMetadata {
             path: self.virtual_path(),
@@ -167,6 +174,7 @@ mod tests {
             requested_fps: Some(30),
         };
         assert_eq!(config.input_name(), "0:none");
+        assert_eq!(config.requested_pixel_format(), Some("nv12"));
         assert_eq!(config.virtual_path(), PathBuf::from("camera://0"));
         assert!(config.metadata().duration.is_none());
     }
@@ -183,6 +191,7 @@ mod tests {
             requested_fps: None,
         };
         assert_eq!(config.input_name(), config.device.id);
+        assert_eq!(config.requested_pixel_format(), None);
     }
 
     #[test]

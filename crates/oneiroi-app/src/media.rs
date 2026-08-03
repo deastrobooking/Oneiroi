@@ -505,7 +505,7 @@ impl State {
         }
         if !matches!(self.mixer.deck(deck).state, DeckState::Live(_)) {
             self.camera_status =
-                format!("Switch Deck {} to a camera before recording", deck.label());
+                format!("Connect Deck {} to a camera before recording", deck.label());
             return;
         }
         let occupied = self.clips.slot(address).is_some_and(|slot| {

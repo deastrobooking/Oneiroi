@@ -213,7 +213,7 @@ displays.
 2. Choose an AVFoundation device in the **Deck input** strip below the clip
    grid.
 3. Set the requested width, height and frame rate.
-4. Click **Switch Deck**. The same controls remain available in Show Mode.
+4. Click **Video**. The same controls remain available in Show Mode.
 5. Click **Record clip**, then **Stop**. Oneiroi finalizes the movie in the
    workspace `recordings` directory and installs it in the selected slot after
    probing and thumbnail generation complete.

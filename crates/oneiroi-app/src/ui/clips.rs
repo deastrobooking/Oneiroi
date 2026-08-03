@@ -326,10 +326,7 @@ pub(super) fn draw_clip_grid(
         }
         let can_switch = !state.camera_device_id.trim().is_empty();
         if ui
-            .add_enabled(
-                can_switch,
-                egui::Button::new(format!("Switch Deck {}", deck.label())),
-            )
+            .add_enabled(can_switch, egui::Button::new("Video"))
             .on_hover_text("Use the selected camera as this deck's live input")
             .clicked()
         {
@@ -376,7 +373,7 @@ pub(super) fn draw_clip_grid(
                         .fill(palette.control_tint(palette.danger, 0.28)),
                 )
                 .on_hover_text(if !live {
-                    "Switch this deck to a camera first"
+                    "Connect this deck to a camera first"
                 } else if selected_occupied {
                     "Select an empty clip slot to record into"
                 } else {

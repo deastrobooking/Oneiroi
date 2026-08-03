@@ -159,6 +159,9 @@ impl FfmpegVideoDecoder {
         options.set("fflags", "nobuffer");
         options.set("flags", "low_delay");
         options.set("rtbufsize", "16M");
+        if let Some(pixel_format) = config.requested_pixel_format() {
+            options.set("pixel_format", pixel_format);
+        }
         if let Some([width, height]) = config.requested_extent {
             options.set("video_size", &format!("{width}x{height}"));
         }
