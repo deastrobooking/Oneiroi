@@ -59,7 +59,11 @@ pub struct UiState {
     pub master_effects: MasterEffectChain,
     pub effect_manifest_path: String,
     pub effect_reload_status: String,
+    /// Packages executable by the current master-v1 runtime.
     pub effect_packages: Vec<EffectDescriptor>,
+    /// Validated deck-v1 catalog entries. Selection stays hidden until the
+    /// independently executable deck branch is implemented.
+    pub deck_effect_packages: Vec<EffectDescriptor>,
     pub effect_registry_status: String,
     pub master_modulation: MasterModulation,
     pub effects: [DeckEffects; 4],
@@ -119,6 +123,7 @@ impl Default for UiState {
             effect_manifest_path: "effects/master-effects/effect.json".to_owned(),
             effect_reload_status: "Built-in master effect pipeline".to_owned(),
             effect_packages: Vec::new(),
+            deck_effect_packages: Vec::new(),
             effect_registry_status: "Effect registry not scanned".to_owned(),
             master_modulation: MasterModulation::default(),
             effects: [DeckEffects::default(); 4],

@@ -416,13 +416,31 @@ fn rejected_effect_reload_preserves_the_last_good_pipeline() {
 }
 
 #[test]
-fn registered_custom_effect_compiles_and_runs_through_the_master_slot() {
+fn targeted_v2_master_effect_compiles_and_runs_through_the_master_slot() {
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter; skipping");
         return;
     };
-    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../effects/chromatic-split/effect.json");
+    let bundled =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects/chromatic-split");
+    let directory = std::env::temp_dir().join(format!(
+        "oneiroi-v2-master-effect-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&directory).unwrap();
+    fs::copy(
+        bundled.join("chromatic_split.wgsl"),
+        directory.join("chromatic_split.wgsl"),
+    )
+    .unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(bundled.join("effect.json")).unwrap()).unwrap();
+    manifest["version"] = serde_json::json!(2);
+    manifest["role"] = serde_json::json!("effect");
+    manifest["targets"] = serde_json::json!(["master"]);
+    manifest["abi"] = serde_json::json!("master-v1");
+    let manifest_path = directory.join("effect.json");
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     let program = ProgramTarget::new(&device, [SIZE, SIZE]);
     let presenter = ProgramPresenter::new(&device, &program, PROGRAM_FORMAT);
     let mut processor = MasterEffectProcessor::new(&device, &program);
@@ -472,6 +490,147 @@ fn registered_custom_effect_compiles_and_runs_through_the_master_slot() {
         &chain,
     );
     assert_eq!(color, [0, 255, 0, 255]);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn valid_target_change_retires_the_old_master_pipeline() {
+    let Some((device, _queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let bundled =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects/chromatic-split");
+    let directory = std::env::temp_dir().join(format!(
+        "oneiroi-v2-deck-effect-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&directory).unwrap();
+    fs::copy(
+        bundled.join("chromatic_split.wgsl"),
+        directory.join("chromatic_split.wgsl"),
+    )
+    .unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(bundled.join("effect.json")).unwrap()).unwrap();
+    manifest["version"] = serde_json::json!(2);
+    manifest["role"] = serde_json::json!("effect");
+    manifest["targets"] = serde_json::json!(["master"]);
+    manifest["abi"] = serde_json::json!("master-v1");
+    let manifest_path = directory.join("effect.json");
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+    let program = ProgramTarget::new(&device, [SIZE, SIZE]);
+    let mut processor = MasterEffectProcessor::new(&device, &program);
+    processor.watch_effect_manifest(manifest_path.clone());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !processor.custom_effect_loaded("chromatic-split") && Instant::now() < deadline {
+        processor.poll_effect_reload();
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        processor.custom_effect_loaded("chromatic-split"),
+        "{}",
+        processor.reload_status()
+    );
+
+    manifest["targets"] = serde_json::json!(["deck"]);
+    manifest["abi"] = serde_json::json!("deck-v1");
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    processor.watch_effect_manifest(manifest_path);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !processor.reload_status().contains("using neutral fallback") && Instant::now() < deadline
+    {
+        processor.poll_effect_reload();
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(!processor.custom_effect_loaded("chromatic-split"));
+    assert!(
+        processor
+            .reload_status()
+            .contains("does not target the master-v1"),
+        "{}",
+        processor.reload_status()
+    );
+    assert!(processor.reload_status().contains("using neutral fallback"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn valid_role_change_retires_the_old_selectable_pipeline() {
+    let Some((device, _queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let bundled =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects/chromatic-split");
+    let directory = std::env::temp_dir().join(format!(
+        "oneiroi-v2-role-change-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&directory).unwrap();
+    fs::copy(
+        bundled.join("chromatic_split.wgsl"),
+        directory.join("chromatic_split.wgsl"),
+    )
+    .unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(bundled.join("effect.json")).unwrap()).unwrap();
+    manifest["version"] = serde_json::json!(2);
+    manifest["role"] = serde_json::json!("effect");
+    manifest["targets"] = serde_json::json!(["master"]);
+    manifest["abi"] = serde_json::json!("master-v1");
+    let manifest_path = directory.join("effect.json");
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+    let program = ProgramTarget::new(&device, [SIZE, SIZE]);
+    let mut processor = MasterEffectProcessor::new(&device, &program);
+    processor.watch_effect_manifest(manifest_path.clone());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !processor.custom_effect_loaded("chromatic-split") && Instant::now() < deadline {
+        processor.poll_effect_reload();
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(processor.custom_effect_loaded("chromatic-split"));
+
+    manifest["version"] = serde_json::json!(1);
+    manifest["role"] = serde_json::json!("master_processor");
+    manifest.as_object_mut().unwrap().remove("targets");
+    manifest.as_object_mut().unwrap().remove("abi");
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    processor.watch_effect_manifest(manifest_path.clone());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while processor.custom_effect_loaded("chromatic-split") && Instant::now() < deadline {
+        processor.poll_effect_reload();
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(!processor.custom_effect_loaded("chromatic-split"));
+
+    manifest["version"] = serde_json::json!(2);
+    manifest["role"] = serde_json::json!("effect");
+    manifest["targets"] = serde_json::json!(["deck"]);
+    manifest["abi"] = serde_json::json!("deck-v1");
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    processor.watch_effect_manifest(manifest_path);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !processor
+        .reload_status()
+        .contains("using built-in processor")
+        && Instant::now() < deadline
+    {
+        processor.poll_effect_reload();
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        processor
+            .reload_status()
+            .contains("using built-in processor"),
+        "{}",
+        processor.reload_status()
+    );
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

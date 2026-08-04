@@ -12,8 +12,9 @@ use bytemuck::{Pod, Zeroable};
 use oneiroi_core::effect_parameter_key;
 
 use crate::{
-    EffectHistoryResource, EffectManifest, EffectPackageRole, EffectParameterSchema,
-    ValidatedEffectPackage, load_effect_package, mixer::LfoWaveform,
+    EffectHistoryResource, EffectManifest, EffectPackageAbi, EffectPackageRole,
+    EffectPackageTarget, EffectParameterSchema, ValidatedEffectPackage, load_effect_package,
+    mixer::LfoWaveform,
 };
 
 pub const PROGRAM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -378,7 +379,27 @@ struct CompiledEffectPipeline {
 struct EffectReloadResult {
     generation: u64,
     path: PathBuf,
-    result: Result<CompiledEffectPipeline, String>,
+    result: Result<CompiledEffectPipeline, EffectReloadFailure>,
+}
+
+struct EffectReloadFailure {
+    message: String,
+    /// A syntactically and semantically valid package that intentionally moved
+    /// away from the master target must retire the old master pipeline at the
+    /// same path. Invalid edits continue to use last-known-good.
+    retire_custom_pipeline: bool,
+}
+
+struct EffectReloadDiagnostic {
+    message: String,
+    fallback: EffectReloadFallback,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum EffectReloadFallback {
+    LastKnownGood,
+    BuiltInProcessor,
+    Neutral,
 }
 
 struct EffectReloadWorker {
@@ -413,7 +434,9 @@ impl Drop for EffectReloadWorker {
 }
 
 pub struct MasterEffectProcessor {
+    built_in_pipeline: wgpu::RenderPipeline,
     pipeline: wgpu::RenderPipeline,
+    processor_manifest_path: Option<PathBuf>,
     custom_pipelines: HashMap<String, RegisteredEffectPipeline>,
     watched_effect_paths: HashSet<PathBuf>,
     watch_generation: u64,
@@ -424,7 +447,7 @@ pub struct MasterEffectProcessor {
     custom_history_identity: [u64; MASTER_EFFECT_SLOTS],
     reload_worker: EffectReloadWorker,
     reload_status: String,
-    reload_errors: HashMap<PathBuf, String>,
+    reload_errors: HashMap<PathBuf, EffectReloadDiagnostic>,
 }
 
 struct RegisteredEffectPipeline {
@@ -465,7 +488,7 @@ impl MasterEffectProcessor {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = create_master_effect_pipeline(
+        let built_in_pipeline = create_master_effect_pipeline(
             device,
             &pipeline_layout,
             &shader,
@@ -542,7 +565,9 @@ impl MasterEffectProcessor {
             ),
         ];
         Self {
-            pipeline,
+            pipeline: built_in_pipeline.clone(),
+            built_in_pipeline,
+            processor_manifest_path: None,
             custom_pipelines: HashMap::new(),
             watched_effect_paths: HashSet::new(),
             watch_generation: 0,
@@ -588,6 +613,14 @@ impl MasterEffectProcessor {
         self.custom_pipelines
             .retain(|_, effect| watched.contains(&effect.manifest_path));
         self.reload_errors.retain(|path, _| watched.contains(path));
+        if self
+            .processor_manifest_path
+            .as_ref()
+            .is_some_and(|path| !watched.contains(path))
+        {
+            self.pipeline = self.built_in_pipeline.clone();
+            self.processor_manifest_path = None;
+        }
         self.watched_effect_paths = watched;
         if self.custom_pipelines.len() != previous_count {
             self.custom_history_valid = [false; MASTER_EFFECT_SLOTS];
@@ -619,9 +652,21 @@ impl MasterEffectProcessor {
                 Ok(compiled) => {
                     self.reload_errors.remove(&path);
                     if compiled.role == EffectPackageRole::MasterProcessor {
+                        let previous_count = self.custom_pipelines.len();
+                        self.custom_pipelines
+                            .retain(|_, effect| effect.manifest_path != path);
                         let mut pipelines = compiled.pipelines;
                         self.pipeline = pipelines.remove(0);
+                        self.processor_manifest_path = Some(path.clone());
+                        if self.custom_pipelines.len() != previous_count {
+                            self.custom_history_valid = [false; MASTER_EFFECT_SLOTS];
+                            self.custom_history_identity = [0; MASTER_EFFECT_SLOTS];
+                        }
                     } else {
+                        if self.processor_manifest_path.as_ref() == Some(&path) {
+                            self.pipeline = self.built_in_pipeline.clone();
+                            self.processor_manifest_path = None;
+                        }
                         self.custom_pipelines.retain(|id, effect| {
                             effect.manifest_path != path || id == &compiled.id
                         });
@@ -640,7 +685,41 @@ impl MasterEffectProcessor {
                     loaded.push(format!("{} · {:016x}", compiled.name, compiled.fingerprint));
                 }
                 Err(error) => {
-                    self.reload_errors.insert(path, error);
+                    let had_custom_pipeline = self
+                        .custom_pipelines
+                        .values()
+                        .any(|effect| effect.manifest_path == path);
+                    let had_processor_pipeline =
+                        self.processor_manifest_path.as_ref() == Some(&path);
+                    let fallback = if !error.retire_custom_pipeline
+                        && (had_custom_pipeline || had_processor_pipeline)
+                    {
+                        EffectReloadFallback::LastKnownGood
+                    } else if had_processor_pipeline {
+                        EffectReloadFallback::BuiltInProcessor
+                    } else {
+                        EffectReloadFallback::Neutral
+                    };
+                    if error.retire_custom_pipeline {
+                        let previous_count = self.custom_pipelines.len();
+                        self.custom_pipelines
+                            .retain(|_, effect| effect.manifest_path != path);
+                        if self.custom_pipelines.len() != previous_count {
+                            self.custom_history_valid = [false; MASTER_EFFECT_SLOTS];
+                            self.custom_history_identity = [0; MASTER_EFFECT_SLOTS];
+                        }
+                        if self.processor_manifest_path.as_ref() == Some(&path) {
+                            self.pipeline = self.built_in_pipeline.clone();
+                            self.processor_manifest_path = None;
+                        }
+                    }
+                    self.reload_errors.insert(
+                        path,
+                        EffectReloadDiagnostic {
+                            message: error.message,
+                            fallback,
+                        },
+                    );
                 }
             }
         }
@@ -648,13 +727,30 @@ impl MasterEffectProcessor {
             let mut rejected: Vec<_> = self
                 .reload_errors
                 .iter()
-                .map(|(path, error)| format!("{} · {error}", path.display()))
+                .map(|(path, error)| format!("{} · {}", path.display(), error.message))
                 .collect();
             rejected.sort();
-            self.reload_status = format!(
-                "Reload rejected · {} · using last known good",
-                rejected.join(" · ")
-            );
+            let mut fallbacks = Vec::new();
+            for (kind, label) in [
+                (EffectReloadFallback::LastKnownGood, "last known good"),
+                (EffectReloadFallback::BuiltInProcessor, "built-in processor"),
+                (EffectReloadFallback::Neutral, "neutral fallback"),
+            ] {
+                if self
+                    .reload_errors
+                    .values()
+                    .any(|error| error.fallback == kind)
+                {
+                    fallbacks.push(label);
+                }
+            }
+            let fallback = if fallbacks.len() == 1 {
+                format!("using {}", fallbacks[0])
+            } else {
+                format!("using {} as applicable", fallbacks.join(" / "))
+            };
+            self.reload_status =
+                format!("Reload rejected · {} · {fallback}", rejected.join(" · "),);
         } else if changed && !loaded.is_empty() {
             self.reload_status = format!("Loaded {}", loaded.join(" · "));
         }
@@ -1127,9 +1223,29 @@ fn compile_effect_package(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     manifest_path: &Path,
-) -> Result<CompiledEffectPipeline, String> {
-    let package = load_effect_package(manifest_path).map_err(|error| error.to_string())?;
-    compile_validated_effect_package(device, layout, package)
+) -> Result<CompiledEffectPipeline, EffectReloadFailure> {
+    let package = load_effect_package(manifest_path).map_err(|error| EffectReloadFailure {
+        message: error.to_string(),
+        retire_custom_pipeline: false,
+    })?;
+    let master_compatible = package.manifest.role == EffectPackageRole::MasterProcessor
+        || (package.manifest.resolved_abi() == EffectPackageAbi::MasterV1
+            && package
+                .manifest
+                .resolved_targets()
+                .contains(&EffectPackageTarget::Master));
+    if !master_compatible {
+        return Err(EffectReloadFailure {
+            message: "package does not target the master-v1 shader runtime".to_owned(),
+            retire_custom_pipeline: true,
+        });
+    }
+    compile_validated_effect_package(device, layout, package).map_err(|message| {
+        EffectReloadFailure {
+            message,
+            retire_custom_pipeline: false,
+        }
+    })
 }
 
 fn compile_validated_effect_package(

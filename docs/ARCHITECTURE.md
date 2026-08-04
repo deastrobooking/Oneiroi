@@ -21,7 +21,7 @@ clip metadata                    bounded frame schedulers
                GPU upload / texture reuse
                          |
                          v
-              per-deck effects + modulation
+       fused built-in deck groups + modulation
                          |
                          v
               linear-light four-deck mixer
@@ -72,7 +72,8 @@ the same acceptance boundary.
 
 The graph and session crates remain device-neutral. See
 [Graph and session runtime](GRAPH_RUNTIME.md) for the compatibility boundary
-and the next lowering steps.
+and the next lowering steps. [Shader system](SHADER_SYSTEM.md) defines the
+current package boundary and the measured path toward per-deck packages.
 
 ## Media paths
 
@@ -243,28 +244,32 @@ The render thread receives only resolved values. Base knobs are not overwritten
 by modulation. Routes are bipolar and may be matrix-only or combined with an
 LFO's direct destination.
 
-Each deck owns three explicit effect slots containing the Geometry, Color +
-levels and Stylize + key groups exactly once. The default
-Geometry → Color → Stylize order reproduces the legacy fixed shader. Slot order,
-bypass and wet mix are project state; older projects receive that canonical
-order during deserialization. Modulation still resolves named parameters
-before slot evaluation, so reordering a group does not invalidate MIDI or
-matrix targets.
+Each deck owns three persisted built-in effect groups containing Geometry,
+Color + Levels and Stylize + Key exactly once. The default Geometry → Color →
+Stylize display order reproduces the legacy controls. Geometry is always the
+bounded UV prepass regardless of its displayed row; only Color and Stylize
+change their relative pixel-evaluation order. Row order, bypass and wet mix are
+project state, and older projects receive the canonical order during
+deserialization. Modulation resolves named parameters before group evaluation,
+so reordering a group does not invalidate MIDI or matrix targets.
 
-The current implementation retains a single compositor pass. Geometry wet mix
-interpolates transformed UVs, while color and stylize wet mix interpolate
-their RGBA stage result. Reordering Color and Stylize therefore changes their
-actual evaluation order. Blur and feedback require sampled intermediate
-textures and will introduce the ping-pong multipass boundary rather than
-pretending to be point effects inside this pass.
+The current deck implementation remains fused into a single compositor pass;
+these built-in groups are not independently executable shader packages.
+Geometry wet mix interpolates transformed UVs, while Color and Stylize wet mix
+interpolate their RGBA stage result. The planned deck-package path will
+materialize only an active deck's processed layer after these groups and before
+bus blending. The inactive path must remain the existing bit-identical fused
+pass. See [Shader system](SHADER_SYSTEM.md) for that staged extraction.
 
-The master chain supplies that first multipass boundary. Its two reorderable
-slots accept Empty, Separable blur or Feedback / trails. When neither slot is active,
-the compositor renders directly into the final program texture and the
-postprocessor records no passes. When active, composition renders into a
-dedicated input followed by horizontal and vertical blur passes. An inactive
-slot inside an active chain performs a copy into the next fixed stage so slot
-order remains deterministic.
+The master chain supplies the current multipass boundary. Its two reorderable
+slots accept Empty, Separable blur, Feedback / trails or a Custom package. When
+neither slot is active, the compositor renders directly into the final program
+texture and the postprocessor records no passes. With an active chain,
+composition first renders into a dedicated input. Blur uses horizontal and
+vertical passes, Feedback uses the bounded history target, and a custom package
+uses its validated one- or two-pass sequence. An inactive slot inside an active
+chain performs a copy into the next fixed stage so slot order remains
+deterministic.
 
 Feedback samples one previous final program frame, blends it toward the current
 slot input using the persisted 0–0.99 persistence value, and applies the
@@ -278,14 +283,16 @@ period without active feedback. Master freeze skips both composition and
 postprocessing, retaining the final texture and history exactly; blackout
 overrides freeze, renders black immediately and invalidates history.
 
-Composition resize allocates exactly seven program-resolution RGBA8-sRGB
-textures: composition input, one shared horizontal scratch target, one ping
-target, the built-in feedback history, two custom slot histories and final
-output. Both slots reuse scratch/ping and never allocate during a frame.
-Relative to the original final target, bounded additional capacity is
-`6 × width × height × 4` bytes: about 47.5 MiB at 1080p or 189.8 MiB at UHD.
-Each pass has its own uniform buffer, preventing later queue writes from
-changing parameters of earlier encoded passes.
+The current SDR master target allocates exactly seven program-resolution
+RGBA8-sRGB textures at composition resize: composition input, one shared
+horizontal scratch target, one ping target, the built-in feedback history, two
+custom slot histories and final output. Both slots reuse scratch/ping and never
+allocate during a frame. Relative to the original final target, bounded
+additional capacity is `6 × width × height × 4` bytes: about 47.5 MiB at 1080p
+or 189.8 MiB at UHD. These figures describe the current SDR baseline, not the
+planned deck targets or optional HDR tier. Each pass has its own uniform buffer,
+preventing later queue writes from changing parameters of earlier encoded
+passes.
 
 ### Effect package validation and reload
 
@@ -305,12 +312,21 @@ update operator diagnostics while the existing pipeline remains active. Thus
 editing or breaking a watched package cannot replace the last-known-good
 program path.
 
-The bundled processor package is `effects/master-effects/effect.json`.
-Immediate child packages under `effects/` with role `master_effect` are
-registered by ID and appear as Custom package choices in either master slot.
-Their sliders are generated from the validated schema. Values are stored by
-parameter ID, then packed into the fixed 32-float uniform array in declaration
-order, so schema reordering does not silently exchange saved controls.
+The explicit **Refresh registry** action still performs its discovery and
+schema/WGSL validation scan synchronously before handing registered packages
+to that worker. `SHADER_SYSTEM.md` tracks migration of the manual scan to a
+bounded, generation-tagged worker as the remaining S0 realtime gate.
+
+The bundled processor manifest is resolved from the trusted shipped effect root
+rather than from the process launch directory. Immediate child packages under
+each resolved resource root that target the master runtime are registered by ID
+and appear as Custom package choices in either master slot. That includes
+manifest-v1 `master_effect` packages and manifest-v2 `effect` packages declaring
+target `master` with ABI `master-v1`. Resource-root precedence is deterministic;
+a lower-priority duplicate ID is excluded and reported rather than replacing
+the first package. Generated controls store values by parameter ID, then pack
+them into the fixed 32-float uniform array in declaration order, so schema
+reordering does not silently exchange saved controls.
 
 Each registered effect declares one or two fragment passes in the existing
 two-slot graph. A one-pass effect renders directly to the slot output. For two
@@ -358,11 +374,12 @@ Bus B accumulator. Only after both accumulators are complete are the selected
 linear or equal-power gains applied. This prevents a layer on one bus from
 changing the internal result of the other bus.
 
-Each incoming layer selects a blend function against the straight-color
+Each incoming layer selects one of 35 blend functions against the straight-color
 backdrop, then uses the source and backdrop alpha terms to produce a
-premultiplied bus accumulator. Normal, Add, Screen, Multiply, Difference,
-Lighten, Darken and Overlay therefore share correct source-over coverage and
-operate in linear light.
+premultiplied bus accumulator. Standard, Contrast, Component and Oneiroi modes
+therefore share correct source-over coverage and operate in linear light. The
+separable and non-separable standard modes follow the W3C compositing formulas;
+the nine Oneiroi modes retain the same alpha contract.
 
 Before writing mixer globals, the CPU resolves deck visibility. If any Solo is
 active, only soloed decks remain eligible; Bypass then excludes its deck even
@@ -379,8 +396,10 @@ restricts the visible layer region, Fill restricts the sampled source region,
 and Stretch maps directly. Stretch is the compatibility default for projects
 saved before source modes existed.
 
-The compositor renders once into a fixed-resolution sRGB program texture.
-Presentation passes sample that texture into the operator and output surfaces.
+The current SDR compositor renders once into a fixed-resolution sRGB program
+texture. Presentation passes sample that texture into the operator and output
+surfaces. A planned RGBA16Float tier applies only to internal intermediates;
+final presentation remains sRGB.
 Their small uniform also selects calibration modes: a generated color-bar/grid
 test card and a magenta identification frame/crosshair. Display discovery and
 window placement remain in `oneiroi-app`; the render crate has no winit types.

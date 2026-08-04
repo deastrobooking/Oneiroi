@@ -17,15 +17,18 @@ The August 2026 upgrade audit is being applied in this order:
    lifecycle owner, and remaining UI panel splits are implemented.
 3. **Improve live diagnostics.** Add frame-time history, decoder/upload timing,
    dropped-frame visibility and actionable output-recovery detail.
-4. **Finish distribution readiness.** Add bundle metadata and permissions,
+4. **Modernize the shader system.** Establish the target-aware package
+   contract, selectively unfuse deck branches, then ship one bounded package
+   slot per deck before pursuing HDR, compute or import compatibility.
+5. **Finish distribution readiness.** Add bundle metadata and permissions,
    settle FFmpeg distribution obligations, then sign and notarize the macOS
    build.
-5. **Deepen performance control.** Add MIDI feedback, clock/sync and controller
+6. **Deepen performance control.** Add MIDI feedback, clock/sync and controller
    templates after the current input path passes hardware soak testing.
-6. **Expand graph/session authoring.** Continue from the compatibility graph to
+7. **Expand graph/session authoring.** Continue from the compatibility graph to
    general execution and live editing only after the show-critical seams above
    are stable.
-7. **Add stage integrations last.** Treat NDI/Syphon/Spout, SMPTE/Link and
+8. **Add stage integrations last.** Treat NDI/Syphon/Spout, SMPTE/Link and
    capture/recording as post-certification work so they do not destabilize the
    core release path.
 
@@ -209,8 +212,9 @@ Acceptance criteria:
 
 ## Phase 6: effect-chain architecture
 
-1. Replace the monolithic fixed effect struct with three reorderable deck slots
-   and two master slots. (implemented)
+1. Replace the monolithic fixed effect struct with three persisted deck-group
+   controls and two reorderable master slots. (implemented; Geometry remains
+   the UV prepass while Color and Stylize follow their relative order)
 2. Add common bypass, dry/wet, reset and preset behavior. (implemented for
    deck slots with five factory presets)
 3. Implement separable blur. (implemented in the master chain with fixed
@@ -229,39 +233,73 @@ Acceptance criteria:
 8. Route custom controls through modulation and MIDI without positional
    identity. (implemented with stable package/parameter keys, three master
    LFOs, eight audio/beat/bar-capable routes and generated MIDI learn controls)
-9. Add a bounded declarative multipass package graph. (implemented with one or
-   two fragment passes, atomic pipeline-set reload, fixed scratch/ping reuse,
-   pass index/count uniforms and bundled Spectral Echo reference)
+9. Add a bounded declarative multipass sequence. (implemented with one or two
+   fragment passes, atomic pipeline-set reload, fixed scratch/ping reuse, pass
+   index/count uniforms and bundled Spectral Echo reference; this is not yet a
+   branching package graph)
 10. Add a safely budgeted temporal package resource. (implemented as one fixed
     previous-slot-output history texture per master slot, with validity
     signaling, deterministic resets and bundled Temporal Melt reference)
 
-### FX upgrade queue from the August 2026 audit
+### Shader-system upgrade program
 
-1. Make package reload a fully atomic last-known-good transaction across
-   manifest, shaders and multipass resources, with the rejected generation and
-   compile error visible beside the affected slot.
-2. Discover bundled and user-installed effect packages from explicit resource
-   roots so signed release bundles do not depend on the launch directory.
-   (implemented for development, executable-adjacent, macOS bundle, per-user
-   and `ONEIROI_EFFECT_PATH` roots)
-3. Expose the full master rack in Show Mode with compact slot cards, bypass,
-   wet/dry and a one-click path into advanced parameters.
-4. Add per-pass GPU timing and inactive-bus culling before expanding the
-   multipass budget.
-5. Replace positional custom-effect values with a typed parameter registry and
-   migrations keyed by package and parameter identity.
-6. Persist package fingerprints in projects and surface missing or changed
-   packages before a show.
-7. Decide whether deck effects should remain a fixed low-latency topology or
-   adopt the bounded package graph; prototype and measure before changing the
-   live deck ABI.
+The per-deck package decision is made. The canonical contracts, terminology,
+memory gates and detailed acceptance criteria live in
+[`SHADER_SYSTEM.md`](SHADER_SYSTEM.md).
+
+Current foundation:
+
+1. Atomic package-set compilation, generation-tagged result rejection and
+   last-known-good retention are implemented. Slot-local rejected-generation
+   and compile diagnostics remain.
+2. Launch-independent development, executable-adjacent, macOS bundle,
+   active-workspace, per-user and `ONEIROI_EFFECT_PATH` discovery is
+   implemented with deterministic duplicate handling.
+3. Compact Show Mode master cards with identity, bypass and wet controls are
+   implemented. A protected path to advanced parameters remains.
+4. Stable package/parameter identity for persistence, modulation and MIDI is
+   implemented. Richer typed parameter storage and migrations remain.
+5. Real-GPU coverage renders all three algorithmic packages and proves
+   last-known-good reload plus effect-before-blend layer behavior.
+
+Delivery order:
+
+1. **S0 — Contract/tooling foundation.** Target-aware catalog partitioning and
+   `wgsl-analyzer` guidance are implemented. Move manual registry discovery to
+   a bounded generation-tagged worker, retain ABI/layout conformance tests, and
+   compare one binding-generation approach against `encase` before choosing
+   either.
+2. **S1 — Per-deck precomposition seam.** Conditionally materialize only a
+   package-bearing deck after its built-in groups and preserve the current
+   bit-identical fused path when no deck package is active.
+3. **S2 — One `deck-v1` slot per deck.** Start with a stateless one-pass
+   fragment contract, stable project/control identity, neutral fallback,
+   Show Mode controls, alpha tests, culling and recorded 1080p/UHD budgets.
+4. **S3 — Versioned shared WGSL modules.** Prototype an allow-listed
+   `oneiroi-std` namespace and fingerprint every transitive import.
+5. **S4 — Typed N-pass fragment graph.** Declare pass edges, formats,
+   resolutions, lifetimes and fallback through the graph compiler.
+6. **S5 — Optional HDR intermediates.** Gate RGBA16Float by adapter support,
+   memory tier, unclamped shader audit, tone mapping and deterministic SDR
+   fallback.
+7. **S6 — Compute/stateful effects.** Require typed storage resources, dispatch
+   ceilings, reset semantics and capability checks.
+8. **S7 — Offline importers.** Convert ISF first and a narrower ShaderToy
+   subset later into validated native packages; Naga's GLSL parser alone is
+   not a compatibility layer.
+
+Before S2 becomes operator-selectable, add per-pass GPU timing, invisible-deck
+culling and explicit incremental texture accounting. Package fingerprints in
+projects and missing/changed-package preflight remain part of the S2 release
+gate.
 
 Acceptance criteria:
 
 - Invalid effect code cannot blank program output.
 - Reordering and bypassing are generation-safe and allocation-bounded.
 - Feedback history resets predictably on source replacement and project load.
+- Per-deck dry/bypass is bit-exact, package alpha is preserved and a package
+  executes before every layer blend mode.
 
 ## Phase 7: release hardening
 

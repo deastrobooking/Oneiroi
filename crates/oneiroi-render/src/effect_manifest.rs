@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const EFFECT_MANIFEST_FORMAT: &str = "oneiroi-effect";
-pub const EFFECT_MANIFEST_VERSION: u32 = 1;
+pub const EFFECT_MANIFEST_VERSION: u32 = 2;
+const MIN_EFFECT_MANIFEST_VERSION: u32 = 1;
 const MAX_PARAMETERS: usize = 32;
 const MAX_PACKAGES: usize = 128;
 pub const MAX_EFFECT_PASSES: usize = 2;
@@ -24,6 +25,14 @@ pub struct EffectManifest {
     pub description: String,
     #[serde(default)]
     pub role: EffectPackageRole,
+    /// Explicit placement metadata introduced by manifest v2. Manifest v1 is
+    /// implicitly `master` and remains source compatible.
+    #[serde(default)]
+    pub targets: Vec<EffectPackageTarget>,
+    /// Explicit shader binding contract introduced by manifest v2. Manifest v1
+    /// implicitly uses `master-v1` when this field is absent.
+    #[serde(default)]
+    pub abi: Option<EffectPackageAbi>,
     pub shader: PathBuf,
     #[serde(default = "default_vertex_entry")]
     pub vertex_entry: String,
@@ -49,6 +58,18 @@ impl EffectManifest {
                 .collect()
         }
     }
+
+    pub fn resolved_targets(&self) -> Vec<EffectPackageTarget> {
+        if self.version == 1 && self.role == EffectPackageRole::MasterEffect {
+            vec![EffectPackageTarget::Master]
+        } else {
+            self.targets.clone()
+        }
+    }
+
+    pub fn resolved_abi(&self) -> EffectPackageAbi {
+        self.abi.unwrap_or(EffectPackageAbi::MasterV1)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -57,6 +78,24 @@ pub enum EffectPackageRole {
     #[default]
     MasterEffect,
     MasterProcessor,
+    Effect,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectPackageTarget {
+    #[default]
+    Master,
+    Deck,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum EffectPackageAbi {
+    #[default]
+    #[serde(rename = "master-v1")]
+    MasterV1,
+    #[serde(rename = "deck-v1")]
+    DeckV1,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -132,10 +171,18 @@ pub struct EffectDescriptor {
     pub name: String,
     pub description: String,
     pub manifest_path: PathBuf,
+    pub targets: Vec<EffectPackageTarget>,
+    pub abi: EffectPackageAbi,
     pub parameters: Vec<EffectParameterSchema>,
     pub pass_count: usize,
     pub history: EffectHistoryResource,
     pub presets: Vec<EffectPresetSchema>,
+}
+
+impl EffectDescriptor {
+    pub fn supports_target(&self, target: EffectPackageTarget) -> bool {
+        self.targets.contains(&target)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -241,7 +288,7 @@ pub fn discover_effect_packages(root: impl AsRef<Path>) -> EffectRegistry {
     for path in manifest_paths {
         match load_effect_package(&path) {
             Ok(package) => {
-                if package.manifest.role != EffectPackageRole::MasterEffect {
+                if package.manifest.role == EffectPackageRole::MasterProcessor {
                     continue;
                 }
                 if !ids.insert(package.manifest.id.clone()) {
@@ -254,11 +301,15 @@ pub fn discover_effect_packages(root: impl AsRef<Path>) -> EffectRegistry {
                 }
                 let pass_count = package.manifest.pass_entries().len();
                 let history = package.manifest.resources.history;
+                let targets = package.manifest.resolved_targets();
+                let abi = package.manifest.resolved_abi();
                 registry.effects.push(EffectDescriptor {
                     id: package.manifest.id,
                     name: package.manifest.name,
                     description: package.manifest.description,
                     manifest_path: path,
+                    targets,
+                    abi,
                     parameters: package.manifest.parameters,
                     pass_count,
                     history,
@@ -283,11 +334,52 @@ fn validate_manifest(manifest: &EffectManifest) -> Result<(), EffectManifestErro
             "format must be {EFFECT_MANIFEST_FORMAT:?}"
         )));
     }
-    if manifest.version != EFFECT_MANIFEST_VERSION {
+    if !(MIN_EFFECT_MANIFEST_VERSION..=EFFECT_MANIFEST_VERSION).contains(&manifest.version) {
         return Err(EffectManifestError::Invalid(format!(
-            "unsupported version {}",
-            manifest.version
+            "unsupported version {}; supported versions are {MIN_EFFECT_MANIFEST_VERSION}–{EFFECT_MANIFEST_VERSION}",
+            manifest.version,
         )));
+    }
+    match manifest.version {
+        1 => {
+            if manifest.role == EffectPackageRole::Effect
+                || !manifest.targets.is_empty()
+                || matches!(manifest.abi, Some(EffectPackageAbi::DeckV1))
+            {
+                return Err(EffectManifestError::Invalid(
+                    "manifest v1 is master-only; target metadata requires version 2".to_owned(),
+                ));
+            }
+        }
+        2 => {
+            if manifest.role != EffectPackageRole::Effect {
+                return Err(EffectManifestError::Invalid(
+                    "manifest v2 selectable packages must use role \"effect\"".to_owned(),
+                ));
+            }
+            let targets: HashSet<_> = manifest.targets.iter().copied().collect();
+            if targets.len() != 1 || manifest.targets.len() != 1 {
+                return Err(EffectManifestError::Invalid(
+                    "manifest v2 must declare exactly one unique target".to_owned(),
+                ));
+            }
+            let target = manifest.targets[0];
+            let abi = manifest.abi.ok_or_else(|| {
+                EffectManifestError::Invalid(
+                    "manifest v2 must explicitly declare its shader ABI".to_owned(),
+                )
+            })?;
+            if !matches!(
+                (target, abi),
+                (EffectPackageTarget::Master, EffectPackageAbi::MasterV1)
+                    | (EffectPackageTarget::Deck, EffectPackageAbi::DeckV1)
+            ) {
+                return Err(EffectManifestError::Invalid(
+                    "manifest target and shader ABI are incompatible".to_owned(),
+                ));
+            }
+        }
+        _ => unreachable!("version range checked above"),
     }
     if !valid_id(&manifest.id) {
         return Err(EffectManifestError::Invalid(
@@ -324,6 +416,15 @@ fn validate_manifest(manifest: &EffectManifest) -> Result<(), EffectManifestErro
         return Err(EffectManifestError::Invalid(format!(
             "custom effect pass count cannot exceed {MAX_EFFECT_PASSES}"
         )));
+    }
+    if manifest.version == 2
+        && manifest.targets == [EffectPackageTarget::Deck]
+        && (manifest.pass_entries().len() != 1
+            || manifest.resources.history != EffectHistoryResource::None)
+    {
+        return Err(EffectManifestError::Invalid(
+            "deck-v1 packages are stateless and must declare exactly one fragment pass".to_owned(),
+        ));
     }
     if manifest.role == EffectPackageRole::MasterProcessor && manifest.passes.len() > 1 {
         return Err(EffectManifestError::Invalid(
@@ -594,6 +695,8 @@ mod tests {
                 .iter()
                 .find(|effect| effect.id == id)
                 .unwrap_or_else(|| panic!("missing bundled algorithmic effect {id}"));
+            assert!(effect.supports_target(EffectPackageTarget::Master), "{id}");
+            assert_eq!(effect.abi, EffectPackageAbi::MasterV1, "{id}");
             assert_eq!(effect.pass_count, 1, "{id}");
             assert_eq!(effect.parameters.len(), parameter_count, "{id}");
             assert_eq!(effect.presets.len(), 3, "{id}");
@@ -611,6 +714,59 @@ mod tests {
                 "{id} has no animation toggle"
             );
         }
+    }
+
+    #[test]
+    fn validates_v2_target_and_abi_compatibility() {
+        let mut value: serde_json::Value = serde_json::from_str(&manifest(parameters())).unwrap();
+        value["version"] = serde_json::json!(2);
+        value["role"] = serde_json::json!("effect");
+        value["targets"] = serde_json::json!(["deck"]);
+        value["abi"] = serde_json::json!("deck-v1");
+        let path = fixture(
+            &serde_json::to_string(&value).unwrap(),
+            r#"
+@vertex fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    return vec4(f32(index), 0.0, 0.0, 1.0);
+}
+@fragment fn fs_main() -> @location(0) vec4<f32> {
+    return vec4(1.0);
+}
+"#,
+        );
+        let package = load_effect_package(&path).unwrap();
+        assert_eq!(
+            package.manifest.resolved_targets(),
+            vec![EffectPackageTarget::Deck]
+        );
+        assert_eq!(package.manifest.abi, Some(EffectPackageAbi::DeckV1));
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+
+        value.as_object_mut().unwrap().remove("abi");
+        let path = fixture(&serde_json::to_string(&value).unwrap(), "not reached");
+        let error = load_effect_package(&path).unwrap_err().to_string();
+        assert!(
+            error.contains("explicitly declare its shader ABI"),
+            "{error}"
+        );
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+
+        value["abi"] = serde_json::json!("master-v1");
+        let path = fixture(&serde_json::to_string(&value).unwrap(), "not reached");
+        assert!(matches!(
+            load_effect_package(&path),
+            Err(EffectManifestError::Invalid(_))
+        ));
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+
+        value["abi"] = serde_json::json!("deck-v1");
+        value["resources"] = serde_json::json!({"history": "previous_slot_output"});
+        let path = fixture(&serde_json::to_string(&value).unwrap(), "not reached");
+        assert!(matches!(
+            load_effect_package(&path),
+            Err(EffectManifestError::Invalid(_))
+        ));
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     #[test]
@@ -678,15 +834,16 @@ mod tests {
     }
 
     #[test]
-    fn discovers_only_custom_master_effects() {
+    fn discovers_selectable_master_and_deck_packages_but_not_the_processor() {
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
             "oneiroi-effect-registry-{}-{id}",
             std::process::id()
         ));
-        for (name, role) in [
-            ("custom", "master_effect"),
-            ("processor", "master_processor"),
+        for (name, role, version, target, abi) in [
+            ("custom", "master_effect", 1, None, None),
+            ("deck-custom", "effect", 2, Some("deck"), Some("deck-v1")),
+            ("processor", "master_processor", 1, None, None),
         ] {
             let directory = root.join(name);
             fs::create_dir_all(&directory).unwrap();
@@ -695,6 +852,13 @@ mod tests {
             value["id"] = serde_json::json!(name);
             value["name"] = serde_json::json!(name);
             value["role"] = serde_json::json!(role);
+            value["version"] = serde_json::json!(version);
+            if let Some(target) = target {
+                value["targets"] = serde_json::json!([target]);
+            }
+            if let Some(abi) = abi {
+                value["abi"] = serde_json::json!(abi);
+            }
             fs::write(
                 directory.join("effect.json"),
                 serde_json::to_vec(&value).unwrap(),
@@ -715,8 +879,20 @@ mod tests {
         }
         let registry = discover_effect_packages(&root);
         assert!(registry.errors.is_empty(), "{:?}", registry.errors);
-        assert_eq!(registry.effects.len(), 1);
-        assert_eq!(registry.effects[0].id, "custom");
+        assert_eq!(registry.effects.len(), 2);
+        let custom = registry
+            .effects
+            .iter()
+            .find(|effect| effect.id == "custom")
+            .unwrap();
+        assert!(custom.supports_target(EffectPackageTarget::Master));
+        let deck = registry
+            .effects
+            .iter()
+            .find(|effect| effect.id == "deck-custom")
+            .unwrap();
+        assert!(deck.supports_target(EffectPackageTarget::Deck));
+        assert!(!deck.supports_target(EffectPackageTarget::Master));
         fs::remove_dir_all(root).unwrap();
     }
 }

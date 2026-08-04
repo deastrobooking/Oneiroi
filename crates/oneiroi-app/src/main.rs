@@ -440,7 +440,8 @@ impl State {
         let effect_registry = effects::discover_effect_registry(&effect_roots);
         ui.effect_registry_status =
             effects::effect_registry_status(&effect_registry, &effect_roots);
-        ui.effect_packages = effect_registry.effects;
+        (ui.effect_packages, ui.deck_effect_packages) =
+            effects::partition_effect_packages(effect_registry.effects);
         if let Some(id) = preferred_display_id {
             ui.output_display_id = id;
         }

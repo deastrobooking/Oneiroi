@@ -3,7 +3,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use oneiroi_render::{EffectDescriptor, EffectRegistry, discover_effect_packages};
+use oneiroi_render::{
+    EffectDescriptor, EffectPackageTarget, EffectRegistry, discover_effect_packages,
+};
 
 use super::State;
 
@@ -114,16 +116,40 @@ fn retain_last_known_effects(
     roots: &[PathBuf],
 ) {
     for effect in previous {
-        if effect.manifest_path.is_file()
-            && path_is_in_roots(&effect.manifest_path, roots)
-            && registry
+        if !effect.manifest_path.is_file()
+            || !path_is_in_roots(&effect.manifest_path, roots)
+            || !registry
                 .failed_manifest_paths
                 .iter()
                 .any(|failed| same_path(failed, &effect.manifest_path))
-            && !registry
-                .effects
-                .iter()
-                .any(|candidate| candidate.id == effect.id)
+        {
+            continue;
+        }
+        let Some(previous_precedence) = package_precedence(&effect.manifest_path, roots) else {
+            continue;
+        };
+        let mut shadowed_paths = Vec::new();
+        registry.effects.retain(|candidate| {
+            let is_shadowed = candidate.id == effect.id
+                && package_precedence(&candidate.manifest_path, roots)
+                    .is_some_and(|precedence| precedence > previous_precedence);
+            if is_shadowed {
+                shadowed_paths.push(candidate.manifest_path.clone());
+            }
+            !is_shadowed
+        });
+        for path in shadowed_paths {
+            registry.errors.push(format!(
+                "lower-priority duplicate effect id {:?} at {} remains shadowed while {} uses its last-known-good descriptor",
+                effect.id,
+                path.display(),
+                effect.manifest_path.display(),
+            ));
+        }
+        if !registry
+            .effects
+            .iter()
+            .any(|candidate| candidate.id == effect.id)
         {
             registry.effects.push(effect.clone());
         }
@@ -131,6 +157,8 @@ fn retain_last_known_effects(
     registry
         .effects
         .sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+    registry.errors.sort();
+    registry.errors.dedup();
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
@@ -140,17 +168,32 @@ fn same_path(left: &Path, right: &Path) -> bool {
 }
 
 fn path_is_in_roots(path: &Path, roots: &[PathBuf]) -> bool {
+    package_precedence(path, roots).is_some()
+}
+
+fn package_precedence(path: &Path, roots: &[PathBuf]) -> Option<(usize, PathBuf)> {
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    roots.iter().any(|root| {
+    roots.iter().enumerate().find_map(|(index, root)| {
         let root = root.canonicalize().unwrap_or_else(|_| root.clone());
-        path.starts_with(root)
+        path.strip_prefix(root)
+            .ok()
+            .map(|relative| (index, relative.to_path_buf()))
     })
 }
 
 pub(crate) fn effect_registry_status(registry: &EffectRegistry, roots: &[PathBuf]) -> String {
+    let master_count = registry
+        .effects
+        .iter()
+        .filter(|effect| effect.supports_target(EffectPackageTarget::Master))
+        .count();
+    let deck_count = registry
+        .effects
+        .iter()
+        .filter(|effect| effect.supports_target(EffectPackageTarget::Deck))
+        .count();
     let summary = format!(
-        "{} custom effect package(s) from {} resource root(s)",
-        registry.effects.len(),
+        "{master_count} master package(s), {deck_count} deck package candidate(s) from {} resource root(s)",
         roots.len()
     );
     if registry.errors.is_empty() {
@@ -162,6 +205,22 @@ pub(crate) fn effect_registry_status(registry: &EffectRegistry, roots: &[PathBuf
             registry.errors.join(" · ")
         )
     }
+}
+
+pub(crate) fn partition_effect_packages(
+    effects: Vec<EffectDescriptor>,
+) -> (Vec<EffectDescriptor>, Vec<EffectDescriptor>) {
+    let mut master = Vec::new();
+    let mut deck = Vec::new();
+    for effect in effects {
+        if effect.supports_target(EffectPackageTarget::Master) {
+            master.push(effect.clone());
+        }
+        if effect.supports_target(EffectPackageTarget::Deck) {
+            deck.push(effect);
+        }
+    }
+    (master, deck)
 }
 
 pub(crate) fn bundled_processor_manifest(roots: &[PathBuf]) -> Option<PathBuf> {
@@ -203,9 +262,12 @@ impl State {
     pub(crate) fn refresh_effect_registry(&mut self) {
         let roots = effect_resource_roots(&self.workspace);
         let mut registry = discover_effect_registry(&roots);
-        retain_last_known_effects(&mut registry, &self.ui.effect_packages, &roots);
+        let mut previous = self.ui.effect_packages.clone();
+        previous.extend(self.ui.deck_effect_packages.iter().cloned());
+        retain_last_known_effects(&mut registry, &previous, &roots);
         self.ui.effect_registry_status = effect_registry_status(&registry, &roots);
-        self.ui.effect_packages = registry.effects;
+        (self.ui.effect_packages, self.ui.deck_effect_packages) =
+            partition_effect_packages(registry.effects);
         self.watch_effect_manifest();
     }
 }
@@ -267,6 +329,31 @@ mod tests {
     }
 
     #[test]
+    fn target_partition_keeps_deck_candidates_out_of_the_master_runtime() {
+        let bundled_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("effects");
+        let registry = discover_effect_packages(bundled_root);
+        let mut deck_candidate = registry.effects[0].clone();
+        deck_candidate.id = "deck-candidate".to_owned();
+        deck_candidate.targets = vec![EffectPackageTarget::Deck];
+        let expected_master_count = registry.effects.len();
+        let mut candidates = registry.effects;
+        candidates.push(deck_candidate);
+
+        let (master, deck) = partition_effect_packages(candidates);
+
+        assert_eq!(master.len(), expected_master_count);
+        assert_eq!(deck.len(), 1);
+        assert_eq!(deck[0].id, "deck-candidate");
+        assert!(
+            master
+                .iter()
+                .all(|effect| effect.supports_target(EffectPackageTarget::Master))
+        );
+    }
+
+    #[test]
     fn invalid_refresh_keeps_the_previous_descriptor_until_the_package_is_removed() {
         let root = std::env::temp_dir().join(format!(
             "oneiroi-last-known-effect-root-{}",
@@ -317,5 +404,63 @@ mod tests {
         retain_last_known_effects(&mut removed, &previous.effects, std::slice::from_ref(&root));
         assert!(removed.effects.is_empty());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_high_priority_package_keeps_precedence_over_a_duplicate() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = std::env::temp_dir().join(format!(
+            "oneiroi-duplicate-lkg-root-{}-{nonce}",
+            std::process::id()
+        ));
+        let high_root = temp_root.join("high");
+        let low_root = temp_root.join("low");
+        let bundled_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("effects/recursive-2d");
+        for root in [&high_root, &low_root] {
+            let package_root = root.join("recursive-2d");
+            std::fs::create_dir_all(&package_root).unwrap();
+            std::fs::copy(
+                bundled_root.join("effect.json"),
+                package_root.join("effect.json"),
+            )
+            .unwrap();
+            std::fs::copy(
+                bundled_root.join("recursive_2d.wgsl"),
+                package_root.join("recursive_2d.wgsl"),
+            )
+            .unwrap();
+        }
+        let roots = vec![high_root.clone(), low_root.clone()];
+        let previous = discover_effect_registry(&roots);
+        assert_eq!(previous.effects.len(), 1);
+        assert!(previous.effects[0].manifest_path.starts_with(&high_root));
+
+        let high_manifest = high_root.join("recursive-2d/effect.json");
+        std::fs::write(&high_manifest, "{not valid json").unwrap();
+        let mut refreshed = discover_effect_registry(&roots);
+        assert_eq!(refreshed.effects.len(), 1);
+        assert!(refreshed.effects[0].manifest_path.starts_with(&low_root));
+
+        retain_last_known_effects(&mut refreshed, &previous.effects, &roots);
+
+        assert_eq!(refreshed.effects.len(), 1);
+        assert!(same_path(
+            &refreshed.effects[0].manifest_path,
+            &previous.effects[0].manifest_path
+        ));
+        assert!(
+            refreshed
+                .errors
+                .iter()
+                .any(|error| error.contains("uses its last-known-good descriptor")),
+            "{:?}",
+            refreshed.errors
+        );
+        std::fs::remove_dir_all(temp_root).unwrap();
     }
 }

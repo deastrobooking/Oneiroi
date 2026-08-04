@@ -13,10 +13,10 @@ pub mod upload;
 
 pub use effect_manifest::{
     EFFECT_MANIFEST_FORMAT, EFFECT_MANIFEST_VERSION, EffectDescriptor, EffectHistoryResource,
-    EffectManifest, EffectManifestError, EffectPackageRole, EffectParameterControl,
-    EffectParameterOption, EffectParameterSchema, EffectPassSchema, EffectPresetSchema,
-    EffectRegistry, EffectResourceSchema, MAX_EFFECT_PASSES, ValidatedEffectPackage,
-    discover_effect_packages, load_effect_package,
+    EffectManifest, EffectManifestError, EffectPackageAbi, EffectPackageRole, EffectPackageTarget,
+    EffectParameterControl, EffectParameterOption, EffectParameterSchema, EffectPassSchema,
+    EffectPresetSchema, EffectRegistry, EffectResourceSchema, MAX_EFFECT_PASSES,
+    ValidatedEffectPackage, discover_effect_packages, load_effect_package,
 };
 pub use gpu::{Gpu, PresentSurface, SurfaceAcquireStatus, SurfaceAcquisition};
 pub use graph_plan::{BuiltInRenderStage, FusedDeckNodes, LoweredPlanError, LoweredRenderPlan};

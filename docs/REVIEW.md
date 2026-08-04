@@ -1,6 +1,6 @@
 # Application review
 
-Review date: 2026-08-02
+Review date: 2026-08-04
 
 ## Executive assessment
 
@@ -11,9 +11,11 @@ output and deterministic session recovery are implemented and covered by more
 than 200 automated tests.
 
 The main release risk is no longer missing mixer fundamentals. It is show-machine
-certification, application packaging and concentrated application orchestration.
-External stage integrations such as tempo sync and video sharing should follow
-those gates rather than displace them.
+certification, application packaging and measured expansion of the shader path.
+Per-deck packages are now the next shader milestone, but they remain planned:
+the current executable package runtime is master-only. External stage
+integrations such as tempo sync and video sharing should follow the release
+gates rather than displace them.
 
 ## Current strengths
 
@@ -24,12 +26,14 @@ those gates rather than displace them.
 - Exact media timestamps, bounded workers, reusable frame leases and generation
   checks prevent unbounded backlog and obsolete-frame presentation.
 - Four decks feed independent linear-light A/B composites with 35 blend modes,
-  transforms, crop, Solo/Bypass and per-deck effect chains.
+  transforms, crop, Solo/Bypass and fused built-in deck-effect groups. Geometry
+  remains the UV prepass; Color and Stylize can change relative order.
 - The program render is shared by an operator preview and clean second window.
   Display targeting, fullscreen, calibration overlays and surface recovery are
   observable rather than implicit.
 - Two bounded master slots support built-in and validated one/two-pass WGSL
-  packages with last-known-good reload and one optional history texture.
+  packages with generation-safe last-known-good reload and one optional custom
+  history texture per physical master slot.
 
 ### Performance workflow
 
@@ -39,7 +43,8 @@ those gates rather than displace them.
   clip slots retarget it directly; secondary deck editors no longer bury the
   active controls.
 - Show Mode locks setup and destructive/structural edits while retaining clip,
-  scene, transport, mixer, Solo/Bypass and live deck-FX controls.
+  scene, transport, mixer, Solo/Bypass, live deck-FX controls and compact
+  master-effect identity/bypass/wet cards.
 - MIDI supports multiple persisted controllers, learn/clear, relative modes,
   soft takeover and reconnect. OSC input/output shares the command gateway and
   supports bounded timetag scheduling.
@@ -77,21 +82,29 @@ FPS, surface health, decoder drop/repeat/late totals and RGBA lease counters are
 visible. GPU pass/upload timings, queue occupancy and per-deck decode latency are
 still needed to explain a marginal show machine without attaching a profiler.
 
+### 4. Shader-path budgeting
+
+Algorithmic WGSL packages are validated and reliable in the two master slots,
+but they do not yet execute per deck. The planned deck path must selectively
+materialize only active layers, preserve transparent alpha, cull invisible
+branches and publish pass-time and 1080p/UHD memory ceilings before it becomes
+operator-selectable. HDR, arbitrary pass graphs and compute remain later work.
+See [Shader system](SHADER_SYSTEM.md) for the accepted sequence and invariants.
+
 ## Engineering risks
 
 ### Concentrated application orchestration
 
-`oneiroi-app/src/main.rs` remains roughly 1,700 lines and still coordinates
-windowing, media, projects, cameras, tempo, rendering and action dispatch. The UI
-has begun splitting into `clips`, `deck`, `master_fx`, `midi`, `midi_manager` and
-`theme`, but `ui.rs` is also still roughly 1,700 lines.
+`oneiroi-app/src/main.rs` remains roughly 1,350 lines and still coordinates
+windowing, media, projects, cameras, tempo and rendering. Action dispatch,
+output lifecycle and the toolbar/setup/diagnostics surfaces have been extracted;
+`ui.rs` is now roughly 930 lines with focused `clips`, `deck`, `master_fx`,
+`midi`, `midi_manager` and `theme` modules.
 
 Next seams:
 
-- `output.rs`: output window/surface lifecycle and display selection
 - `media_session.rs`: per-deck decoder, scheduler and transport orchestration
-- `actions.rs`: UI and keyboard action dispatch through the command gateway
-- UI toolbar/setup/diagnostics modules to complete the panel split
+- Remaining top-level render-loop coordination after media-session ownership
 
 These are behavior-preserving refactors and should land in small validated
 checkpoints.
@@ -118,8 +131,10 @@ every future schema revision.
 
 ```text
 repeatable release certification and golden project fixtures
-    -> behavior-preserving app/UI module seams
-    -> GPU/upload/decode timing diagnostics
+    -> shader ABI conformance and GPU timing diagnostics
+    -> selective deck-branch extraction and one bounded deck package slot
+    -> four-deck show-machine certification of the new path
+    -> remaining behavior-preserving media-session seam
     -> signed macOS release and FFmpeg licensing decision
     -> tempo sync (after Ableton Link licensing decision)
     -> feature-gated NDI output

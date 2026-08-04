@@ -234,6 +234,13 @@ compressed recording is a planned upgrade.
 
 ## Effects
 
+Oneiroi currently has two distinct effect paths: three built-in groups that
+run independently on every deck inside the fused compositor, and
+manifest-driven packages that run only in the two master slots. A planned
+`deck-v1` package stage will sit between those built-in groups and layer
+blending; it is not operator-selectable yet. See
+[Shader system](SHADER_SYSTEM.md) for that delivery plan.
+
 Open **GPU effects** on a deck. Available controls include:
 
 - Hue, contrast, saturation, black level, white level and gamma
@@ -277,8 +284,10 @@ the exact final frame and pauses history evolution; blackout still takes
 priority and clears the future history state.
 
 The **Effect package** field points to a versioned JSON manifest. The bundled
-default is `effects/master-effects/effect.json`. Choose **Watch** after changing
-the path; the app checks the manifest and referenced WGSL every 500 ms.
+processor is resolved from trusted development, executable-adjacent or macOS
+bundle resources rather than from the process launch directory. Choose
+**Watch** after changing the path; the app checks the manifest and referenced
+WGSL every 500 ms.
 **Reload now** requests an immediate compile even when the files appear
 unchanged. Successful reloads show the package name and fingerprint. Rejected
 schema, WGSL or GPU pipeline changes are shown in amber and the last working
@@ -288,17 +297,21 @@ Package shader paths must be relative to the manifest and cannot traverse out
 of their directory. A replacement `master_processor` package must retain the
 documented master-v1 bindings and declared vertex/fragment entry points.
 
-Packages with role `master_effect` in an immediate subdirectory of any effect
-resource root appear when a master slot is set to **Custom package**. Bundled
-resources are found from the development workspace, beside a release binary,
-or in a macOS bundle without depending on its launch directory. An existing
-`effects` directory in the active show workspace is also scanned. User
-packages can live in `~/Library/Application Support/Oneiroi/effects`;
-additional roots come from the platform-separated `ONEIROI_EFFECT_PATH`
-environment variable.
+Packages targeting the master runtime in an immediate subdirectory of any
+effect resource root appear when a master slot is set to **Custom package**.
+That includes manifest-v1 role `master_effect` and manifest-v2 role `effect`
+with target `master` and ABI `master-v1`. Bundled resources are found from the
+development workspace, beside a release binary, or in a macOS bundle without
+depending on its launch directory. An existing `effects` directory in the
+active show workspace is also scanned. User packages can live in
+`~/Library/Application Support/Oneiroi/effects`; additional roots come from
+the platform-separated `ONEIROI_EFFECT_PATH` environment variable.
 Select a package and its manifest controls are created automatically.
-**Refresh registry** rescans after adding or removing a package without
-discarding the last working pipelines while replacements compile. Parameter
+**Refresh registry** performs one synchronous rescan after adding or removing
+a package, then hands registered replacements to the reload worker without
+discarding the last working pipelines while they compile. Very large custom
+package roots can therefore cause a brief control-side pause until the planned
+asynchronous registry scan lands. Parameter
 values and package IDs were introduced in project version 3 and remain part of
 the current version-5 schema. If a saved package has never loaded, that slot
 passes its input through unchanged. The package panel reports whether the
@@ -329,6 +342,9 @@ kaleidoscopic tunnel and orbit-bulb fields), and **Hyper Recursion 4D+**
 (tesseract, quaternion and Clifford-style 4D–6D projections). Choose Custom
 package, select one of these names, then start from its three supplied looks or
 shape the grouped function, transform, motion and finish controls directly.
+These three packages are master-only in the current runtime. Their stateless
+fragment designs make them the first candidates for the planned per-deck
+package stage after branch extraction and GPU-budget validation.
 
 ## Layer transforms
 
@@ -351,6 +367,9 @@ project.
 ## Blend modes
 
 Choose a blend mode beside each deck's Bus A/Bus B assignment:
+
+The picker exposes 35 modes across Standard, Contrast, Component and Oneiroi
+families. Familiar examples include:
 
 - Normal
 - Add
@@ -544,4 +563,4 @@ the slot is live, a successful relink launches the replacement automatically.
 8. Disconnect and reconnect the controller and confirm activity resumes.
 9. Save the project, close it, and verify restoration.
 10. Select the stage display and verify the test card through the full signal path.
-9. Disable sleep, automatic updates and unnecessary background applications.
+11. Disable sleep, automatic updates and unnecessary background applications.

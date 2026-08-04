@@ -1,12 +1,31 @@
-# oneiroi
+# Oneiroi
+
+The word Oneiroi is pronounced oh-NY-roy.Pronunciation BreakdownOh: Sounds like the letter "O" (as in "open").NY: Sounds like the word "ny" (rhymes with my, fly, or tie).roy: Sounds like the name Roy (rhymes with boy or toy)
+
+In Greek mythology, the Oneiroi are the personified, dark-winged spirits of dreams, composed of key figures such as Morpheus, Phobetor, and Phantasos
 
 Four-deck live-performance video mixer with GPU-native HAP playback and
-FFmpeg fallback import.
+FFmpeg fallback, linear-light composition, deterministic show recovery and a
+validated WGSL custom effect-package runtime.
 
-## Status
 
-The display foundation and first HAP credibility slice are proven on the
-target OS:
+## At a glance
+
+| Path | What Oneiroi provides |
+|---|---|
+| Media | Direct block-compressed HAP playback, conventional FFmpeg decode, stills and low-latency cameras |
+| Performance | Four decks, 32 clip slots, eight scenes, A/B buses, 35 blend modes, MIDI, OSC and audio/beat modulation |
+| Output | One offscreen program shared by the operator preview and a clean display-selectable output window |
+| Safety | Bounded workers and queues, generation-safe media, last-known-good shaders, atomic projects and crash-recoverable takes |
+| Extensibility | Typed graph contracts plus manifest-driven one/two-pass WGSL packages in two master slots |
+
+The application is functional and extensively GPU-tested. Release work is
+focused on physical show-machine certification, distribution, deeper timing
+diagnostics and the staged [shader-system upgrade](docs/SHADER_SYSTEM.md).
+
+## Implemented
+
+The current source tree includes:
 
 - wgpu + winit + egui render loop with explicit linear/sRGB handling.
 - Vidvox's reference HAP decoder behind a bounded safe Rust API.
@@ -64,9 +83,10 @@ target OS:
   modulation sources.
 - Native per-deck mirror, neon glow, fractal fold, scanline jitter, find-edges,
   bit reduction, black-light inversion, pixelate and luma-key effects.
-- Three reorderable deck-effect groups with independent bypass and dry/wet,
+- Three built-in deck-effect groups with independent bypass and dry/wet,
   legacy-compatible project defaults and Neutral, Neon Night, Blacklight,
-  Glitch and Halation presets.
+  Glitch and Halation presets. Geometry remains the UV prepass; Color and
+  Stylize follow their relative displayed order.
 - A scrollable, stage-oriented operator UI with live program/audio/MIDI/OSC
   status, top-level blackout/freeze controls, deck accents and explicit
   selected/queued/active clip states.
@@ -85,15 +105,16 @@ target OS:
   unavailable. The bundled Chromatic Split package is the reference example.
 - Bundled algorithmic master effects for recursive 2D transforms, volumetric
   3D fractal fields and projected 4D–6D recursion, with grouped controls and
-  three one-click looks per package.
+  three one-click looks per package. These packages are master-only today;
+  per-deck package execution is the next shader architecture milestone.
 - Launch-directory-independent effect discovery from development, adjacent
   release and macOS bundle resources, plus the per-user effect directory and
   optional `ONEIROI_EFFECT_PATH` roots.
 - Three master LFOs and eight stable-ID custom-parameter routes with audio,
   beat and bar sources, plus generated per-parameter MIDI Learn/Clear controls.
-- Declarative one- or two-pass custom packages compiled and installed
-  atomically, reusing the fixed master scratch/ping graph. Spectral Echo is the
-  bundled two-pass reference.
+- Declarative one- or two-pass custom package sequences compiled and installed
+  atomically, reusing the fixed master scratch/ping resources. Spectral Echo is
+  the bundled two-pass reference.
 - An optional fixed previous-slot-output history resource for custom packages,
   with validity signaling and deterministic lifecycle resets. Temporal Melt is
   the bundled temporal reference.
@@ -192,8 +213,29 @@ target OS:
   separate bounded worker, while bundle NTP timetags execute through a bounded
   monotonic scheduler without stalling rendering.
 
-MIDI feedback/clock and arbitrary package-owned texture declarations have not
+## Shader system direction
+
+Oneiroi uses WGSL compiled through Naga and `wgpu`. The current executable
+package ABI is the master-only `master-v1` contract: one or two fragment
+passes, at most 32 scalar parameters and one optional fixed history resource
+per physical master slot. Once registered, watched shader changes compile away
+from presentation and swap only after the complete candidate succeeds. Manual
+registry refresh still performs one synchronous validation scan; moving that
+scan to the reload worker is the remaining S0 scaling gate.
+
+Per-deck packages are now a committed target. They will run after each deck's
+built-in effects and before its layer enters an A/B bus blend. The renderer
+will first extract a selectively materialized deck branch while preserving the
+current fused fast path when no package is active. Shared WGSL modules, typed
+N-pass graphs, optional HDR intermediates, compute effects and offline
+ISF/ShaderToy conversion follow as separately budgeted phases.
+
+See [docs/SHADER_SYSTEM.md](docs/SHADER_SYSTEM.md) for the contracts,
+acceptance gates and decisions from the shader review. MIDI feedback/clock,
+arbitrary package-owned resources and per-deck package execution have not
 landed yet.
+
+## Quick start
 
 ```sh
 cargo run          # the app; select a deck and drop movies
@@ -240,6 +282,7 @@ freeze holds the most recent rendered frame.
 - [Feature status](docs/FEATURES.md)
 - [Application review](docs/REVIEW.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Shader system and upgrade plan](docs/SHADER_SYSTEM.md)
 - [Effect package authoring](docs/EFFECT_PACKAGES.md)
 - [Graph and session runtime](docs/GRAPH_RUNTIME.md)
 - [Prioritized roadmap](docs/ROADMAP.md)
@@ -269,8 +312,9 @@ shaders work in linear and the hardware encodes on write — and the egui overla
 renders through the plain gamma-space view, which is what it wants. There is no
 manual `pow(2.2)` anywhere and there should never be one.
 
-**Presentation is Fifo (vsync).** Clip playback gets its own time-based clock
-later; frame counters are not a clock when clips run at 24/25/30fps.
+**Presentation is Fifo (vsync).** Clip playback already uses exact media time
+and generation-safe scheduling; frame counters are not a playback clock when
+clips run at 24/25/30fps.
 
 ## Not decided yet
 

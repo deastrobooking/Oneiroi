@@ -10,10 +10,10 @@ The Perform view still executes through the existing bounded
 compiled as this compatibility macro:
 
 ```text
-Deck A source -> Deck A effects --\
-Deck B source -> Deck B effects ----\
-Deck C source -> Deck C effects -----+-> four-deck mixer
-Deck D source -> Deck D effects ----/          |
+Deck A source -> Deck A built-ins --\
+Deck B source -> Deck B built-ins ----\
+Deck C source -> Deck C built-ins -----+-> four-deck mixer
+Deck D source -> Deck D built-ins ----/          |
                                                 v
                                         master effects
                                                 |
@@ -35,6 +35,12 @@ effects and presentation. The plan is therefore authoritative for live stage
 ordering while the fixed compositor remains the optimized executor for the
 four deck branches. This is deliberate pass fusion, not a parallel rendering
 path.
+
+Here, each logical deck-effect node represents the fused Geometry UV prepass
+plus the Color + Levels and Stylize + Key built-in groups. It is not currently
+an independently executable package node. The master stage is the only current
+package-capable boundary. The selective deck-branch extraction and future
+`deck-v1` stage are specified in [Shader system](SHADER_SYSTEM.md).
 
 ## Typed graph
 
@@ -199,8 +205,9 @@ blocks or stops program output; the in-memory take remains available.
 
 ## Deliberate limitations of this slice
 
-- Deck source and deck-effect nodes are fused into the existing compositor;
-  they are not independently executable passes yet.
+- Deck source and built-in-effect nodes are fused into the existing compositor;
+  they are not independently executable passes, and custom packages remain
+  master-only.
 - Node kinds beyond the compatibility graph do not yet have GPU executors.
 - OSC input reaches the same command gateway as operator, keyboard and MIDI
   control. Bundle NTP timetags become bounded monotonic deadlines, and
@@ -220,11 +227,17 @@ blocks or stops program output; the in-memory take remains available.
 These boundaries preserve project compatibility and the existing live output
 while the graph becomes executable one node family at a time.
 
+The planned deck-package work does not immediately generalize every graph node.
+It first extracts only active deck branches, budgets their fixed layer/scratch
+targets and keeps the no-package path fused. A later typed package graph can use
+the graph compiler's lifetime and budget checks without treating today's
+one/two-pass master sequence as a DAG.
+
 ## Next implementation slice
 
 1. Add marker editing plus portable project/media manifests for take bundles.
 2. Expand OSC routes to effect/modulation parameters and add route discovery.
 3. Add the shadow-graph editor and preview/commit controls.
-4. Add the shadow-graph editor and preview/commit controls.
+4. Complete edge-by-edge color/resolution inference and conversion diagnostics.
 5. Add executors for explicit delay/rate-adapter nodes, then unfuse deck
    branches where graph editing requires independent passes.

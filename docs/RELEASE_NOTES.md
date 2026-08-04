@@ -67,6 +67,19 @@
 - Kept each custom effect's last-known-good GPU pipeline active while registry
   refresh recompiles it; a refresh no longer creates a temporary pass-through
   frame.
+- Retired stale selectable or processor pipelines when a valid manifest moves
+  to another role or target, while malformed edits still retain the previous
+  working generation. Reload diagnostics now distinguish retained
+  last-known-good output, the restored built-in processor and a neutral
+  fallback.
+- Added backward-compatible manifest-v2 target and ABI metadata. Stateless
+  one-pass `deck-v1` candidates now receive schema/WGSL validation and a
+  separate catalog, while the current master runtime watches and compiles only
+  master-compatible packages. Deck bind-group/GPU validation and execution
+  remain a planned renderer milestone.
+- Required manifest v2 to declare its ABI explicitly, and preserved exact
+  resource-root precedence when a higher-priority package becomes temporarily
+  invalid instead of promoting a lower-priority duplicate.
 - Added per-deck bloom, threshold, radius and chromatic-spread controls plus the
   Halation preset.
 - Extended MIDI learn, feedback snapshots and project validation to all 18
@@ -105,6 +118,17 @@
 - The workspace passes formatting, full tests and strict Clippy; the extended
   10,000-reopen decoder soak remains an explicit pre-show/release-candidate
   check.
+
+### Shader architecture and documentation
+
+- Added a canonical shader-system plan covering the per-deck precomposition
+  seam, `deck-v1`, shared WGSL modules, typed N-pass resources, optional HDR,
+  compute and offline ISF/ShaderToy import in dependency order.
+- Reconciled the README, architecture, package authoring, feature matrix,
+  graph runtime, operator guide, engineering review, roadmap and release gates
+  around current master-only packages versus planned deck execution.
+- Added an optional VS Code recommendation for `wgsl-analyzer`; Naga and
+  real-GPU tests remain the authoritative validation paths.
 
 ### Release-candidate follow-up
 

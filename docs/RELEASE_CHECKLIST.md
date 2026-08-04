@@ -70,6 +70,27 @@ stuck deck selection or stale frame after seek/source replacement.
   program output must continue and the error must remain visible.
 - Restore a prior take, scrub to a marker and continue as a named branch.
 
+## Shader and effect-package rehearsal
+
+- Launch the release binary from an unrelated working directory and verify the
+  bundled processor plus Chromatic Split, Spectral Echo, Temporal Melt,
+  Recursive 2D Lab, Fractal Volume 3D and Hyper Recursion 4D+ are discovered.
+- Repeat discovery from the packaged application bundle and verify a workspace
+  package with a duplicate bundled ID is rejected rather than substituted.
+- Select and render all three algorithmic packages on real GPU hardware.
+- While one is live, introduce a WGSL syntax error and an invalid manifest;
+  program output must keep the last-known-good pipeline and expose the error.
+- Restore the package, then test a valid package-ID rename and physical package
+  removal. The old identity must disappear without retaining a stale
+  descriptor or pipeline.
+- Exercise master package dry/wet, bypass, reorder, Show Mode cards, blackout,
+  freeze and composition resize while watching for invalid history reuse.
+
+When the planned `deck-v1` runtime lands, this gate expands to four simultaneous
+1080p deck packages, dry/bypass bit-exactness, transparent-alpha preservation,
+effect-before-every-blend ordering, invisible-deck culling and recorded 1080p/
+UHD texture ceilings. See [Shader system](SHADER_SYSTEM.md).
+
 ## Packaging gate
 
 Before assigning a release version:
