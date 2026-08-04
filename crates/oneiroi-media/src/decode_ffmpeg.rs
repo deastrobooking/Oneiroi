@@ -1,12 +1,22 @@
 //! Conventional codec fallback through FFmpeg and libswscale.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use ffmpeg_next as ffmpeg;
 use oneiroi_core::{MediaTime, MediaTimeError};
 use thiserror::Error;
 
 use crate::{CameraConfig, FrameBufferPool, RgbaFrame, camera_pts};
+
+const LIVE_READ_RETRY_DELAY: Duration = Duration::from_millis(10);
+
+fn is_temporary_live_read_error(live: bool, error: &ffmpeg::Error) -> bool {
+    live && matches!(
+        error,
+        ffmpeg::Error::Other { errno } if *errno == ffmpeg::error::EAGAIN
+    )
+}
 
 #[derive(Debug, Error)]
 pub enum FfmpegDecodeError {
@@ -303,6 +313,12 @@ impl FfmpegVideoDecoder {
                         self.draining = true;
                         break;
                     }
+                    Err(error) if is_temporary_live_read_error(self.live, &error) => {
+                        // AVFoundation can report EAGAIN until its capture callback has
+                        // delivered the next frame. Match FFmpeg's demux loop: wait briefly
+                        // and retry instead of disconnecting an otherwise healthy camera.
+                        std::thread::sleep(LIVE_READ_RETRY_DELAY);
+                    }
                     Err(error) => return Err(FfmpegDecodeError::Read(error)),
                 }
             }
@@ -388,5 +404,24 @@ impl FfmpegVideoDecoder {
                 data,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_live_eagain_packet_reads_are_temporary() {
+        let eagain = ffmpeg::Error::Other {
+            errno: ffmpeg::error::EAGAIN,
+        };
+        let eio = ffmpeg::Error::Other {
+            errno: ffmpeg::error::EIO,
+        };
+
+        assert!(is_temporary_live_read_error(true, &eagain));
+        assert!(!is_temporary_live_read_error(false, &eagain));
+        assert!(!is_temporary_live_read_error(true, &eio));
     }
 }
