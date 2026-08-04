@@ -49,6 +49,7 @@ struct MixerGlobals {
     blackout: u32,
     _padding_a: u32,
     _padding_b: u32,
+    deck_override_mask: vec4<u32>,
 }
 
 struct EffectConfig {
@@ -86,6 +87,10 @@ struct EffectConfig {
 @group(0) @binding(7) var alpha_c: texture_2d<f32>;
 @group(0) @binding(8) var alpha_d: texture_2d<f32>;
 @group(0) @binding(9) var<uniform> globals: MixerGlobals;
+@group(1) @binding(0) var deck_override_a: texture_2d<f32>;
+@group(1) @binding(1) var deck_override_b: texture_2d<f32>;
+@group(1) @binding(2) var deck_override_c: texture_2d<f32>;
+@group(1) @binding(3) var deck_override_d: texture_2d<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -704,29 +709,60 @@ fn process_layer(
     return process_source(primary, alpha_texture, transformed_uv.xy, kind, effect);
 }
 
-@fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    if globals.blackout != 0u {
-        return vec4(0.0, 0.0, 0.0, 1.0);
-    }
+fn effect_config(index: u32) -> EffectConfig {
+    return EffectConfig(
+        globals.contrast[index], globals.saturation[index], globals.hue[index],
+        globals.black_level[index], globals.white_level[index], globals.gamma[index],
+        globals.pixelate[index], globals.luma_key[index], globals.neon[index],
+        globals.fractal[index], globals.jitter[index], globals.find_edges[index],
+        globals.bit_reduction[index], globals.blacklight[index], globals.bloom[index],
+        globals.bloom_threshold[index], globals.bloom_radius[index], globals.bloom_chroma[index],
+        globals.mirror[index],
+        vec4(globals.effect_slot_groups_0[index], globals.effect_slot_groups_1[index], globals.effect_slot_groups_2[index], 0u),
+        vec4(globals.effect_slot_enabled_0[index], globals.effect_slot_enabled_1[index], globals.effect_slot_enabled_2[index], 0u),
+        vec4(globals.effect_slot_mix_0[index], globals.effect_slot_mix_1[index], globals.effect_slot_mix_2[index], 0.0),
+    );
+}
 
-    let effect_a = EffectConfig(globals.contrast.x, globals.saturation.x, globals.hue.x, globals.black_level.x, globals.white_level.x, globals.gamma.x, globals.pixelate.x, globals.luma_key.x, globals.neon.x, globals.fractal.x, globals.jitter.x, globals.find_edges.x, globals.bit_reduction.x, globals.blacklight.x, globals.bloom.x, globals.bloom_threshold.x, globals.bloom_radius.x, globals.bloom_chroma.x, globals.mirror.x, vec4(globals.effect_slot_groups_0.x, globals.effect_slot_groups_1.x, globals.effect_slot_groups_2.x, 0u), vec4(globals.effect_slot_enabled_0.x, globals.effect_slot_enabled_1.x, globals.effect_slot_enabled_2.x, 0u), vec4(globals.effect_slot_mix_0.x, globals.effect_slot_mix_1.x, globals.effect_slot_mix_2.x, 0.0));
-    let effect_b = EffectConfig(globals.contrast.y, globals.saturation.y, globals.hue.y, globals.black_level.y, globals.white_level.y, globals.gamma.y, globals.pixelate.y, globals.luma_key.y, globals.neon.y, globals.fractal.y, globals.jitter.y, globals.find_edges.y, globals.bit_reduction.y, globals.blacklight.y, globals.bloom.y, globals.bloom_threshold.y, globals.bloom_radius.y, globals.bloom_chroma.y, globals.mirror.y, vec4(globals.effect_slot_groups_0.y, globals.effect_slot_groups_1.y, globals.effect_slot_groups_2.y, 0u), vec4(globals.effect_slot_enabled_0.y, globals.effect_slot_enabled_1.y, globals.effect_slot_enabled_2.y, 0u), vec4(globals.effect_slot_mix_0.y, globals.effect_slot_mix_1.y, globals.effect_slot_mix_2.y, 0.0));
-    let effect_c = EffectConfig(globals.contrast.z, globals.saturation.z, globals.hue.z, globals.black_level.z, globals.white_level.z, globals.gamma.z, globals.pixelate.z, globals.luma_key.z, globals.neon.z, globals.fractal.z, globals.jitter.z, globals.find_edges.z, globals.bit_reduction.z, globals.blacklight.z, globals.bloom.z, globals.bloom_threshold.z, globals.bloom_radius.z, globals.bloom_chroma.z, globals.mirror.z, vec4(globals.effect_slot_groups_0.z, globals.effect_slot_groups_1.z, globals.effect_slot_groups_2.z, 0u), vec4(globals.effect_slot_enabled_0.z, globals.effect_slot_enabled_1.z, globals.effect_slot_enabled_2.z, 0u), vec4(globals.effect_slot_mix_0.z, globals.effect_slot_mix_1.z, globals.effect_slot_mix_2.z, 0.0));
-    let effect_d = EffectConfig(globals.contrast.w, globals.saturation.w, globals.hue.w, globals.black_level.w, globals.white_level.w, globals.gamma.w, globals.pixelate.w, globals.luma_key.w, globals.neon.w, globals.fractal.w, globals.jitter.w, globals.find_edges.w, globals.bit_reduction.w, globals.blacklight.w, globals.bloom.w, globals.bloom_threshold.w, globals.bloom_radius.w, globals.bloom_chroma.w, globals.mirror.w, vec4(globals.effect_slot_groups_0.w, globals.effect_slot_groups_1.w, globals.effect_slot_groups_2.w, 0u), vec4(globals.effect_slot_enabled_0.w, globals.effect_slot_enabled_1.w, globals.effect_slot_enabled_2.w, 0u), vec4(globals.effect_slot_mix_0.w, globals.effect_slot_mix_1.w, globals.effect_slot_mix_2.w, 0.0));
-    let aspect_a = f32(textureDimensions(source_a).x) / max(f32(textureDimensions(source_a).y), 1.0);
-    let aspect_b = f32(textureDimensions(source_b).x) / max(f32(textureDimensions(source_b).y), 1.0);
-    let aspect_c = f32(textureDimensions(source_c).x) / max(f32(textureDimensions(source_c).y), 1.0);
-    let aspect_d = f32(textureDimensions(source_d).x) / max(f32(textureDimensions(source_d).y), 1.0);
-    let uv_a = layer_uv(input.uv, vec2(globals.position_x.x, globals.position_y.x), globals.scale.x, globals.rotation.x, globals.flip_horizontal.x, globals.flip_vertical.x, aspect_a, vec4(globals.crop_left.x, globals.crop_right.x, globals.crop_top.x, globals.crop_bottom.x), globals.source_modes.x);
-    let uv_b = layer_uv(input.uv, vec2(globals.position_x.y, globals.position_y.y), globals.scale.y, globals.rotation.y, globals.flip_horizontal.y, globals.flip_vertical.y, aspect_b, vec4(globals.crop_left.y, globals.crop_right.y, globals.crop_top.y, globals.crop_bottom.y), globals.source_modes.y);
-    let uv_c = layer_uv(input.uv, vec2(globals.position_x.z, globals.position_y.z), globals.scale.z, globals.rotation.z, globals.flip_horizontal.z, globals.flip_vertical.z, aspect_c, vec4(globals.crop_left.z, globals.crop_right.z, globals.crop_top.z, globals.crop_bottom.z), globals.source_modes.z);
-    let uv_d = layer_uv(input.uv, vec2(globals.position_x.w, globals.position_y.w), globals.scale.w, globals.rotation.w, globals.flip_horizontal.w, globals.flip_vertical.w, aspect_d, vec4(globals.crop_left.w, globals.crop_right.w, globals.crop_top.w, globals.crop_bottom.w), globals.source_modes.w);
-    let a = process_layer(source_a, alpha_a, uv_a, globals.source_kinds.x, globals.levels.x, effect_a);
-    let b = process_layer(source_b, alpha_b, uv_b, globals.source_kinds.y, globals.levels.y, effect_b);
-    let c = process_layer(source_c, alpha_c, uv_c, globals.source_kinds.z, globals.levels.z, effect_c);
-    let d = process_layer(source_d, alpha_d, uv_d, globals.source_kinds.w, globals.levels.w, effect_d);
+fn transformed_layer_uv(input_uv: vec2<f32>, index: u32, source_aspect: f32) -> vec3<f32> {
+    return layer_uv(
+        input_uv,
+        vec2(globals.position_x[index], globals.position_y[index]),
+        globals.scale[index],
+        globals.rotation[index],
+        globals.flip_horizontal[index],
+        globals.flip_vertical[index],
+        source_aspect,
+        vec4(globals.crop_left[index], globals.crop_right[index], globals.crop_top[index], globals.crop_bottom[index]),
+        globals.source_modes[index],
+    );
+}
 
+fn process_deck_a(input_uv: vec2<f32>) -> vec4<f32> {
+    let dimensions = textureDimensions(source_a);
+    let aspect = f32(dimensions.x) / max(f32(dimensions.y), 1.0);
+    return process_layer(source_a, alpha_a, transformed_layer_uv(input_uv, 0u, aspect), globals.source_kinds.x, globals.levels.x, effect_config(0u));
+}
+
+fn process_deck_b(input_uv: vec2<f32>) -> vec4<f32> {
+    let dimensions = textureDimensions(source_b);
+    let aspect = f32(dimensions.x) / max(f32(dimensions.y), 1.0);
+    return process_layer(source_b, alpha_b, transformed_layer_uv(input_uv, 1u, aspect), globals.source_kinds.y, globals.levels.y, effect_config(1u));
+}
+
+fn process_deck_c(input_uv: vec2<f32>) -> vec4<f32> {
+    let dimensions = textureDimensions(source_c);
+    let aspect = f32(dimensions.x) / max(f32(dimensions.y), 1.0);
+    return process_layer(source_c, alpha_c, transformed_layer_uv(input_uv, 2u, aspect), globals.source_kinds.z, globals.levels.z, effect_config(2u));
+}
+
+fn process_deck_d(input_uv: vec2<f32>) -> vec4<f32> {
+    let dimensions = textureDimensions(source_d);
+    let aspect = f32(dimensions.x) / max(f32(dimensions.y), 1.0);
+    return process_layer(source_d, alpha_d, transformed_layer_uv(input_uv, 3u, aspect), globals.source_kinds.w, globals.levels.w, effect_config(3u));
+}
+
+fn composite_layers(a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>) -> vec4<f32> {
     var bus_a = vec4(0.0);
     var bus_b = vec4(0.0);
     if globals.bus_assignments.x == 0u {
@@ -753,4 +789,38 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         + bus_b * globals.crossfade_gains.y;
     mixed *= globals.master_opacity;
     return vec4(mixed.rgb, 1.0);
+}
+
+@fragment fn fs_deck_a(input: VertexOutput) -> @location(0) vec4<f32> { return process_deck_a(input.uv); }
+@fragment fn fs_deck_b(input: VertexOutput) -> @location(0) vec4<f32> { return process_deck_b(input.uv); }
+@fragment fn fs_deck_c(input: VertexOutput) -> @location(0) vec4<f32> { return process_deck_c(input.uv); }
+@fragment fn fs_deck_d(input: VertexOutput) -> @location(0) vec4<f32> { return process_deck_d(input.uv); }
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    if globals.blackout != 0u {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    return composite_layers(
+        process_deck_a(input.uv),
+        process_deck_b(input.uv),
+        process_deck_c(input.uv),
+        process_deck_d(input.uv),
+    );
+}
+
+@fragment
+fn fs_main_with_deck_overrides(input: VertexOutput) -> @location(0) vec4<f32> {
+    if globals.blackout != 0u {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    var a: vec4<f32>;
+    var b: vec4<f32>;
+    var c: vec4<f32>;
+    var d: vec4<f32>;
+    if globals.deck_override_mask.x != 0u { a = textureSample(deck_override_a, source_sampler, input.uv); } else { a = process_deck_a(input.uv); }
+    if globals.deck_override_mask.y != 0u { b = textureSample(deck_override_b, source_sampler, input.uv); } else { b = process_deck_b(input.uv); }
+    if globals.deck_override_mask.z != 0u { c = textureSample(deck_override_c, source_sampler, input.uv); } else { c = process_deck_c(input.uv); }
+    if globals.deck_override_mask.w != 0u { d = textureSample(deck_override_d, source_sampler, input.uv); } else { d = process_deck_d(input.uv); }
+    return composite_layers(a, b, c, d);
 }

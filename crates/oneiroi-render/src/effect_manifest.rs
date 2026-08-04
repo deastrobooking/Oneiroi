@@ -358,22 +358,23 @@ fn validate_manifest(manifest: &EffectManifest) -> Result<(), EffectManifestErro
                 ));
             }
             let targets: HashSet<_> = manifest.targets.iter().copied().collect();
-            if targets.len() != 1 || manifest.targets.len() != 1 {
+            if targets.is_empty() || targets.len() > 2 || targets.len() != manifest.targets.len() {
                 return Err(EffectManifestError::Invalid(
-                    "manifest v2 must declare exactly one unique target".to_owned(),
+                    "manifest v2 must declare one or two unique targets".to_owned(),
                 ));
             }
-            let target = manifest.targets[0];
             let abi = manifest.abi.ok_or_else(|| {
                 EffectManifestError::Invalid(
                     "manifest v2 must explicitly declare its shader ABI".to_owned(),
                 )
             })?;
-            if !matches!(
-                (target, abi),
-                (EffectPackageTarget::Master, EffectPackageAbi::MasterV1)
-                    | (EffectPackageTarget::Deck, EffectPackageAbi::DeckV1)
-            ) {
+            let compatible = match abi {
+                EffectPackageAbi::MasterV1 => {
+                    targets == HashSet::from([EffectPackageTarget::Master])
+                }
+                EffectPackageAbi::DeckV1 => targets.contains(&EffectPackageTarget::Deck),
+            };
+            if !compatible {
                 return Err(EffectManifestError::Invalid(
                     "manifest target and shader ABI are incompatible".to_owned(),
                 ));
@@ -418,7 +419,7 @@ fn validate_manifest(manifest: &EffectManifest) -> Result<(), EffectManifestErro
         )));
     }
     if manifest.version == 2
-        && manifest.targets == [EffectPackageTarget::Deck]
+        && manifest.targets.contains(&EffectPackageTarget::Deck)
         && (manifest.pass_entries().len() != 1
             || manifest.resources.history != EffectHistoryResource::None)
     {

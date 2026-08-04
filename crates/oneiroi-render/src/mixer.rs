@@ -1,11 +1,14 @@
 //! Four-source GPU compositor for unified media frames.
 
+use std::path::PathBuf;
+
 use bytemuck::{Pod, Zeroable};
 use oneiroi_hap::CompressedPlaneFormat;
 use oneiroi_media::{RgbaFrame, VideoFramePayload};
 use thiserror::Error;
 
-use crate::{CompressedTexture, UploadError};
+use crate::deck_effect::{DeckEffectPass, DeckEffectRuntime};
+use crate::{CompressedTexture, DeckPackageSlot, UploadError};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -60,6 +63,7 @@ struct MixerGlobals {
     blackout: u32,
     _padding_a: u32,
     _padding_b: u32,
+    deck_override_mask: [u32; 4],
 }
 
 pub const EFFECT_SLOTS_PER_DECK: usize = 3;
@@ -959,6 +963,13 @@ impl TextureResource {
             Self::Compressed(texture) => &texture.view,
         }
     }
+
+    fn extent(&self) -> [u32; 2] {
+        match self {
+            Self::Rgba { extent, .. } => *extent,
+            Self::Compressed(texture) => texture.visible_extent,
+        }
+    }
 }
 
 struct DeckSource {
@@ -967,15 +978,31 @@ struct DeckSource {
     kind: u32,
 }
 
+struct DeckPackageTargets {
+    extent: [u32; 2],
+    _input_texture: wgpu::Texture,
+    input_view: wgpu::TextureView,
+    _output_textures: [wgpu::Texture; 4],
+    output_views: [wgpu::TextureView; 4],
+    override_bind_group: wgpu::BindGroup,
+    passes: [DeckEffectPass; 4],
+}
+
 pub struct FourDeckCompositor {
     pipeline: wgpu::RenderPipeline,
+    deck_override_pipeline: wgpu::RenderPipeline,
+    deck_layer_pipelines: [wgpu::RenderPipeline; 4],
     layout: wgpu::BindGroupLayout,
+    deck_override_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     globals: wgpu::Buffer,
     transparent: TextureResource,
     opaque_alpha: TextureResource,
     sources: [Option<DeckSource>; 4],
     bind_group: Option<wgpu::BindGroup>,
+    deck_effects: DeckEffectRuntime,
+    deck_package_targets: Option<DeckPackageTargets>,
+    output_format: wgpu::TextureFormat,
 }
 
 impl FourDeckCompositor {
@@ -1005,36 +1032,49 @@ impl FourDeckCompositor {
             label: Some("four-deck-mixer-layout"),
             entries: &entries,
         });
+        let deck_override_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("four-deck-mixer-override-layout"),
+                entries: &(0..4).map(texture_layout_entry).collect::<Vec<_>>(),
+            });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("four-deck-mixer-pipeline-layout"),
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("four-deck-mixer-pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: output_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let override_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("four-deck-mixer-override-pipeline-layout"),
+                bind_group_layouts: &[Some(&layout), Some(&deck_override_layout)],
+                immediate_size: 0,
+            });
+        let pipeline = create_mixer_pipeline(
+            device,
+            &pipeline_layout,
+            &shader,
+            "fs_main",
+            output_format,
+            "four-deck-mixer-pipeline",
+        );
+        let deck_override_pipeline = create_mixer_pipeline(
+            device,
+            &override_pipeline_layout,
+            &shader,
+            "fs_main_with_deck_overrides",
+            output_format,
+            "four-deck-mixer-override-pipeline",
+        );
+        let deck_layer_pipelines =
+            ["fs_deck_a", "fs_deck_b", "fs_deck_c", "fs_deck_d"].map(|entry| {
+                create_mixer_pipeline(
+                    device,
+                    &pipeline_layout,
+                    &shader,
+                    entry,
+                    output_format,
+                    "oneiroi-deck-precomposition-pipeline",
+                )
+            });
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("four-deck-mixer-globals"),
             size: size_of::<MixerGlobals>() as u64,
@@ -1051,17 +1091,103 @@ impl FourDeckCompositor {
         });
         let transparent = solid_texture(device, queue, [0, 0, 0, 0], "transparent-source");
         let opaque_alpha = solid_texture(device, queue, [255; 4], "opaque-alpha");
+        let deck_effects = DeckEffectRuntime::new(device, output_format);
 
         Self {
             pipeline,
+            deck_override_pipeline,
+            deck_layer_pipelines,
             layout,
+            deck_override_layout,
             sampler,
             globals,
             transparent,
             opaque_alpha,
             sources: std::array::from_fn(|_| None),
             bind_group: None,
+            deck_effects,
+            deck_package_targets: None,
+            output_format,
         }
+    }
+
+    /// Allocate the fixed one-input/four-output deck package budget at a
+    /// composition resize boundary. No package texture is created in `draw`.
+    pub fn set_output_extent(&mut self, device: &wgpu::Device, extent: [u32; 2]) {
+        let extent = [extent[0].max(1), extent[1].max(1)];
+        if self
+            .deck_package_targets
+            .as_ref()
+            .is_some_and(|targets| targets.extent == extent)
+        {
+            return;
+        }
+        let make_texture = |label| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: extent[0],
+                    height: extent[1],
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.output_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+        };
+        let input_texture = make_texture("oneiroi-deck-package-input");
+        let input_view = input_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let output_textures = std::array::from_fn(|index| {
+            make_texture(match index {
+                0 => "oneiroi-deck-a-package-output",
+                1 => "oneiroi-deck-b-package-output",
+                2 => "oneiroi-deck-c-package-output",
+                _ => "oneiroi-deck-d-package-output",
+            })
+        });
+        let output_views = output_textures
+            .each_ref()
+            .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()));
+        let override_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("four-deck-mixer-override-bind-group"),
+            layout: &self.deck_override_layout,
+            entries: &[
+                texture_entry(0, &output_views[0]),
+                texture_entry(1, &output_views[1]),
+                texture_entry(2, &output_views[2]),
+                texture_entry(3, &output_views[3]),
+            ],
+        });
+        let passes = self.deck_effects.create_passes(device, &input_view);
+        self.deck_package_targets = Some(DeckPackageTargets {
+            extent,
+            _input_texture: input_texture,
+            input_view,
+            _output_textures: output_textures,
+            output_views,
+            override_bind_group,
+            passes,
+        });
+    }
+
+    pub fn watch_deck_effect_manifests(&mut self, paths: Vec<PathBuf>) {
+        self.deck_effects.watch_manifests(paths);
+    }
+
+    pub fn poll_deck_effect_reload(&mut self) -> bool {
+        self.deck_effects.poll_reload()
+    }
+
+    pub fn deck_effect_reload_status(&self) -> &str {
+        self.deck_effects.status()
+    }
+
+    pub fn deck_effect_loaded(&self, id: &str) -> bool {
+        self.deck_effects.is_loaded(id)
     }
 
     pub fn upload(
@@ -1156,6 +1282,19 @@ impl FourDeckCompositor {
         target: &wgpu::TextureView,
         params: MixerParams,
     ) {
+        let deck_packages = std::array::from_fn(|_| DeckPackageSlot::default());
+        self.draw_with_deck_packages(device, queue, encoder, target, params, &deck_packages);
+    }
+
+    pub fn draw_with_deck_packages(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        params: MixerParams,
+        deck_packages: &[DeckPackageSlot; 4],
+    ) {
         let kinds = std::array::from_fn(|index| {
             self.sources[index].as_ref().map_or(0, |source| source.kind)
         });
@@ -1168,6 +1307,19 @@ impl FourDeckCompositor {
             } else {
                 params.levels[index]
             }
+        });
+        let targets_ready = self.deck_package_targets.is_some();
+        let deck_override_mask = std::array::from_fn(|index| {
+            u32::from(
+                targets_ready
+                    && !params.blackout
+                    && levels[index] > 0.0
+                    && self.sources[index].is_some()
+                    && deck_packages[index].active()
+                    && self
+                        .deck_effects
+                        .is_loaded(&deck_packages[index].package_id),
+            )
         });
         let float_values = |read: fn(DeckEffects) -> f32| effects.map(read);
         let slot_groups = |slot: usize| {
@@ -1245,10 +1397,56 @@ impl FourDeckCompositor {
                 blackout: u32::from(params.blackout),
                 _padding_a: 0,
                 _padding_b: 0,
+                deck_override_mask,
             }),
         );
         if self.bind_group.is_none() {
             self.bind_group = Some(self.create_bind_group(device));
+        }
+        if deck_override_mask.into_iter().any(|active| active != 0) {
+            let source_bind_group = self.bind_group.as_ref().unwrap();
+            let targets = self.deck_package_targets.as_ref().unwrap();
+            for index in 0..4 {
+                if deck_override_mask[index] == 0 {
+                    continue;
+                }
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("oneiroi-deck-precomposition-pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &targets.input_view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    pass.set_pipeline(&self.deck_layer_pipelines[index]);
+                    pass.set_bind_group(0, source_bind_group, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                let source_extent = self.sources[index]
+                    .as_ref()
+                    .map_or([1, 1], |source| source.primary.extent());
+                let package_executed = self.deck_effects.draw(
+                    queue,
+                    encoder,
+                    &targets.passes[index],
+                    &targets.output_views[index],
+                    &deck_packages[index],
+                    index,
+                    source_extent,
+                    targets.extent,
+                    params.time_seconds,
+                );
+                debug_assert!(package_executed);
+            }
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("four-deck-mixer-pass"),
@@ -1266,8 +1464,24 @@ impl FourDeckCompositor {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
+        let uses_deck_overrides = deck_override_mask.into_iter().any(|active| active != 0);
+        pass.set_pipeline(if uses_deck_overrides {
+            &self.deck_override_pipeline
+        } else {
+            &self.pipeline
+        });
         pass.set_bind_group(0, self.bind_group.as_ref().unwrap(), &[]);
+        if uses_deck_overrides {
+            pass.set_bind_group(
+                1,
+                &self
+                    .deck_package_targets
+                    .as_ref()
+                    .unwrap()
+                    .override_bind_group,
+                &[],
+            );
+        }
         pass.draw(0..3, 0..1);
     }
 
@@ -1310,6 +1524,41 @@ impl FourDeckCompositor {
             .and_then(|source| source.secondary.as_ref())
             .map_or(self.opaque_alpha.view(), TextureResource::view)
     }
+}
+
+fn create_mixer_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    fragment_entry: &str,
+    output_format: wgpu::TextureFormat,
+    label: &str,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(fragment_entry),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: output_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 fn update_hap_source(

@@ -3,6 +3,7 @@
 //! Knows nothing about winit or egui: the surface is created from an opaque
 //! `wgpu::SurfaceTarget`, so the windowing layer stays in `oneiroi-app`.
 
+mod deck_effect;
 pub mod effect_manifest;
 pub mod gpu;
 pub mod graph_plan;
@@ -11,6 +12,7 @@ pub mod program;
 pub mod triangle;
 pub mod upload;
 
+pub use deck_effect::{DECK_EFFECT_PARAMETER_CAPACITY, DeckPackageSlot};
 pub use effect_manifest::{
     EFFECT_MANIFEST_FORMAT, EFFECT_MANIFEST_VERSION, EffectDescriptor, EffectHistoryResource,
     EffectManifest, EffectManifestError, EffectPackageAbi, EffectPackageRole, EffectPackageTarget,

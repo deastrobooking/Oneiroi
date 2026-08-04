@@ -332,7 +332,10 @@ struct MasterEffectGlobals {
     pass_count: u32,
     parameters: [f32; EFFECT_PARAMETER_CAPACITY],
     history_valid: u32,
-    _resource_padding: [u32; 3],
+    deck_index: u32,
+    source_extent: [u32; 2],
+    composition_extent: [u32; 2],
+    _resource_padding: [u32; 2],
 }
 
 #[derive(Clone, Copy)]
@@ -1052,7 +1055,10 @@ impl MasterEffectProcessor {
             pass_count: 1,
             parameters: [0.0; EFFECT_PARAMETER_CAPACITY],
             history_valid: 0,
-            _resource_padding: [0; 3],
+            deck_index: u32::MAX,
+            source_extent: self.extent,
+            composition_extent: self.extent,
+            _resource_padding: [0; 2],
         }
     }
 
@@ -1228,15 +1234,15 @@ fn compile_effect_package(
         message: error.to_string(),
         retire_custom_pipeline: false,
     })?;
+    let targets = package.manifest.resolved_targets();
     let master_compatible = package.manifest.role == EffectPackageRole::MasterProcessor
-        || (package.manifest.resolved_abi() == EffectPackageAbi::MasterV1
-            && package
-                .manifest
-                .resolved_targets()
-                .contains(&EffectPackageTarget::Master));
+        || (matches!(
+            package.manifest.resolved_abi(),
+            EffectPackageAbi::MasterV1 | EffectPackageAbi::DeckV1
+        ) && targets.contains(&EffectPackageTarget::Master));
     if !master_compatible {
         return Err(EffectReloadFailure {
-            message: "package does not target the master-v1 shader runtime".to_owned(),
+            message: "package does not target the master shader runtime".to_owned(),
             retire_custom_pipeline: true,
         });
     }
@@ -1569,7 +1575,13 @@ mod tests {
             std::mem::offset_of!(MasterEffectGlobals, history_valid),
             176
         );
-        assert_eq!(size_of::<MasterEffectGlobals>(), 192);
+        assert_eq!(std::mem::offset_of!(MasterEffectGlobals, deck_index), 180);
+        assert_eq!(std::mem::offset_of!(MasterEffectGlobals, source_extent), 184);
+        assert_eq!(
+            std::mem::offset_of!(MasterEffectGlobals, composition_extent),
+            192
+        );
+        assert_eq!(size_of::<MasterEffectGlobals>(), 208);
     }
 
     #[test]
