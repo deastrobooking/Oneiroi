@@ -1,0 +1,28 @@
+{
+  "format":"oneiroi-effect","version":1,"id":"hyper-recursion","name":"Hyper Recursion 4D+",
+  "description":"Projects recursive 4D, 5D and 6D transforms back through the source plane.",
+  "role":"master_effect","shader":"hyper_recursion.wgsl",
+  "parameters":[
+    {"id":"dimensions","label":"Dimensions","minimum":4.0,"maximum":6.0,"default":4.0,"group":"Higher-dimensional function","control":"choice","options":[{"label":"4D","value":4.0},{"label":"5D","value":5.0},{"label":"6D","value":6.0}]},
+    {"id":"function","label":"Function","minimum":0.0,"maximum":2.0,"default":0.0,"group":"Higher-dimensional function","control":"choice","options":[{"label":"Tesseract fold","value":0.0},{"label":"Quaternion square","value":1.0},{"label":"Clifford flow","value":2.0}]},
+    {"id":"iterations","label":"Recursion depth","minimum":2.0,"maximum":7.0,"default":5.0,"group":"Higher-dimensional function","control":"choice","options":[{"label":"2","value":2.0},{"label":"3","value":3.0},{"label":"4","value":4.0},{"label":"5","value":5.0},{"label":"6","value":6.0},{"label":"7","value":7.0}]},
+    {"id":"scale","label":"Recursive scale","minimum":0.55,"maximum":1.9,"default":1.22,"group":"Higher-dimensional function"},
+    {"id":"rotate-xy","label":"XY rotation","minimum":-3.14159,"maximum":3.14159,"default":0.22,"group":"4D transform"},
+    {"id":"rotate-xw","label":"XW rotation","minimum":-3.14159,"maximum":3.14159,"default":0.48,"group":"4D transform"},
+    {"id":"rotate-zw","label":"ZW rotation","minimum":-3.14159,"maximum":3.14159,"default":-0.31,"group":"4D transform"},
+    {"id":"slice","label":"W slice","minimum":-2.0,"maximum":2.0,"default":0.15,"group":"4D transform"},
+    {"id":"key-x","label":"Key X","minimum":-1.5,"maximum":1.5,"default":0.72,"group":"Key variables"},
+    {"id":"key-y","label":"Key Y","minimum":-1.5,"maximum":1.5,"default":0.54,"group":"Key variables"},
+    {"id":"key-z","label":"Key Z","minimum":-1.5,"maximum":1.5,"default":0.38,"group":"Key variables"},
+    {"id":"key-w","label":"Key W","minimum":-1.5,"maximum":1.5,"default":0.63,"group":"Key variables"},
+    {"id":"projection","label":"Projection depth","minimum":0.0,"maximum":2.5,"default":0.8,"group":"Projection"},
+    {"id":"source-mix","label":"Source preservation","minimum":0.0,"maximum":1.0,"default":0.3,"group":"Projection"},
+    {"id":"bands","label":"Dimensional bands","minimum":0.0,"maximum":1.5,"default":0.55,"group":"Projection"},
+    {"id":"animate","label":"Animate rotations","minimum":0.0,"maximum":1.0,"default":1.0,"group":"Motion","control":"toggle"}
+  ],
+  "presets":[
+    {"id":"tesseract-bloom","label":"Tesseract bloom","description":"Crisp 4D box folds with spectral orbit bands.","values":{"dimensions":4.0,"function":0.0,"iterations":5.0,"scale":1.22,"rotate-xw":0.48,"slice":0.15,"projection":0.8,"bands":0.55}},
+    {"id":"quaternion-liquid","label":"Quaternion liquid","description":"A fluid five-dimensional quadratic projection.","values":{"dimensions":5.0,"function":1.0,"iterations":6.0,"scale":0.72,"rotate-xy":-0.18,"rotate-zw":0.66,"slice":-0.42,"source-mix":0.16,"bands":0.92}},
+    {"id":"six-d-signal","label":"6D signal","description":"Dense Clifford oscillation for high-energy psychedelic output.","values":{"dimensions":6.0,"function":2.0,"iterations":7.0,"scale":1.48,"rotate-xy":0.72,"rotate-xw":-0.84,"rotate-zw":1.1,"projection":1.45,"source-mix":0.08,"bands":1.25}}
+  ]
+}

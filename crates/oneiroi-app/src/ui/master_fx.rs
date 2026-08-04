@@ -61,7 +61,50 @@ pub(super) fn draw_custom_effect(
     if package.history == EffectHistoryResource::PreviousSlotOutput {
         ui.weak("Persistent previous-slot-output history");
     }
+    if !package.description.is_empty() {
+        ui.label(&package.description);
+    }
+    if !package.presets.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.strong("Looks");
+            for preset in &package.presets {
+                let response = ui.small_button(&preset.label);
+                if response.clicked() {
+                    for (parameter_id, preset_value) in &preset.values {
+                        if let Some(value) = slot
+                            .parameters
+                            .iter_mut()
+                            .find(|value| value.id == *parameter_id)
+                        {
+                            value.value = *preset_value;
+                        }
+                    }
+                }
+                if !preset.description.is_empty() {
+                    response.on_hover_text(&preset.description);
+                }
+            }
+            if ui.small_button("Reset controls").clicked() {
+                for parameter in &package.parameters {
+                    if let Some(value) = slot
+                        .parameters
+                        .iter_mut()
+                        .find(|value| value.id == parameter.id)
+                    {
+                        value.value = parameter.default;
+                    }
+                }
+            }
+        });
+    }
+    let mut previous_group = None::<&str>;
     for parameter in &package.parameters {
+        let group = parameter.group.trim();
+        if !group.is_empty() && previous_group != Some(group) {
+            ui.add_space(3.0);
+            ui.strong(group);
+            previous_group = Some(group);
+        }
         let value_index = slot
             .parameters
             .iter()
@@ -74,13 +117,50 @@ pub(super) fn draw_custom_effect(
             slot.parameters.len() - 1
         });
         ui.horizontal(|ui| {
-            ui.add(
-                egui::Slider::new(
-                    &mut slot.parameters[index].value,
-                    parameter.minimum..=parameter.maximum,
-                )
-                .text(&parameter.label),
-            );
+            match parameter.control {
+                EffectParameterControl::Slider => {
+                    ui.add(
+                        egui::Slider::new(
+                            &mut slot.parameters[index].value,
+                            parameter.minimum..=parameter.maximum,
+                        )
+                        .text(&parameter.label),
+                    );
+                }
+                EffectParameterControl::Toggle => {
+                    let mut enabled = slot.parameters[index].value >= 0.5;
+                    if ui.checkbox(&mut enabled, &parameter.label).changed() {
+                        slot.parameters[index].value = if enabled { 1.0 } else { 0.0 };
+                    }
+                }
+                EffectParameterControl::Choice => {
+                    let selected = parameter
+                        .options
+                        .iter()
+                        .min_by(|left, right| {
+                            (left.value - slot.parameters[index].value)
+                                .abs()
+                                .total_cmp(&(right.value - slot.parameters[index].value).abs())
+                        })
+                        .map_or("Choose", |option| option.label.as_str());
+                    ui.label(&parameter.label);
+                    egui::ComboBox::from_id_salt((
+                        "master-custom-choice",
+                        slot_index,
+                        parameter.id.as_str(),
+                    ))
+                    .selected_text(selected)
+                    .show_ui(ui, |ui| {
+                        for option in &parameter.options {
+                            ui.selectable_value(
+                                &mut slot.parameters[index].value,
+                                option.value,
+                                &option.label,
+                            );
+                        }
+                    });
+                }
+            }
             let target = ControlTarget::MasterEffectParameter {
                 slot: slot_index as u8,
                 parameter_key: effect_parameter_key(&slot.package_id, &parameter.id),

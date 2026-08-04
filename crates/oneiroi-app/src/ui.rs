@@ -37,8 +37,9 @@ use oneiroi_media::{
 };
 use oneiroi_render::{
     BlendModeGroup, DeckEffects, DeckLfos, DeckTransform, EffectDescriptor, EffectHistoryResource,
-    EffectParameterValue, EffectPreset, EffectTarget, LayerBlendMode, LfoWaveform,
-    MasterEffectChain, MasterEffectKind, MasterEffectSlot, MasterModulation, SourceMode,
+    EffectParameterControl, EffectParameterValue, EffectPreset, EffectTarget, LayerBlendMode,
+    LfoWaveform, MasterEffectChain, MasterEffectKind, MasterEffectSlot, MasterModulation,
+    SourceMode,
 };
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.

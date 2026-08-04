@@ -41,6 +41,38 @@ package-relative `.wgsl` paths without traversal. A package declares 1–32
 unique finite parameter ranges. Parameter IDs are persisted in projects, while
 the shader receives values in manifest declaration order.
 
+### Extended controls and looks
+
+Parameters remain sliders by default. Packages can opt into a richer generated
+interface without adding app-specific code:
+
+```json
+{
+  "id": "function",
+  "label": "Function",
+  "group": "Recursive function",
+  "minimum": 0.0,
+  "maximum": 2.0,
+  "default": 0.0,
+  "control": "choice",
+  "options": [
+    {"label": "Mirror IFS", "value": 0.0},
+    {"label": "Julia warp", "value": 1.0},
+    {"label": "Möbius petals", "value": 2.0}
+  ]
+}
+```
+
+`control` supports `slider`, `toggle`, and `choice`. Contiguous parameters with
+the same non-empty `group` receive a shared GUI heading. A package-level
+`description` appears above the controls.
+
+Package-level `presets` provide one-click looks. Each preset has a stable ID,
+label, optional description, and a partial `values` object keyed by parameter
+ID. Unlisted controls retain their current value, which makes a preset useful
+as either a complete look or a focused transform. The GUI also provides a
+reset button that restores every manifest default.
+
 `master_effect` registers a selectable custom slot effect. `passes` may contain
 one or two fragment entry points. When omitted, the legacy `fragment_entry`
 declares a one-pass effect.

@@ -1,6 +1,6 @@
 //! Validated external effect package manifests.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
@@ -21,6 +21,8 @@ pub struct EffectManifest {
     pub id: String,
     pub name: String,
     #[serde(default)]
+    pub description: String,
+    #[serde(default)]
     pub role: EffectPackageRole,
     pub shader: PathBuf,
     #[serde(default = "default_vertex_entry")]
@@ -32,6 +34,8 @@ pub struct EffectManifest {
     #[serde(default)]
     pub resources: EffectResourceSchema,
     pub parameters: Vec<EffectParameterSchema>,
+    #[serde(default)]
+    pub presets: Vec<EffectPresetSchema>,
 }
 
 impl EffectManifest {
@@ -76,6 +80,36 @@ pub struct EffectParameterSchema {
     pub minimum: f32,
     pub maximum: f32,
     pub default: f32,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub control: EffectParameterControl,
+    #[serde(default)]
+    pub options: Vec<EffectParameterOption>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectParameterControl {
+    #[default]
+    Slider,
+    Toggle,
+    Choice,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EffectParameterOption {
+    pub label: String,
+    pub value: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EffectPresetSchema {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    pub values: BTreeMap<String, f32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -96,10 +130,12 @@ pub struct ValidatedEffectPackage {
 pub struct EffectDescriptor {
     pub id: String,
     pub name: String,
+    pub description: String,
     pub manifest_path: PathBuf,
     pub parameters: Vec<EffectParameterSchema>,
     pub pass_count: usize,
     pub history: EffectHistoryResource,
+    pub presets: Vec<EffectPresetSchema>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -215,10 +251,12 @@ pub fn discover_effect_packages(root: impl AsRef<Path>) -> EffectRegistry {
                 registry.effects.push(EffectDescriptor {
                     id: package.manifest.id,
                     name: package.manifest.name,
+                    description: package.manifest.description,
                     manifest_path: path,
                     parameters: package.manifest.parameters,
                     pass_count,
                     history,
+                    presets: package.manifest.presets,
                 });
             }
             Err(error) => registry.errors.push(format!("{}: {error}", path.display())),
@@ -307,6 +345,87 @@ fn validate_manifest(manifest: &EffectManifest) -> Result<(), EffectManifestErro
                 "parameter {:?} has an invalid label or range",
                 parameter.id
             )));
+        }
+        match parameter.control {
+            EffectParameterControl::Slider if !parameter.options.is_empty() => {
+                return Err(EffectManifestError::Invalid(format!(
+                    "slider parameter {:?} cannot declare options",
+                    parameter.id
+                )));
+            }
+            EffectParameterControl::Toggle
+                if !parameter.options.is_empty()
+                    || parameter.minimum > 0.0
+                    || parameter.maximum < 1.0 =>
+            {
+                return Err(EffectManifestError::Invalid(format!(
+                    "toggle parameter {:?} must contain 0–1 and cannot declare options",
+                    parameter.id
+                )));
+            }
+            EffectParameterControl::Choice => {
+                let mut values = Vec::new();
+                if parameter.options.len() < 2
+                    || parameter.options.iter().any(|option| {
+                        option.label.trim().is_empty()
+                            || !option.value.is_finite()
+                            || !(parameter.minimum..=parameter.maximum).contains(&option.value)
+                            || values.iter().any(|value| *value == option.value)
+                            || {
+                                values.push(option.value);
+                                false
+                            }
+                    })
+                    || !values.contains(&parameter.default)
+                {
+                    return Err(EffectManifestError::Invalid(format!(
+                        "choice parameter {:?} has invalid options",
+                        parameter.id
+                    )));
+                }
+            }
+            EffectParameterControl::Slider | EffectParameterControl::Toggle => {}
+        }
+    }
+    let mut preset_ids = HashSet::new();
+    for preset in &manifest.presets {
+        if !valid_id(&preset.id)
+            || !preset_ids.insert(preset.id.as_str())
+            || preset.label.trim().is_empty()
+        {
+            return Err(EffectManifestError::Invalid(format!(
+                "preset id {:?} is invalid or duplicated",
+                preset.id
+            )));
+        }
+        for (parameter_id, value) in &preset.values {
+            let Some(parameter) = manifest
+                .parameters
+                .iter()
+                .find(|parameter| parameter.id == *parameter_id)
+            else {
+                return Err(EffectManifestError::Invalid(format!(
+                    "preset {:?} targets unknown parameter {:?}",
+                    preset.id, parameter_id
+                )));
+            };
+            if !value.is_finite() || !(parameter.minimum..=parameter.maximum).contains(value) {
+                return Err(EffectManifestError::Invalid(format!(
+                    "preset {:?} value for {:?} is outside its range",
+                    preset.id, parameter_id
+                )));
+            }
+            if parameter.control == EffectParameterControl::Choice
+                && !parameter
+                    .options
+                    .iter()
+                    .any(|option| option.value == *value)
+            {
+                return Err(EffectManifestError::Invalid(format!(
+                    "preset {:?} value for choice {:?} is not a declared option",
+                    preset.id, parameter_id
+                )));
+            }
         }
     }
     Ok(())
@@ -439,7 +558,7 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects");
         let registry = discover_effect_packages(root);
         assert!(registry.errors.is_empty(), "{:?}", registry.errors);
-        assert_eq!(registry.effects.len(), 3);
+        assert_eq!(registry.effects.len(), 6);
         assert!(
             registry
                 .effects

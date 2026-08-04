@@ -1,0 +1,30 @@
+{
+  "format": "oneiroi-effect",
+  "version": 1,
+  "id": "recursive-2d",
+  "name": "Recursive 2D Lab",
+  "description": "Nested plane transforms for kaleidoscopes, Julia warps and Möbius-like image recursion.",
+  "role": "master_effect",
+  "shader": "recursive_2d.wgsl",
+  "parameters": [
+    {"id":"function","label":"Function","minimum":0.0,"maximum":2.0,"default":0.0,"group":"Function","control":"choice","options":[{"label":"Mirror IFS","value":0.0},{"label":"Julia warp","value":1.0},{"label":"Möbius petals","value":2.0}]},
+    {"id":"iterations","label":"Recursion depth","minimum":2.0,"maximum":8.0,"default":5.0,"group":"Function","control":"choice","options":[{"label":"2","value":2.0},{"label":"3","value":3.0},{"label":"4","value":4.0},{"label":"5","value":5.0},{"label":"6","value":6.0},{"label":"7","value":7.0},{"label":"8","value":8.0}]},
+    {"id":"scale","label":"Recursive scale","minimum":0.55,"maximum":2.4,"default":1.35,"group":"Transform"},
+    {"id":"rotation","label":"Rotation","minimum":-3.14159,"maximum":3.14159,"default":0.35,"group":"Transform"},
+    {"id":"fold","label":"Fold strength","minimum":0.0,"maximum":2.0,"default":1.0,"group":"Transform"},
+    {"id":"offset-x","label":"Key X","minimum":-1.5,"maximum":1.5,"default":0.18,"group":"Key variables"},
+    {"id":"offset-y","label":"Key Y","minimum":-1.5,"maximum":1.5,"default":-0.12,"group":"Key variables"},
+    {"id":"zoom","label":"Zoom","minimum":0.2,"maximum":4.0,"default":1.0,"group":"Key variables"},
+    {"id":"spin","label":"Auto spin","minimum":-2.0,"maximum":2.0,"default":0.12,"group":"Motion"},
+    {"id":"pulse","label":"Recursive pulse","minimum":0.0,"maximum":1.0,"default":0.15,"group":"Motion"},
+    {"id":"animate","label":"Animate","minimum":0.0,"maximum":1.0,"default":1.0,"group":"Motion","control":"toggle"},
+    {"id":"source-mix","label":"Source preservation","minimum":0.0,"maximum":1.0,"default":0.35,"group":"Finish"},
+    {"id":"edge","label":"Orbit edges","minimum":0.0,"maximum":1.0,"default":0.35,"group":"Finish"},
+    {"id":"hue-cycle","label":"Hue cycle","minimum":-1.0,"maximum":1.0,"default":0.18,"group":"Finish"}
+  ],
+  "presets": [
+    {"id":"classic-fold","label":"Classic fold","description":"A deeper version of the original kaleidoscopic fold.","values":{"function":0.0,"iterations":5.0,"scale":1.35,"rotation":0.35,"fold":1.0,"source-mix":0.35,"edge":0.35}},
+    {"id":"julia-dream","label":"Julia dream","description":"Soft animated quadratic recursion.","values":{"function":1.0,"iterations":7.0,"scale":1.1,"rotation":-0.22,"offset-x":-0.64,"offset-y":0.42,"pulse":0.35,"source-mix":0.18,"hue-cycle":0.42}},
+    {"id":"petal-engine","label":"Petal engine","description":"Dense Möbius-style floral repetition.","values":{"function":2.0,"iterations":6.0,"scale":1.7,"rotation":0.62,"fold":1.6,"zoom":1.4,"spin":-0.18,"edge":0.72}}
+  ]
+}

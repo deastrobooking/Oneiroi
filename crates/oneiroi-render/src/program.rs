@@ -1455,6 +1455,9 @@ mod tests {
             minimum: 0.0,
             maximum: 1.0,
             default: 0.5,
+            group: String::new(),
+            control: crate::EffectParameterControl::Slider,
+            options: Vec::new(),
         };
         let key = effect_parameter_key("test-effect", "amount");
         let mut modulation = MasterModulation::default();

@@ -15,7 +15,7 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Triggering | Immediate, next-beat and next-bar clip/scene launches, per-slot restart/resume and BPM-relative beat duration |
 | Mixing | Independent A/B composites, 35 blend modes, Solo/Bypass, transforms, crop/source modes, linear/equal-power crossfade, master opacity and blackout |
 | Output | Offscreen preset/custom program target, clean second window, display selection, aspect preservation, enable/fullscreen, calibration overlays and surface-health diagnostics |
-| Effects | Three reorderable deck groups plus two master slots; color/levels, mirror, neon, fractal, jitter, edges, bit reduction, black light, pixelate, luma key, separable blur and persistent feedback/trails |
+| Effects | Three reorderable deck groups plus two master slots; original fractal fold, recursive 2D, volumetric 3D and 4D–6D projections, grouped package controls and one-click looks, color/levels, mirror, neon, jitter, edges, bit reduction, black light, pixelate, luma key, separable blur and persistent feedback/trails |
 | Modulation | Three LFOs and eight bipolar routes per deck across 18 continuous effect destinations |
 | OSC | Bounded OSC 1.0 UDP input/output, nested bundles, NTP-timetag scheduling, initial state snapshots, live health counters and origin-aware routes for mixer, decks, clips, scenes, tempo and output |
 | Musical control | Manual BPM, Tap, half/double, beat/bar phase and synchronized LFO divisions |
