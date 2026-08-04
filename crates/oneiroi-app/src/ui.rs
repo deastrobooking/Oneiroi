@@ -836,6 +836,34 @@ pub fn draw(
                         ui.weak(&state.effect_reload_status);
                     }
                 });
+            } else {
+                egui::CollapsingHeader::new("LIVE MASTER EFFECTS")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        for (index, slot) in state.master_effects.slots.iter_mut().enumerate() {
+                            let label = if slot.kind == MasterEffectKind::Custom {
+                                state
+                                    .effect_packages
+                                    .iter()
+                                    .find(|package| package.id == slot.package_id)
+                                    .map_or("Missing custom package", |package| {
+                                        package.name.as_str()
+                                    })
+                            } else {
+                                slot.kind.label()
+                            };
+                            ui.horizontal(|ui| {
+                                ui.monospace(format!("{}", index + 1));
+                                ui.strong(label);
+                                ui.checkbox(&mut slot.bypassed, "Bypass");
+                                ui.add(egui::Slider::new(&mut slot.mix, 0.0..=1.0).text("wet"));
+                            });
+                        }
+                        state.master_effects.sanitize();
+                        ui.weak(
+                            "Effect choice, order and advanced parameters are locked in Show Mode.",
+                        );
+                    });
             }
         });
     draw_midi_manager(ctx, state, &mut metrics.midi, &palette, &mut actions);

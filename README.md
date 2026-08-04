@@ -72,7 +72,8 @@ target OS:
   selected/queued/active clip states.
 - An always-visible rig preflight rail plus a transient Show Mode that protects
   setup, media management and structural editors while keeping performance
-  controls live.
+  controls, compact master-effect identity/bypass/wet cards and deck effects
+  live.
 - Two reorderable master-effect slots with persisted bypass/dry-wet controls
   plus separable Gaussian blur and persistent feedback/trails backed by fixed
   ping-pong and history textures.
@@ -82,6 +83,12 @@ target OS:
 - Registry-discovered custom master effects with schema-generated sliders,
   named parameter persistence and neutral pass-through when a saved package is
   unavailable. The bundled Chromatic Split package is the reference example.
+- Bundled algorithmic master effects for recursive 2D transforms, volumetric
+  3D fractal fields and projected 4D–6D recursion, with grouped controls and
+  three one-click looks per package.
+- Launch-directory-independent effect discovery from development, adjacent
+  release and macOS bundle resources, plus the per-user effect directory and
+  optional `ONEIROI_EFFECT_PATH` roots.
 - Three master LFOs and eight stable-ID custom-parameter routes with audio,
   beat and bar sources, plus generated per-parameter MIDI Learn/Clear controls.
 - Declarative one- or two-pass custom packages compiled and installed
@@ -192,6 +199,7 @@ landed yet.
 cargo run          # the app; select a deck and drop movies
 cargo run -- a.mp4 b.mov c.mkv d.webm  # preload decks A-D
 cargo run -- show.oneiroi              # open and restore a project
+ONEIROI_EFFECT_PATH=/path/to/effects cargo run  # add package roots
 cargo test         # includes a headless GPU readback test
 cargo run -p oneiroi-media --example probe_movie -- footage.mp4
 cargo run -p oneiroi-render --example dump_frame > frame.raw \

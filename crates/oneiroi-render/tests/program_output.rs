@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use oneiroi_render::{
     EffectParameterValue, MasterEffectChain, MasterEffectKind, MasterEffectProcessor,
     MasterEffectSlot, PROGRAM_FORMAT, PresentationOptions, ProgramPresenter, ProgramTarget,
+    load_effect_package,
 };
 
 const SIZE: u32 = 64;
@@ -348,14 +349,40 @@ fn rejected_effect_reload_preserves_the_last_good_pipeline() {
         std::env::temp_dir().join(format!("oneiroi-effect-reload-test-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let manifest_path = directory.join("effect.json");
-    fs::write(&manifest_path, "{not valid json").unwrap();
+    let bundled =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects/chromatic-split");
+    fs::copy(bundled.join("effect.json"), &manifest_path).unwrap();
+    fs::copy(
+        bundled.join("chromatic_split.wgsl"),
+        directory.join("chromatic_split.wgsl"),
+    )
+    .unwrap();
 
     let program = ProgramTarget::new(&device, [SIZE, SIZE]);
     let presenter = ProgramPresenter::new(&device, &program, PROGRAM_FORMAT);
     let mut processor = MasterEffectProcessor::new(&device, &program);
-    processor.watch_effect_manifest(manifest_path);
+    processor.watch_effect_manifest(manifest_path.clone());
     let deadline = Instant::now() + Duration::from_secs(2);
-    while !processor.poll_effect_reload() && Instant::now() < deadline {
+    while !processor.custom_effect_loaded("chromatic-split") && Instant::now() < deadline {
+        processor.poll_effect_reload();
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        processor.custom_effect_loaded("chromatic-split"),
+        "{}",
+        processor.reload_status()
+    );
+
+    fs::write(&manifest_path, "{not valid json").unwrap();
+    processor.watch_effect_manifest(manifest_path);
+    assert!(
+        processor.custom_effect_loaded("chromatic-split"),
+        "watching the same package discarded its last-known-good pipeline"
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !processor.reload_status().contains("using last known good") && Instant::now() < deadline
+    {
+        processor.poll_effect_reload();
         thread::sleep(Duration::from_millis(10));
     }
     assert!(
@@ -363,12 +390,13 @@ fn rejected_effect_reload_preserves_the_last_good_pipeline() {
         "{}",
         processor.reload_status()
     );
+    assert!(processor.custom_effect_loaded("chromatic-split"));
 
-    let missing_custom = MasterEffectChain {
+    let loaded_custom = MasterEffectChain {
         slots: [
             MasterEffectSlot {
                 kind: MasterEffectKind::Custom,
-                package_id: "missing-package".to_owned(),
+                package_id: "chromatic-split".to_owned(),
                 ..MasterEffectSlot::default()
             },
             MasterEffectSlot::default(),
@@ -381,7 +409,7 @@ fn rejected_effect_reload_preserves_the_last_good_pipeline() {
         &mut processor,
         &presenter,
         wgpu::Color::GREEN,
-        &missing_custom,
+        &loaded_custom,
     );
     assert_eq!(color, [0, 255, 0, 255]);
     fs::remove_dir_all(directory).unwrap();
@@ -444,6 +472,98 @@ fn registered_custom_effect_compiles_and_runs_through_the_master_slot() {
         &chain,
     );
     assert_eq!(color, [0, 255, 0, 255]);
+}
+
+#[test]
+fn bundled_algorithmic_effects_compile_and_render_through_the_master_slot() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let effect_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects");
+    let packages = [
+        ("recursive-2d", "recursive-2d/effect.json"),
+        ("fractal-volume", "fractal-volume/effect.json"),
+        ("hyper-recursion", "hyper-recursion/effect.json"),
+    ];
+    let manifest_paths: Vec<_> = packages
+        .iter()
+        .map(|(_, relative)| effect_root.join(relative))
+        .collect();
+    let program = ProgramTarget::new(&device, [SIZE, SIZE]);
+    let presenter = ProgramPresenter::new(&device, &program, PROGRAM_FORMAT);
+    let mut processor = MasterEffectProcessor::new(&device, &program);
+    processor.watch_effect_manifests(manifest_paths.clone());
+    let deadline = Instant::now() + Duration::from_secs(4);
+    while packages
+        .iter()
+        .any(|(id, _)| !processor.custom_effect_loaded(id))
+        && Instant::now() < deadline
+    {
+        processor.poll_effect_reload();
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    for ((id, _), manifest_path) in packages.iter().zip(&manifest_paths) {
+        assert!(
+            processor.custom_effect_loaded(id),
+            "{id}: {}",
+            processor.reload_status()
+        );
+        assert_eq!(processor.custom_effect_pass_count(id), Some(1), "{id}");
+        let package = load_effect_package(manifest_path).unwrap();
+        let parameters = package
+            .manifest
+            .parameters
+            .iter()
+            .map(|parameter| EffectParameterValue {
+                id: parameter.id.clone(),
+                value: parameter.default,
+            })
+            .collect();
+        let slot = MasterEffectSlot {
+            kind: MasterEffectKind::Custom,
+            package_id: (*id).to_owned(),
+            parameters,
+            ..MasterEffectSlot::default()
+        };
+        let dry = MasterEffectChain {
+            slots: [
+                MasterEffectSlot {
+                    mix: 0.0,
+                    ..slot.clone()
+                },
+                MasterEffectSlot::default(),
+            ],
+        };
+        assert_eq!(
+            render_master_color(
+                &device,
+                &queue,
+                &program,
+                &mut processor,
+                &presenter,
+                wgpu::Color::GREEN,
+                &dry,
+            ),
+            [0, 255, 0, 255],
+            "{id} dry path is not identity"
+        );
+        let wet = MasterEffectChain {
+            slots: [slot, MasterEffectSlot::default()],
+        };
+        let effected = render_master_color(
+            &device,
+            &queue,
+            &program,
+            &mut processor,
+            &presenter,
+            wgpu::Color::GREEN,
+            &wet,
+        );
+        assert_ne!(effected, [0, 255, 0, 255], "{id} rendered as identity");
+        assert_eq!(effected[3], 255, "{id} damaged output alpha");
+    }
 }
 
 #[test]

@@ -1,8 +1,17 @@
 # Effect package authoring
 
 Oneiroi discovers custom one- or two-pass master effects from immediate child
-directories under `effects/`. Each directory contains `effect.json` and a WGSL
-file referenced by that manifest.
+directories under every resolved effect resource root. Each package directory
+contains `effect.json` and a WGSL file referenced by that manifest.
+
+The shipped root is resolved independently of the process launch directory:
+the source workspace is used during development, `Contents/Resources/effects`
+inside a macOS app bundle, or an `effects` directory beside a release binary.
+An existing `effects` directory in the active show workspace is scanned too.
+User packages can live in `~/Library/Application Support/Oneiroi/effects` on
+macOS. `ONEIROI_EFFECT_PATH` adds one or more platform-separated roots for a
+custom rig; duplicate package IDs are rejected instead of silently replacing
+another package.
 
 ## Manifest
 

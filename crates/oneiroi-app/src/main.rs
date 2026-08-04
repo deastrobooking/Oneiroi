@@ -39,7 +39,6 @@ use oneiroi_media::{
 use oneiroi_render::{
     BuiltInRenderStage, DeckEffects, FourDeckCompositor, Gpu, MasterEffectProcessor, MixerBus,
     MixerParams, PROGRAM_FORMAT, PresentationOptions, ProgramPresenter, ProgramTarget,
-    discover_effect_packages,
 };
 use oneiroi_session::{CommandOperation, CommandOrigin, ShowTime};
 use output::{OutputLifecycle, describe_monitors, monitor_id};
@@ -428,20 +427,19 @@ impl State {
         let (output_monitors, output_displays) = describe_monitors(monitor_handles);
         let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut ui = ui::UiState::default();
-        ui.effect_manifest_path = workspace
-            .join("effects/master-effects/effect.json")
+        let effect_roots = effects::effect_resource_roots(&workspace);
+        ui.effect_manifest_path = effects::bundled_processor_manifest(&effect_roots)
+            .or_else(|| {
+                effect_roots
+                    .first()
+                    .map(|root| root.join("master-effects/effect.json"))
+            })
+            .unwrap_or_else(|| PathBuf::from("effects/master-effects/effect.json"))
             .to_string_lossy()
             .into_owned();
-        let effect_registry = discover_effect_packages(workspace.join("effects"));
-        ui.effect_registry_status = if effect_registry.errors.is_empty() {
-            format!("{} custom effect package(s)", effect_registry.effects.len())
-        } else {
-            format!(
-                "{} custom effect package(s), {} rejected",
-                effect_registry.effects.len(),
-                effect_registry.errors.len()
-            )
-        };
+        let effect_registry = effects::discover_effect_registry(&effect_roots);
+        ui.effect_registry_status =
+            effects::effect_registry_status(&effect_registry, &effect_roots);
         ui.effect_packages = effect_registry.effects;
         if let Some(id) = preferred_display_id {
             ui.output_display_id = id;

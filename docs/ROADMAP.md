@@ -243,6 +243,8 @@ Acceptance criteria:
    compile error visible beside the affected slot.
 2. Discover bundled and user-installed effect packages from explicit resource
    roots so signed release bundles do not depend on the launch directory.
+   (implemented for development, executable-adjacent, macOS bundle, per-user
+   and `ONEIROI_EFFECT_PATH` roots)
 3. Expose the full master rack in Show Mode with compact slot cards, bypass,
    wet/dry and a one-click path into advanced parameters.
 4. Add per-pass GPU timing and inactive-bus culling before expanding the

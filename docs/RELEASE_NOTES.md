@@ -25,6 +25,9 @@
   transport, levels, solo/bypass, per-deck effect sliders, crossfader, freeze
   and blackout live while locking setup, imports, media management and
   structural effect edits.
+- Added compact live master-effect cards to Show Mode, keeping custom
+  algorithmic package names plus bypass and wet controls visible while
+  selection, ordering and advanced parameters remain locked.
 - Added an always-visible preflight rail for output health, missing/loading
   media, waiting MIDI hardware, unsaved project state and rejected effect
   reloads.
@@ -58,6 +61,12 @@
 
 - Added 27 blend modes alongside the original eight modes, including component
   and Oneiroi signature families.
+- Restored launch-independent discovery for bundled algorithmic effect
+  packages, with additional executable-adjacent, macOS bundle, per-user and
+  `ONEIROI_EFFECT_PATH` roots.
+- Kept each custom effect's last-known-good GPU pipeline active while registry
+  refresh recompiles it; a refresh no longer creates a temporary pass-through
+  frame.
 - Added per-deck bloom, threshold, radius and chromatic-spread controls plus the
   Halation preset.
 - Extended MIDI learn, feedback snapshots and project validation to all 18
@@ -90,6 +99,9 @@
   compiles through the built-in graph registry and round-trips atomically.
 - Mixer shader validation and GPU readback cover every blend-mode identity and
   bloom falloff behavior.
+- Real-GPU tests now load and render Recursive 2D Lab, Fractal Volume 3D and
+  Hyper Recursion 4D+, while layer tests cover luma-key reveal and verify that
+  upper-layer effects execute before non-Normal compositing.
 - The workspace passes formatting, full tests and strict Clippy; the extended
   10,000-reopen decoder soak remains an explicit pre-show/release-candidate
   check.

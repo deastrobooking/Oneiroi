@@ -473,6 +473,106 @@ fn effect_slots_apply_bypass_dry_wet_and_order() {
 }
 
 #[test]
+fn luma_keyed_upper_layer_reveals_the_lower_layer() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer
+        .upload(&device, &queue, 0, &solid([255, 0, 0, 255]))
+        .unwrap();
+    mixer
+        .upload(&device, &queue, 1, &solid([0, 0, 0, 255]))
+        .unwrap();
+    let base = MixerParams {
+        levels: [1.0, 1.0, 0.0, 0.0],
+        ..Default::default()
+    };
+
+    let opaque_upper = render(&device, &queue, &mut mixer, base);
+    assert_eq!(&opaque_upper[..4], &[0, 0, 0, 255]);
+
+    let keyed = render(
+        &device,
+        &queue,
+        &mut mixer,
+        MixerParams {
+            effects: [
+                DeckEffects::default(),
+                DeckEffects {
+                    luma_key: 0.5,
+                    ..Default::default()
+                },
+                DeckEffects::default(),
+                DeckEffects::default(),
+            ],
+            ..base
+        },
+    );
+    assert_eq!(&keyed[..4], &[255, 0, 0, 255]);
+}
+
+#[test]
+fn upper_layer_effects_are_applied_before_the_layer_blend() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer
+        .upload(&device, &queue, 0, &solid([255, 0, 0, 255]))
+        .unwrap();
+    mixer
+        .upload(&device, &queue, 1, &solid([0, 255, 0, 255]))
+        .unwrap();
+    let base = MixerParams {
+        levels: [1.0, 1.0, 0.0, 0.0],
+        blend_modes: [
+            LayerBlendMode::Normal,
+            LayerBlendMode::Difference,
+            LayerBlendMode::Normal,
+            LayerBlendMode::Normal,
+        ],
+        ..Default::default()
+    };
+    let ungraded = render(&device, &queue, &mut mixer, base);
+
+    let graded = render(
+        &device,
+        &queue,
+        &mut mixer,
+        MixerParams {
+            effects: [
+                DeckEffects::default(),
+                DeckEffects {
+                    saturation: 0.0,
+                    ..Default::default()
+                },
+                DeckEffects::default(),
+                DeckEffects::default(),
+            ],
+            ..base
+        },
+    );
+    assert_ne!(graded, ungraded);
+
+    let gray = srgb_byte(0.7152);
+    mixer
+        .upload(&device, &queue, 1, &solid([gray, gray, gray, 255]))
+        .unwrap();
+    let pregraded_reference = render(&device, &queue, &mut mixer, base);
+    for channel in 0..4 {
+        assert!(
+            graded[channel].abs_diff(pregraded_reference[channel]) <= 1,
+            "channel {channel}: effect-before-blend was {}, pregraded reference was {}",
+            graded[channel],
+            pregraded_reference[channel]
+        );
+    }
+}
+
+#[test]
 fn layer_transforms_change_an_asymmetric_source() {
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter; skipping");

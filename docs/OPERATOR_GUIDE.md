@@ -88,11 +88,13 @@ unless the project actually uses them.
 
 After setup and saving, press **SHOW MODE** in the top bar. Show Mode keeps
 clip and scene launches, deck transport, levels, solo/bypass, live per-deck
-effect sliders, the A/B crossfader, master opacity, freeze and emergency
-blackout available. It hides or locks output/project/device setup, file drops,
-slot movement, relink/clear, eject, MIDI mapping, bus/blend structure,
-transforms, effect-chain reordering and resets, modulation and master-effect
-editing. Press **EXIT SHOW MODE** to return to preparation.
+effect sliders, compact master-effect bypass/wet cards, the A/B crossfader,
+master opacity, freeze and emergency blackout available. Custom cards keep the
+selected algorithmic package name visible. It hides or locks
+output/project/device setup, file drops, slot movement, relink/clear, eject,
+MIDI mapping, bus/blend structure, transforms, effect-chain reordering and
+resets, modulation, package selection and advanced master-effect editing.
+Press **EXIT SHOW MODE** to return to preparation.
 The lock is deliberately temporary and is not stored in a project.
 
 Master freeze intentionally holds the exact final program frame. While it is
@@ -237,15 +239,16 @@ Open **GPU effects** on a deck. Available controls include:
 - Hue, contrast, saturation, black level, white level and gamma
 - Bit reduction and black-light inversion
 - Mirror, neon glow, fractal fold, jitter and find edges
-- Pixelate and luma key
+- Pixelate, luma key, bloom threshold/radius and chromatic bloom spread
 
 The chain has three rows: **Geometry**, **Color + levels**, and **Stylize +
 key**. Use the arrow buttons to reorder them. Every row has an independent
 **Bypass** and **wet** control; zero wet returns that stage to its dry input
-without changing its parameter knobs. **Load preset** offers Neutral, Neon
-night, Blacklight and Glitch. **Reset chain** or **Reset effects** restores
-neutral parameters, full wet, no bypass and the legacy-compatible
-Geometry → Color → Stylize order.
+without changing its parameter knobs. Geometry remains the bounded UV prepass;
+Color and Stylize follow their relative displayed order. **Load preset** offers
+Neutral, Neon night, Blacklight, Glitch and Halation. **Reset chain** or
+**Reset effects** restores neutral parameters, full wet, no bypass and the
+legacy-compatible Geometry → Color → Stylize order.
 
 Effects run on each source before deck composition. Slot order, bypass and wet
 mix are saved in the project. Existing projects that predate effect slots open
@@ -254,11 +257,11 @@ with the legacy-compatible default order.
 ### Master effects and blur
 
 Expand **Master effects** below the crossfader and master controls. Two
-reorderable slots can be Empty, Separable blur or Feedback / trails. Blur
-exposes a 0–32 pixel radius. Feedback exposes 0–0.99 persistence; larger values
-retain more of the previous final frame. Both use the common bypass and wet
-controls. The arrow buttons change master evaluation order, and **Reset master
-effects** returns both slots to Empty.
+reorderable slots can be Empty, Separable blur, Feedback / trails or Custom
+package. Blur exposes a 0–32 pixel radius. Feedback exposes 0–0.99 persistence;
+larger values retain more of the previous final frame. Every kind uses the
+common bypass and wet controls. The arrow buttons change master evaluation
+order, and **Reset master effects** returns both slots to Empty.
 
 With both slots empty or bypassed, composition renders directly to program
 output. Enabling blur or feedback activates fixed ping-pong/history targets
@@ -285,14 +288,21 @@ Package shader paths must be relative to the manifest and cannot traverse out
 of their directory. A replacement `master_processor` package must retain the
 documented master-v1 bindings and declared vertex/fragment entry points.
 
-Packages with role `master_effect` in an immediate subdirectory of `effects/`
-appear when a master slot is set to **Custom package**. Select the package and
-its manifest controls are created automatically. **Refresh registry** rescans
-after adding or removing a package. Parameter values and package IDs were
-introduced in project version 3 and remain part of the current version-5
-schema. If a saved package is missing or rejected, that slot passes its input
-through unchanged. The package panel reports whether the selected effect uses
-one or two bounded render passes.
+Packages with role `master_effect` in an immediate subdirectory of any effect
+resource root appear when a master slot is set to **Custom package**. Bundled
+resources are found from the development workspace, beside a release binary,
+or in a macOS bundle without depending on its launch directory. An existing
+`effects` directory in the active show workspace is also scanned. User
+packages can live in `~/Library/Application Support/Oneiroi/effects`;
+additional roots come from the platform-separated `ONEIROI_EFFECT_PATH`
+environment variable.
+Select a package and its manifest controls are created automatically.
+**Refresh registry** rescans after adding or removing a package without
+discarding the last working pipelines while replacements compile. Parameter
+values and package IDs were introduced in project version 3 and remain part of
+the current version-5 schema. If a saved package has never loaded, that slot
+passes its input through unchanged. The package panel reports whether the
+selected effect uses one or two bounded render passes.
 
 Expand **Master modulation matrix** for three free-running or tempo-synced LFOs
 and eight routes. A route can use a master LFO, RMS, bass, mid, high, transient,
@@ -312,6 +322,13 @@ texture and its second pass combines that intermediate into the slot output.
 **Temporal Melt** demonstrates the optional previous-slot-output history.
 Its first frame after selection or reset is clean; subsequent frames sample the
 saved slot output. The custom package panel identifies temporal packages.
+
+The bundled algorithmic set also includes **Recursive 2D Lab** (mirror IFS,
+Julia and Möbius-like image recursion), **Fractal Volume 3D** (box nebula,
+kaleidoscopic tunnel and orbit-bulb fields), and **Hyper Recursion 4D+**
+(tesseract, quaternion and Clifford-style 4D–6D projections). Choose Custom
+package, select one of these names, then start from its three supplied looks or
+shape the grouped function, transform, motion and finish controls directly.
 
 ## Layer transforms
 

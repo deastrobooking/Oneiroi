@@ -1,6 +1,6 @@
 //! Offscreen program target and presentation pass shared by operator/output windows.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
@@ -351,9 +351,17 @@ struct MasterEffectPass {
 }
 
 enum EffectReloadCommand {
-    Watch(PathBuf),
-    WatchMany(Vec<PathBuf>),
-    Reload,
+    Watch {
+        generation: u64,
+        path: PathBuf,
+    },
+    WatchMany {
+        generation: u64,
+        paths: Vec<PathBuf>,
+    },
+    Reload {
+        generation: u64,
+    },
     Shutdown,
 }
 
@@ -368,6 +376,7 @@ struct CompiledEffectPipeline {
 }
 
 struct EffectReloadResult {
+    generation: u64,
     path: PathBuf,
     result: Result<CompiledEffectPipeline, String>,
 }
@@ -406,6 +415,8 @@ impl Drop for EffectReloadWorker {
 pub struct MasterEffectProcessor {
     pipeline: wgpu::RenderPipeline,
     custom_pipelines: HashMap<String, RegisteredEffectPipeline>,
+    watched_effect_paths: HashSet<PathBuf>,
+    watch_generation: u64,
     passes: [MasterEffectPass; 4],
     extent: [u32; 2],
     history_valid: bool,
@@ -417,6 +428,7 @@ pub struct MasterEffectProcessor {
 }
 
 struct RegisteredEffectPipeline {
+    manifest_path: PathBuf,
     pipelines: Vec<wgpu::RenderPipeline>,
     parameters: Vec<EffectParameterSchema>,
     history: EffectHistoryResource,
@@ -532,6 +544,8 @@ impl MasterEffectProcessor {
         Self {
             pipeline,
             custom_pipelines: HashMap::new(),
+            watched_effect_paths: HashSet::new(),
+            watch_generation: 0,
             passes,
             extent: program.extent,
             history_valid: false,
@@ -544,41 +558,61 @@ impl MasterEffectProcessor {
     }
 
     pub fn watch_effect_manifest(&mut self, path: PathBuf) {
-        self.custom_pipelines.clear();
-        self.custom_history_valid = [false; MASTER_EFFECT_SLOTS];
-        self.custom_history_identity = [0; MASTER_EFFECT_SLOTS];
-        self.reload_errors.clear();
+        self.retain_watched_effects(std::slice::from_ref(&path));
+        let generation = self.next_watch_generation();
         self.reload_status = format!("Watching {}", path.display());
         let _ = self
             .reload_worker
             .commands
-            .send(EffectReloadCommand::Watch(path));
+            .send(EffectReloadCommand::Watch { generation, path });
     }
 
     pub fn watch_effect_manifests(&mut self, paths: Vec<PathBuf>) {
-        self.custom_pipelines.clear();
-        self.custom_history_valid = [false; MASTER_EFFECT_SLOTS];
-        self.custom_history_identity = [0; MASTER_EFFECT_SLOTS];
-        self.reload_errors.clear();
+        self.retain_watched_effects(&paths);
+        let generation = self.next_watch_generation();
         self.reload_status = format!("Watching {} effect package(s)", paths.len());
         let _ = self
             .reload_worker
             .commands
-            .send(EffectReloadCommand::WatchMany(paths));
+            .send(EffectReloadCommand::WatchMany { generation, paths });
+    }
+
+    fn next_watch_generation(&mut self) -> u64 {
+        self.watch_generation = self.watch_generation.wrapping_add(1).max(1);
+        self.watch_generation
+    }
+
+    fn retain_watched_effects(&mut self, paths: &[PathBuf]) {
+        let watched: HashSet<_> = paths.iter().cloned().collect();
+        let previous_count = self.custom_pipelines.len();
+        self.custom_pipelines
+            .retain(|_, effect| watched.contains(&effect.manifest_path));
+        self.reload_errors.retain(|path, _| watched.contains(path));
+        self.watched_effect_paths = watched;
+        if self.custom_pipelines.len() != previous_count {
+            self.custom_history_valid = [false; MASTER_EFFECT_SLOTS];
+            self.custom_history_identity = [0; MASTER_EFFECT_SLOTS];
+        }
     }
 
     pub fn reload_effect_manifest(&mut self) {
+        let generation = self.next_watch_generation();
         self.reload_status = "Effect reload requested…".to_owned();
         let _ = self
             .reload_worker
             .commands
-            .send(EffectReloadCommand::Reload);
+            .send(EffectReloadCommand::Reload { generation });
     }
 
     pub fn poll_effect_reload(&mut self) -> bool {
         let mut changed = false;
         let mut loaded = Vec::new();
         while let Ok(result) = self.reload_worker.results.try_recv() {
+            if result.generation != self.watch_generation
+                || !self.watched_effect_paths.contains(&result.path)
+            {
+                continue;
+            }
             changed = true;
             let path = result.path;
             match result.result {
@@ -588,14 +622,20 @@ impl MasterEffectProcessor {
                         let mut pipelines = compiled.pipelines;
                         self.pipeline = pipelines.remove(0);
                     } else {
+                        self.custom_pipelines.retain(|id, effect| {
+                            effect.manifest_path != path || id == &compiled.id
+                        });
                         self.custom_pipelines.insert(
                             compiled.id.clone(),
                             RegisteredEffectPipeline {
+                                manifest_path: path.clone(),
                                 pipelines: compiled.pipelines,
                                 parameters: compiled.parameters,
                                 history: compiled.history,
                             },
                         );
+                        self.custom_history_valid = [false; MASTER_EFFECT_SLOTS];
+                        self.custom_history_identity = [0; MASTER_EFFECT_SLOTS];
                     }
                     loaded.push(format!("{} · {:016x}", compiled.name, compiled.fingerprint));
                 }
@@ -1037,19 +1077,33 @@ fn effect_reload_loop(
 ) {
     let mut watched = Vec::new();
     let mut last_fingerprints = HashMap::new();
+    let mut generation = 0;
     loop {
         match commands.recv_timeout(Duration::from_millis(500)) {
-            Ok(EffectReloadCommand::Watch(path)) => {
+            Ok(EffectReloadCommand::Watch {
+                generation: next_generation,
+                path,
+            }) => {
+                generation = next_generation;
                 watched = vec![path];
                 last_fingerprints.clear();
             }
-            Ok(EffectReloadCommand::WatchMany(paths)) => {
+            Ok(EffectReloadCommand::WatchMany {
+                generation: next_generation,
+                paths,
+            }) => {
+                generation = next_generation;
                 watched = paths;
                 watched.sort();
                 watched.dedup();
                 last_fingerprints.clear();
             }
-            Ok(EffectReloadCommand::Reload) => last_fingerprints.clear(),
+            Ok(EffectReloadCommand::Reload {
+                generation: next_generation,
+            }) => {
+                generation = next_generation;
+                last_fingerprints.clear();
+            }
             Ok(EffectReloadCommand::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
@@ -1061,6 +1115,7 @@ fn effect_reload_loop(
             last_fingerprints.insert(path.clone(), fingerprint);
             let result = compile_effect_package(&device, &layout, path);
             let _ = results.send(EffectReloadResult {
+                generation,
                 path: path.clone(),
                 result,
             });

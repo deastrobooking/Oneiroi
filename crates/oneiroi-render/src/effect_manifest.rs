@@ -142,6 +142,11 @@ pub struct EffectDescriptor {
 pub struct EffectRegistry {
     pub effects: Vec<EffectDescriptor>,
     pub errors: Vec<String>,
+    /// Manifest paths that were present but failed decode, schema or shader
+    /// validation. Callers may use this to retain an already-compiled
+    /// descriptor without confusing an intentional ID/role change with a
+    /// transient invalid edit.
+    pub failed_manifest_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Error)]
@@ -224,6 +229,7 @@ pub fn discover_effect_packages(root: impl AsRef<Path>) -> EffectRegistry {
             return EffectRegistry {
                 effects: Vec::new(),
                 errors: vec![format!("scan effect directory {}: {error}", root.display())],
+                failed_manifest_paths: Vec::new(),
             };
         }
     }
@@ -259,7 +265,10 @@ pub fn discover_effect_packages(root: impl AsRef<Path>) -> EffectRegistry {
                     presets: package.manifest.presets,
                 });
             }
-            Err(error) => registry.errors.push(format!("{}: {error}", path.display())),
+            Err(error) => {
+                registry.failed_manifest_paths.push(path.clone());
+                registry.errors.push(format!("{}: {error}", path.display()));
+            }
         }
     }
     registry
@@ -370,7 +379,7 @@ fn validate_manifest(manifest: &EffectManifest) -> Result<(), EffectManifestErro
                         option.label.trim().is_empty()
                             || !option.value.is_finite()
                             || !(parameter.minimum..=parameter.maximum).contains(&option.value)
-                            || values.iter().any(|value| *value == option.value)
+                            || values.contains(&option.value)
                             || {
                                 values.push(option.value);
                                 false
@@ -554,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_registry_discovers_chromatic_split() {
+    fn bundled_registry_discovers_reference_and_algorithmic_effects() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects");
         let registry = discover_effect_packages(root);
         assert!(registry.errors.is_empty(), "{:?}", registry.errors);
@@ -575,6 +584,33 @@ mod tests {
             effect.id == "temporal-melt"
                 && effect.history == EffectHistoryResource::PreviousSlotOutput
         }));
+        for (id, parameter_count) in [
+            ("recursive-2d", 14),
+            ("fractal-volume", 16),
+            ("hyper-recursion", 16),
+        ] {
+            let effect = registry
+                .effects
+                .iter()
+                .find(|effect| effect.id == id)
+                .unwrap_or_else(|| panic!("missing bundled algorithmic effect {id}"));
+            assert_eq!(effect.pass_count, 1, "{id}");
+            assert_eq!(effect.parameters.len(), parameter_count, "{id}");
+            assert_eq!(effect.presets.len(), 3, "{id}");
+            assert!(
+                effect
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.control == EffectParameterControl::Choice),
+                "{id} has no algorithm choice"
+            );
+            assert!(
+                effect.parameters.iter().any(|parameter| {
+                    parameter.id == "animate" && parameter.control == EffectParameterControl::Toggle
+                }),
+                "{id} has no animation toggle"
+            );
+        }
     }
 
     #[test]

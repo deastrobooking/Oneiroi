@@ -409,7 +409,9 @@ pub(super) fn draw_deck(
                     if ui.button("Reset chain").clicked() {
                         *effects = DeckEffects::default();
                     }
-                    ui.weak("Top to bottom · each slot has bypass and dry/wet.");
+                    ui.weak(
+                        "Geometry is the UV prepass · Color and Stylize follow their relative order.",
+                    );
                 });
             }
             ui.separator();
