@@ -18,7 +18,7 @@ the matching `.oneiroi` project first so recovered clip launches resolve to the
 same media slots. Restore applies mixer, transport, output, effect, LFO and
 modulation state, then continues recording in a fresh journal.
 
-Version-five projects carry a stable project identity and a bounded catalog of
+Version-six projects carry a stable project identity and a bounded catalog of
 take names, IDs, journal filenames and creation times. The recovery scan hides
 journals linked to another project and labels older journals as unlinked.
 Enter a printable name before **Start named take** or **Restore as named
@@ -342,9 +342,9 @@ kaleidoscopic tunnel and orbit-bulb fields), and **Hyper Recursion 4D+**
 (tesseract, quaternion and Clifford-style 4D–6D projections). Choose Custom
 package, select one of these names, then start from its three supplied looks or
 shape the grouped function, transform, motion and finish controls directly.
-These three packages are master-only in the current runtime. Their stateless
-fragment designs make them the first candidates for the planned per-deck
-package stage after branch extraction and GPU-budget validation.
+These three packages are available in both master Custom slots and each deck's
+**Algorithmic package** selector. Deck placement runs after that deck's
+built-in effects and before its selected layer blend.
 
 ## Layer transforms
 
@@ -453,6 +453,12 @@ Enter BPM directly or use:
 Tempo changes preserve the current musical position. The toolbar displays beat
 position, beat phase and four-beat bar phase.
 
+Tempo can also come from an external MIDI beat clock, and Oneiroi can clock
+other gear itself. Both live in **Setup → MIDI control → Clock sync**; while an
+external clock is locked, the BPM field, **Tap**, **½** and **×2** are disabled
+because the incoming clock owns the tempo. See
+[MIDI beat-clock sync](MIDI_SYNC.md).
+
 ## Mixing and emergency controls
 
 Assign decks to Bus A or Bus B, then use the crossfader. Linear and equal-power
@@ -526,6 +532,11 @@ levels, clip and scene launches, effects, LFO parameters and modulation-matrix
 routes. Blackout and master freeze act immediately; clip and scene launches
 still follow the current quantization setting.
 
+**Clock sync** in the same panel selects the tempo master, pins which device
+may clock the show, and connects a destination for outgoing clock. Sync
+messages never take part in learn, so one device can both clock the show and
+drive mapped controls.
+
 The activity line shows received packets, queue drops and parse errors per
 device. If a requested controller disappears, Oneiroi keeps its mappings,
 shows it as waiting in MIDI Manager and attempts to reconnect every two
@@ -535,9 +546,10 @@ from a previous project do not remain live after another rig is opened.
 
 ## Projects and recovery
 
-The project toolbar can open and save `.oneiroi` files. Version-five projects store all 32
+The project toolbar can open and save `.oneiroi` files. Version-six projects store all 32
 clip paths, per-slot trim/launch/beat settings, deck state, camera reconnect
-settings, mixer values, transport, effects, LFOs, modulation routes, tempo,
+settings, mixer values, transport, effects, per-deck algorithmic packages,
+LFOs, modulation routes, tempo,
 output settings, theme/layout choices, MIDI mapping data and requested MIDI
 devices.
 Version-one projects are upgraded when loaded.

@@ -14,7 +14,7 @@ validated WGSL custom effect-package runtime.
 | Path | What Oneiroi provides |
 |---|---|
 | Media | Direct block-compressed HAP playback, conventional FFmpeg decode, stills and low-latency cameras |
-| Performance | Four decks, 32 clip slots, eight scenes, A/B buses, 35 blend modes, MIDI, OSC and audio/beat modulation |
+| Performance | Four decks, 32 clip slots, eight scenes, A/B buses, 35 blend modes, MIDI (including beat-clock sync in and out), OSC and audio/beat modulation |
 | Output | One offscreen program shared by the operator preview and a clean display-selectable output window |
 | Safety | Bounded workers and queues, generation-safe media, last-known-good shaders, atomic projects and crash-recoverable takes |
 | Extensibility | Typed graph contracts plus manifest-driven one/two-pass WGSL packages in two master slots |
@@ -103,10 +103,10 @@ The current source tree includes:
 - Registry-discovered custom master effects with schema-generated sliders,
   named parameter persistence and neutral pass-through when a saved package is
   unavailable. The bundled Chromatic Split package is the reference example.
-- Bundled algorithmic master effects for recursive 2D transforms, volumetric
+- Bundled dual-placement algorithmic effects for recursive 2D transforms, volumetric
   3D fractal fields and projected 4D–6D recursion, with grouped controls and
-  three one-click looks per package. These packages are master-only today;
-  per-deck package execution is the next shader architecture milestone.
+  three one-click looks per package. They execute in a master slot or in the
+  stateless package slot on any deck.
 - Launch-directory-independent effect discovery from development, adjacent
   release and macOS bundle resources, plus the per-user effect directory and
   optional `ONEIROI_EFFECT_PATH` roots.
@@ -140,6 +140,12 @@ The current source tree includes:
 - Absolute, momentary, toggle, binary-offset and two's-complement mappings,
   editable ranges, inversion and soft takeover for mixer, transport, clip,
   scene, effect, LFO, matrix and emergency targets.
+- MIDI beat-clock sync in both directions: a followed 24 PPQN clock drives
+  tempo and re-anchors beat phase every quarter note, honouring Start,
+  Continue, Stop and Song Position; a dedicated sender thread clocks
+  downstream gear from its own schedule with late-pulse, resync and error
+  telemetry. Both ends are saved with the project. See
+  [docs/MIDI_SYNC.md](docs/MIDI_SYNC.md).
 - Four rows of eight persistent clip slots with per-slot health metadata,
   playing/queued indicators and right-click clearing.
 - Recursive folder drop/import with supported-media filtering, deterministic
@@ -198,7 +204,7 @@ The current source tree includes:
   successful movie, folder and relink assignments.
 - An operator session-recovery browser that validates prior journals, restores
   checkpoint-plus-tail state and continues safely in a fresh baseline journal.
-- Version-five projects persist stable project/take identities, bounded take
+- Version-six projects persist stable project/take identities, bounded take
   metadata, deterministic seed maps and the active typed graph. Operators can
   start named takes or restore a prior session as a named branch.
 - Full journal history can be scrubbed to an earlier checkpoint-aware position;
@@ -215,25 +221,25 @@ The current source tree includes:
 
 ## Shader system direction
 
-Oneiroi uses WGSL compiled through Naga and `wgpu`. The current executable
-package ABI is the master-only `master-v1` contract: one or two fragment
-passes, at most 32 scalar parameters and one optional fixed history resource
-per physical master slot. Once registered, watched shader changes compile away
+Oneiroi uses WGSL compiled through Naga and `wgpu`. `master-v1` provides one or
+two fragment passes and optional fixed history per master slot. Stateless,
+one-pass `deck-v1` packages run after a deck's built-ins and before its layer
+blend; dual-placement packages can run in either runtime. Watched changes compile away
 from presentation and swap only after the complete candidate succeeds. Manual
 registry refresh still performs one synchronous validation scan; moving that
 scan to the reload worker is the remaining S0 scaling gate.
 
-Per-deck packages are now a committed target. They will run after each deck's
-built-in effects and before its layer enters an A/B bus blend. The renderer
-will first extract a selectively materialized deck branch while preserving the
-current fused fast path when no package is active. Shared WGSL modules, typed
+Per-deck packages now execute through a selectively materialized branch while
+the no-package path stays fused. Each deck exposes package selection, generated
+parameters, looks, bypass and wet controls, with project-v6 persistence and
+last-known-good reload. Stable deck-package modulation/MIDI/OSC identities are
+the remaining S2 control work. Shared WGSL modules, typed
 N-pass graphs, optional HDR intermediates, compute effects and offline
 ISF/ShaderToy conversion follow as separately budgeted phases.
 
 See [docs/SHADER_SYSTEM.md](docs/SHADER_SYSTEM.md) for the contracts,
-acceptance gates and decisions from the shader review. MIDI feedback/clock,
-arbitrary package-owned resources and per-deck package execution have not
-landed yet.
+acceptance gates and decisions from the shader review. Arbitrary package-owned
+resources, temporal deck effects and multi-pass deck packages have not landed.
 
 ## Quick start
 
@@ -279,6 +285,7 @@ freeze holds the most recent rendered frame.
 
 - [Release notes](docs/RELEASE_NOTES.md)
 - [Operator guide](docs/OPERATOR_GUIDE.md)
+- [MIDI beat-clock sync](docs/MIDI_SYNC.md)
 - [Feature status](docs/FEATURES.md)
 - [Application review](docs/REVIEW.md)
 - [Architecture](docs/ARCHITECTURE.md)

@@ -244,6 +244,14 @@ impl State {
         let paths = self.effect_manifest_paths();
         self.master_effect_processor.watch_effect_manifests(paths);
         self.ui.effect_reload_status = self.master_effect_processor.reload_status().to_owned();
+        self.compositor.watch_deck_effect_manifests(
+            self.ui
+                .deck_effect_packages
+                .iter()
+                .map(|effect| effect.manifest_path.clone())
+                .collect(),
+        );
+        self.ui.deck_effect_reload_status = self.compositor.deck_effect_reload_status().to_owned();
     }
 
     pub(crate) fn effect_manifest_paths(&self) -> Vec<PathBuf> {
@@ -338,14 +346,20 @@ mod tests {
         deck_candidate.id = "deck-candidate".to_owned();
         deck_candidate.targets = vec![EffectPackageTarget::Deck];
         let expected_master_count = registry.effects.len();
+        let expected_deck_count = registry
+            .effects
+            .iter()
+            .filter(|effect| effect.supports_target(EffectPackageTarget::Deck))
+            .count()
+            + 1;
         let mut candidates = registry.effects;
         candidates.push(deck_candidate);
 
         let (master, deck) = partition_effect_packages(candidates);
 
         assert_eq!(master.len(), expected_master_count);
-        assert_eq!(deck.len(), 1);
-        assert_eq!(deck[0].id, "deck-candidate");
+        assert_eq!(deck.len(), expected_deck_count);
+        assert!(deck.iter().any(|effect| effect.id == "deck-candidate"));
         assert!(
             master
                 .iter()

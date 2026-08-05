@@ -89,6 +89,20 @@ impl TempoClock {
         self.bpm = sanitize_bpm(bpm);
     }
 
+    /// Pin the musical position: `now_seconds` *is* `beat`.
+    ///
+    /// External sync uses this to re-align the local clock to an incoming
+    /// MIDI clock on quarter-note boundaries. Tempo is unchanged; only the
+    /// phase moves, so a follower cannot slowly drift a bar away from its
+    /// master over a long set.
+    pub fn anchor_beat(&mut self, beat: f64, now_seconds: f64) {
+        if !beat.is_finite() || !now_seconds.is_finite() {
+            return;
+        }
+        self.anchor_beat = beat;
+        self.anchor_seconds = now_seconds.max(0.0);
+    }
+
     pub fn set_beats_per_bar(&mut self, beats: u32) {
         self.beats_per_bar = beats.max(1);
     }

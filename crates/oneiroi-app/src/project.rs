@@ -1,26 +1,27 @@
 use oneiroi_core::{
-    AudioAnalysisSettings, ControlTarget, MappingMode, MidiBinding, MidiMapper, MidiMessage,
-    MidiMessageKind, Quantization,
+    AudioAnalysisSettings, ClockSource, ControlTarget, MappingMode, MidiBinding, MidiMapper,
+    MidiMessage, MidiMessageKind, Quantization,
 };
 use oneiroi_io::{
     AudioAnalysisProject, BlendModeProject, CameraProject, ClipLaunchModeProject,
-    ClipPlaybackProject, ControlTargetProject, CrossfadeBusProject, DeckProject,
-    EffectGroupProject, EffectParameterValueProject, EffectProject, EffectSlotProject,
-    EffectTargetProject, EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject,
-    MasterEffectKindProject, MasterEffectSlotProject, MasterEffectsProject, MasterLfoProject,
-    MasterModulationProject, MasterModulationRouteProject, MidiMappingProject, MidiMessageProject,
-    ModRouteProject, OutputProject, ProjectFile, ProjectSettings, QuantizationProject,
-    SourceModeProject, ThemeProject, TransformProject, TransportProject,
+    ClipPlaybackProject, ClockSourceProject, ControlTargetProject, CrossfadeBusProject,
+    DeckPackageProject, DeckProject, EffectGroupProject, EffectParameterValueProject,
+    EffectProject, EffectSlotProject, EffectTargetProject, EndModeProject, LfoProject,
+    LfoWaveformProject, MappingModeProject, MasterEffectKindProject, MasterEffectSlotProject,
+    MasterEffectsProject, MasterLfoProject, MasterModulationProject, MasterModulationRouteProject,
+    MidiClockProject, MidiMappingProject, MidiMessageProject, ModRouteProject, OutputProject,
+    ProjectFile, ProjectSettings, QuantizationProject, SourceModeProject, ThemeProject,
+    TransformProject, TransportProject,
 };
 use oneiroi_media::{
     CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipLaunchMode,
     ClipPlayback, CrossfadeBus, DeckId, DeckTransport, EndMode, FourDeckMixer,
 };
 use oneiroi_render::{
-    DeckEffects, DeckLfos, DeckTransform, EffectGroup, EffectLfo, EffectParameterValue, EffectSlot,
-    EffectTarget, LayerBlendMode, LfoWaveform, MasterEffectChain, MasterEffectKind,
-    MasterEffectSlot, MasterLfo, MasterModulation, MasterModulationRoute, ModulationRoute,
-    SourceMode,
+    DeckEffects, DeckLfos, DeckPackageSlot, DeckTransform, EffectGroup, EffectLfo,
+    EffectParameterValue, EffectSlot, EffectTarget, LayerBlendMode, LfoWaveform, MasterEffectChain,
+    MasterEffectKind, MasterEffectSlot, MasterLfo, MasterModulation, MasterModulationRoute,
+    ModulationRoute, SourceMode,
 };
 
 use crate::ui::UiState;
@@ -66,6 +67,12 @@ pub fn snapshot(
             theme: theme_to_project(&ui.theme),
             // Overwritten by the caller, which owns the device set.
             midi_devices: Vec::new(),
+            midi_clock: MidiClockProject {
+                source: clock_source_to_project(ui.midi_clock_source),
+                input_device: ui.midi_clock_input_device.clone(),
+                output_device: ui.midi_output_device_id.clone(),
+                send: ui.midi_clock_send,
+            },
         },
         decks: DeckId::ALL
             .into_iter()
@@ -111,6 +118,7 @@ pub fn snapshot(
                     transform: transform_to_project(ui.transforms[deck.index()]),
                     blend_mode: blend_mode_to_project(ui.blend_modes[deck.index()]),
                     effects: effect_to_project(ui.effects[deck.index()]),
+                    package: deck_package_to_project(&ui.deck_packages[deck.index()]),
                     lfos: ui.lfos[deck.index()]
                         .lanes
                         .into_iter()
@@ -227,6 +235,10 @@ pub fn apply_master(project: &ProjectFile, ui: &mut UiState) {
     ui.audio_analysis = audio_analysis_from_project(project.settings.audio_analysis);
     ui.master_effects = master_effects_from_project(&project.settings.master_effects);
     ui.master_modulation = master_modulation_from_project(&project.settings.master_modulation);
+    ui.midi_clock_source = clock_source_from_project(project.settings.midi_clock.source);
+    ui.midi_clock_input_device = project.settings.midi_clock.input_device.clone();
+    ui.midi_output_device_id = project.settings.midi_clock.output_device.clone();
+    ui.midi_clock_send = project.settings.midi_clock.send;
     theme_from_project(&project.settings.theme, &mut ui.theme);
     ui.blackout = false;
     ui.master_freeze = false;
@@ -408,6 +420,7 @@ pub fn apply_deck(
     ui.solo[deck.index()] = project.solo;
     ui.bypassed[deck.index()] = project.bypassed;
     ui.effects[deck.index()] = effect_from_project(&project.effects);
+    ui.deck_packages[deck.index()] = deck_package_from_project(&project.package);
     ui.transforms[deck.index()] = transform_from_project(project.transform);
     ui.blend_modes[deck.index()] = blend_mode_from_project(project.blend_mode);
     let mut lfos = DeckLfos::default();
@@ -430,6 +443,40 @@ pub fn apply_deck(
         duration: None,
         in_point: 0.0,
     }
+}
+
+fn deck_package_to_project(package: &DeckPackageSlot) -> DeckPackageProject {
+    DeckPackageProject {
+        bypassed: package.bypassed,
+        mix: package.mix,
+        package_id: package.package_id.clone(),
+        parameters: package
+            .parameters
+            .iter()
+            .map(|parameter| EffectParameterValueProject {
+                id: parameter.id.clone(),
+                value: parameter.value,
+            })
+            .collect(),
+    }
+}
+
+fn deck_package_from_project(package: &DeckPackageProject) -> DeckPackageSlot {
+    let mut slot = DeckPackageSlot {
+        bypassed: package.bypassed,
+        mix: package.mix,
+        package_id: package.package_id.clone(),
+        parameters: package
+            .parameters
+            .iter()
+            .map(|parameter| EffectParameterValue {
+                id: parameter.id.clone(),
+                value: parameter.value,
+            })
+            .collect(),
+    };
+    slot.sanitize();
+    slot
 }
 
 fn audio_analysis_to_project(settings: AudioAnalysisSettings) -> AudioAnalysisProject {
@@ -767,6 +814,20 @@ fn quantization_from_project(value: QuantizationProject) -> Quantization {
     }
 }
 
+fn clock_source_to_project(value: ClockSource) -> ClockSourceProject {
+    match value {
+        ClockSource::Internal => ClockSourceProject::Internal,
+        ClockSource::MidiInput => ClockSourceProject::MidiInput,
+    }
+}
+
+fn clock_source_from_project(value: ClockSourceProject) -> ClockSource {
+    match value {
+        ClockSourceProject::Internal => ClockSource::Internal,
+        ClockSourceProject::MidiInput => ClockSource::MidiInput,
+    }
+}
+
 fn midi_to_project(binding: &MidiBinding) -> MidiMappingProject {
     MidiMappingProject {
         device: binding.device.clone(),
@@ -1056,6 +1117,23 @@ mod tests {
         assert_eq!(
             master_modulation_from_project(&master_modulation_to_project(modulation)),
             modulation
+        );
+    }
+
+    #[test]
+    fn deck_package_conversion_preserves_selection_and_named_parameters() {
+        let package = DeckPackageSlot {
+            bypassed: true,
+            mix: 0.4,
+            package_id: "recursive-2d".to_owned(),
+            parameters: vec![EffectParameterValue {
+                id: "iterations".to_owned(),
+                value: 7.0,
+            }],
+        };
+        assert_eq!(
+            deck_package_from_project(&deck_package_to_project(&package)),
+            package
         );
     }
 }

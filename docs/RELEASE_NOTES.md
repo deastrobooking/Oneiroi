@@ -72,11 +72,13 @@
   working generation. Reload diagnostics now distinguish retained
   last-known-good output, the restored built-in processor and a neutral
   fallback.
-- Added backward-compatible manifest-v2 target and ABI metadata. Stateless
-  one-pass `deck-v1` candidates now receive schema/WGSL validation and a
-  separate catalog, while the current master runtime watches and compiles only
-  master-compatible packages. Deck bind-group/GPU validation and execution
-  remain a planned renderer milestone.
+- Added backward-compatible manifest-v2 target and ABI metadata plus one
+  stateless `deck-v1` slot per deck. Selected deck branches materialize after
+  built-ins, execute on target-validated GPU pipelines, then re-enter the layer
+  blend while decks without packages retain the fused fast path.
+- Added per-deck package selection, generated controls, looks, wet/bypass,
+  last-known-good reload diagnostics and project-v6 persistence. Chromatic
+  Split and all three algorithmic packages now support deck/master placement.
 - Required manifest v2 to declare its ABI explicitly, and preserved exact
   resource-root precedence when a higher-priority package becomes temporarily
   invalid instead of promoting a lower-priority duplicate.
@@ -94,6 +96,9 @@
   to prevent future control-surface drift.
 
 ### Validation
+
+- Added real-GPU coverage proving a bundled package executes on a deck and
+  package bypass returns byte-for-byte to the fused compositor output.
 
 - Added a checked-in, legacy-shaped project-v1 fixture that verifies migration
   to v5, preservation of v1 values, safe defaults for later fields and an
@@ -126,7 +131,7 @@
   compute and offline ISF/ShaderToy import in dependency order.
 - Reconciled the README, architecture, package authoring, feature matrix,
   graph runtime, operator guide, engineering review, roadmap and release gates
-  around current master-only packages versus planned deck execution.
+  around the implemented deck-v1 executor and its remaining control gates.
 - Added an optional VS Code recommendation for `wgsl-analyzer`; Naga and
   real-GPU tests remain the authoritative validation paths.
 

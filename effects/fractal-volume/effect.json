@@ -1,7 +1,7 @@
 {
-  "format":"oneiroi-effect","version":1,"id":"fractal-volume","name":"Fractal Volume 3D",
+  "format":"oneiroi-effect","version":2,"id":"fractal-volume","name":"Fractal Volume 3D",
   "description":"A volumetric ray camera through recursive box, tunnel and bulb-like fields.",
-  "role":"master_effect","shader":"fractal_volume.wgsl",
+  "role":"effect","targets":["master","deck"],"abi":"deck-v1","shader":"fractal_volume.wgsl",
   "parameters":[
     {"id":"geometry","label":"Geometry","minimum":0.0,"maximum":2.0,"default":0.0,"group":"3D function","control":"choice","options":[{"label":"Box nebula","value":0.0},{"label":"Kaleido tunnel","value":1.0},{"label":"Orbit bulb","value":2.0}]},
     {"id":"iterations","label":"Field recursion","minimum":2.0,"maximum":7.0,"default":5.0,"group":"3D function","control":"choice","options":[{"label":"2","value":2.0},{"label":"3","value":3.0},{"label":"4","value":4.0},{"label":"5","value":5.0},{"label":"6","value":6.0},{"label":"7","value":7.0}]},

@@ -230,10 +230,12 @@ fn v4_golden_project_migrates_to_v5_and_round_trips() {
 }
 
 #[test]
-fn v5_golden_project_loads_compiles_and_round_trips_without_migration() {
-    let source: ProjectFile =
+fn v5_golden_project_migrates_to_v6_and_round_trips() {
+    let mut source: ProjectFile =
         serde_json::from_str(include_str!("fixtures/project-v5.oneiroi")).unwrap();
     source.validate().unwrap();
+    assert_eq!(source.version, 5);
+    source.version = PROJECT_VERSION;
     assert_eq!(source.version, PROJECT_VERSION);
 
     let project = load_project(fixture_path(V5_FIXTURE)).unwrap();

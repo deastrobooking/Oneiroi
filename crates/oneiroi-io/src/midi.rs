@@ -8,9 +8,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 
 use midir::{Ignore, MidiInput, MidiInputConnection as PlatformConnection, MidiInputPort};
-use oneiroi_core::MidiMessage;
+use oneiroi_core::{MidiMessage, MidiRealtime};
 
-const MIDI_QUEUE_CAPACITY: usize = 256;
+/// Beat clock alone is 48 messages per second at 120 BPM, so the queue holds
+/// several seconds of clock plus controller traffic before a stalled render
+/// thread starts losing anything.
+const MIDI_QUEUE_CAPACITY: usize = 512;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MidiInputDevice {
@@ -18,10 +21,20 @@ pub struct MidiInputDevice {
     pub label: String,
 }
 
+/// A parsed inbound message.
+///
+/// Channel-voice messages drive mapping and learn; System Real-Time messages
+/// drive the beat clock and never take part in either.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MidiInputMessage {
+    Control(MidiMessage),
+    Realtime(MidiRealtime),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MidiInputEvent {
     pub timestamp_micros: u64,
-    pub message: MidiMessage,
+    pub message: MidiInputMessage,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -29,6 +42,10 @@ pub struct MidiInputStats {
     pub received: u64,
     pub dropped: u64,
     pub parse_errors: u64,
+    /// System Real-Time and Song Position messages seen, included in
+    /// `received`. Split out so the clock panel can show sync traffic
+    /// without the operator reading it as controller activity.
+    pub realtime: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -53,6 +70,7 @@ pub struct MidiInputConnection {
     received: Arc<AtomicU64>,
     dropped: Arc<AtomicU64>,
     parse_errors: Arc<AtomicU64>,
+    realtime: Arc<AtomicU64>,
     _connection: PlatformConnection<()>,
 }
 
@@ -73,25 +91,27 @@ impl MidiInputConnection {
         let received = Arc::new(AtomicU64::new(0));
         let dropped = Arc::new(AtomicU64::new(0));
         let parse_errors = Arc::new(AtomicU64::new(0));
+        let realtime = Arc::new(AtomicU64::new(0));
         let callback_received = received.clone();
         let callback_dropped = dropped.clone();
         let callback_parse_errors = parse_errors.clone();
+        let callback_realtime = realtime.clone();
         let connection = input
             .connect(
                 &port,
                 "oneiroi-capture",
                 move |timestamp_micros, bytes, ()| {
-                    if !bytes
-                        .first()
-                        .is_some_and(|status| matches!(status & 0xf0, 0x80 | 0x90 | 0xb0 | 0xe0))
-                    {
+                    if !bytes.first().is_some_and(|status| is_supported(*status)) {
                         return;
                     }
-                    let Some(message) = parse_midi_message(bytes) else {
+                    let Some(message) = parse_midi_input(bytes) else {
                         callback_parse_errors.fetch_add(1, Ordering::Relaxed);
                         return;
                     };
                     callback_received.fetch_add(1, Ordering::Relaxed);
+                    if matches!(message, MidiInputMessage::Realtime(_)) {
+                        callback_realtime.fetch_add(1, Ordering::Relaxed);
+                    }
                     enqueue(
                         &sender,
                         MidiInputEvent {
@@ -110,6 +130,7 @@ impl MidiInputConnection {
             received,
             dropped,
             parse_errors,
+            realtime,
             _connection: connection,
         })
     }
@@ -127,6 +148,7 @@ impl MidiInputConnection {
             received: self.received.load(Ordering::Relaxed),
             dropped: self.dropped.load(Ordering::Relaxed),
             parse_errors: self.parse_errors.load(Ordering::Relaxed),
+            realtime: self.realtime.load(Ordering::Relaxed),
         }
     }
 }
@@ -163,6 +185,39 @@ fn describe_ports_with_handles(
             Ok((MidiInputDevice { id, label }, port))
         })
         .collect()
+}
+
+/// Status bytes this adapter forwards: channel voice for mapping, plus the
+/// System Real-Time and Song Position messages the beat clock needs.
+fn is_supported(status: u8) -> bool {
+    matches!(status & 0xf0, 0x80 | 0x90 | 0xb0 | 0xe0)
+        || matches!(status, 0xf2 | 0xf8 | 0xfa | 0xfb | 0xfc)
+}
+
+/// Parse a complete packet into whichever half of the pipeline owns it.
+pub fn parse_midi_input(bytes: &[u8]) -> Option<MidiInputMessage> {
+    match parse_realtime_message(bytes) {
+        Some(realtime) => Some(MidiInputMessage::Realtime(realtime)),
+        None => parse_midi_message(bytes).map(MidiInputMessage::Control),
+    }
+}
+
+/// Parse a System Real-Time or Song Position packet.
+///
+/// Real-Time messages are single bytes and may legally interleave anywhere,
+/// including inside a running-status stream; Song Position is a three-byte
+/// System Common message carrying a 14-bit sixteenth-note count.
+pub fn parse_realtime_message(bytes: &[u8]) -> Option<MidiRealtime> {
+    match *bytes.first()? {
+        0xf8 => Some(MidiRealtime::Clock),
+        0xfa => Some(MidiRealtime::Start),
+        0xfb => Some(MidiRealtime::Continue),
+        0xfc => Some(MidiRealtime::Stop),
+        0xf2 => Some(MidiRealtime::SongPosition(
+            u16::from(*bytes.get(1)? & 0x7f) | (u16::from(*bytes.get(2)? & 0x7f) << 7),
+        )),
+        _ => None,
+    }
 }
 
 pub fn parse_midi_message(bytes: &[u8]) -> Option<MidiMessage> {
@@ -253,5 +308,51 @@ mod tests {
         assert_eq!(parse_midi_message(&[]), None);
         assert_eq!(parse_midi_message(&[0xb0, 1]), None);
         assert_eq!(parse_midi_message(&[0xf8]), None);
+    }
+
+    #[test]
+    fn parses_system_real_time_and_song_position() {
+        assert_eq!(parse_realtime_message(&[0xf8]), Some(MidiRealtime::Clock));
+        assert_eq!(parse_realtime_message(&[0xfa]), Some(MidiRealtime::Start));
+        assert_eq!(
+            parse_realtime_message(&[0xfb]),
+            Some(MidiRealtime::Continue)
+        );
+        assert_eq!(parse_realtime_message(&[0xfc]), Some(MidiRealtime::Stop));
+        // 14-bit little-endian sixteenth-note count: 0x10 | (0x01 << 7) = 144.
+        assert_eq!(
+            parse_realtime_message(&[0xf2, 0x10, 0x01]),
+            Some(MidiRealtime::SongPosition(144))
+        );
+        assert_eq!(parse_realtime_message(&[0xf2, 0x10]), None);
+        assert_eq!(parse_realtime_message(&[0x90, 60, 100]), None);
+    }
+
+    #[test]
+    fn input_parsing_routes_clock_and_control_to_separate_halves() {
+        assert_eq!(
+            parse_midi_input(&[0xf8]),
+            Some(MidiInputMessage::Realtime(MidiRealtime::Clock))
+        );
+        assert_eq!(
+            parse_midi_input(&[0xb7, 74, 127]),
+            Some(MidiInputMessage::Control(MidiMessage::ControlChange {
+                channel: 7,
+                controller: 74,
+                value: 127,
+            }))
+        );
+        assert_eq!(parse_midi_input(&[0xf6]), None);
+    }
+
+    #[test]
+    fn supported_status_bytes_cover_clock_without_admitting_sysex() {
+        for status in [0x80, 0x90, 0xb0, 0xe0, 0xf2, 0xf8, 0xfa, 0xfb, 0xfc] {
+            assert!(is_supported(status), "{status:#x} should be forwarded");
+        }
+        // Active sensing and sysex would flood the queue for no benefit.
+        for status in [0xf0, 0xf7, 0xfe, 0xff, 0xf1] {
+            assert!(!is_supported(status), "{status:#x} should be filtered");
+        }
     }
 }

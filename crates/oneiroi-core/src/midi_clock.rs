@@ -123,12 +123,7 @@ impl MidiClockFollower {
     /// `seconds` must come from the same timebase for the whole session; the
     /// platform MIDI timestamp is the right source because it is captured in
     /// the driver callback rather than whenever the render thread polls.
-    pub fn apply(
-        &mut self,
-        device: &str,
-        message: MidiRealtime,
-        seconds: f64,
-    ) -> MidiClockUpdate {
+    pub fn apply(&mut self, device: &str, message: MidiRealtime, seconds: f64) -> MidiClockUpdate {
         if !self.accepts(device, seconds) {
             return MidiClockUpdate::default();
         }
@@ -373,9 +368,12 @@ impl MidiClockGenerator {
         let Some(bpm) = sanitize_bpm(bpm) else {
             return;
         };
-        if self.running {
+        // With nothing emitted yet the next pulse is the origin itself, and
+        // the origin does not move with tempo. Only a train already in flight
+        // needs rebasing onto its last emitted pulse.
+        if self.running && self.emitted > 0 {
             self.origin_seconds = self.last_pulse_seconds().min(seconds);
-            self.emitted = 0;
+            self.emitted = 1;
         }
         self.bpm = bpm;
     }
@@ -474,10 +472,28 @@ mod tests {
         let (steady, seconds) = clock_for(&mut follower, 120.0, 24, seconds);
         assert_eq!(steady.bpm, None);
 
-        // A real tempo move is reported again.
-        let (moved, _) = clock_for(&mut follower, 140.0, 48, seconds);
-        assert!(moved.bpm.is_none() || moved.bpm.is_some_and(|bpm| bpm > 120.0));
-        assert!(follower.bpm().is_some_and(|bpm| (bpm - 140.0).abs() < 1.0));
+        // A real tempo move is reported while the estimate slides toward it.
+        // `clock_for` leaves `seconds` on the next due pulse, so the first
+        // faster interval starts one 120 BPM period earlier.
+        let start = seconds - 60.0 / (120.0 * PULSES_PER_QUARTER_NOTE as f64);
+        let period = 60.0 / (140.0 * PULSES_PER_QUARTER_NOTE as f64);
+        let mut reports = 0;
+        for pulse in 1..=48 {
+            if follower
+                .apply(
+                    "clock-source",
+                    MidiRealtime::Clock,
+                    start + f64::from(pulse) * period,
+                )
+                .bpm
+                .is_some()
+            {
+                reports += 1;
+            }
+        }
+
+        assert!(reports > 0, "a tempo change has to reach the consumer");
+        assert!(follower.bpm().is_some_and(|bpm| (bpm - 140.0).abs() < 0.01));
     }
 
     #[test]
@@ -522,8 +538,7 @@ mod tests {
         let period = 60.0 / (120.0 * PULSES_PER_QUARTER_NOTE as f64);
         let mut anchors = Vec::new();
         for pulse in 0..48 {
-            let update =
-                follower.apply("clock-source", MidiRealtime::Clock, pulse as f64 * period);
+            let update = follower.apply("clock-source", MidiRealtime::Clock, pulse as f64 * period);
             if let Some(beat) = update.beat {
                 anchors.push(beat);
             }

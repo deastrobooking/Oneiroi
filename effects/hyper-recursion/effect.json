@@ -1,7 +1,7 @@
 {
-  "format":"oneiroi-effect","version":1,"id":"hyper-recursion","name":"Hyper Recursion 4D+",
+  "format":"oneiroi-effect","version":2,"id":"hyper-recursion","name":"Hyper Recursion 4D+",
   "description":"Projects recursive 4D, 5D and 6D transforms back through the source plane.",
-  "role":"master_effect","shader":"hyper_recursion.wgsl",
+  "role":"effect","targets":["master","deck"],"abi":"deck-v1","shader":"hyper_recursion.wgsl",
   "parameters":[
     {"id":"dimensions","label":"Dimensions","minimum":4.0,"maximum":6.0,"default":4.0,"group":"Higher-dimensional function","control":"choice","options":[{"label":"4D","value":4.0},{"label":"5D","value":5.0},{"label":"6D","value":6.0}]},
     {"id":"function","label":"Function","minimum":0.0,"maximum":2.0,"default":0.0,"group":"Higher-dimensional function","control":"choice","options":[{"label":"Tesseract fold","value":0.0},{"label":"Quaternion square","value":1.0},{"label":"Clifford flow","value":2.0}]},

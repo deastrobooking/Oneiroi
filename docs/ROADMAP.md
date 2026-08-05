@@ -269,12 +269,12 @@ Delivery order:
    a bounded generation-tagged worker, retain ABI/layout conformance tests, and
    compare one binding-generation approach against `encase` before choosing
    either.
-2. **S1 — Per-deck precomposition seam.** Conditionally materialize only a
-   package-bearing deck after its built-in groups and preserve the current
-   bit-identical fused path when no deck package is active.
-3. **S2 — One `deck-v1` slot per deck.** Start with a stateless one-pass
-   fragment contract, stable project/control identity, neutral fallback,
-   Show Mode controls, alpha tests, culling and recorded 1080p/UHD budgets.
+2. **S1 — Per-deck precomposition seam.** Implemented: only package-bearing
+   decks materialize after their built-ins, and the no-package path stays fused.
+3. **S2 — One `deck-v1` slot per deck.** Core execution, UI, neutral fallback,
+   project-v6 persistence, reload and memory budget are implemented. Finish
+   stable modulation/MIDI/OSC identity plus alpha/culling telemetry and the
+   four-deck show-machine gate.
 4. **S3 — Versioned shared WGSL modules.** Prototype an allow-listed
    `oneiroi-std` namespace and fingerprint every transitive import.
 5. **S4 — Typed N-pass fragment graph.** Declare pass edges, formats,

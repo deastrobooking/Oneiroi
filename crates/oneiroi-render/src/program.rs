@@ -1576,7 +1576,10 @@ mod tests {
             176
         );
         assert_eq!(std::mem::offset_of!(MasterEffectGlobals, deck_index), 180);
-        assert_eq!(std::mem::offset_of!(MasterEffectGlobals, source_extent), 184);
+        assert_eq!(
+            std::mem::offset_of!(MasterEffectGlobals, source_extent),
+            184
+        );
         assert_eq!(
             std::mem::offset_of!(MasterEffectGlobals, composition_extent),
             192

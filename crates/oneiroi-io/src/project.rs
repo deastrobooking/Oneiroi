@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const PROJECT_FORMAT: &str = "oneiroi-project";
-pub const PROJECT_VERSION: u32 = 5;
+pub const PROJECT_VERSION: u32 = 6;
 const MINIMUM_PROJECT_VERSION: u32 = 1;
 pub const DECK_COUNT: usize = 4;
 pub const CLIPS_PER_DECK: usize = 8;
@@ -179,6 +179,7 @@ impl ProjectFile {
                 || !unit(deck.effects.bit_reduction)
                 || !unit(deck.effects.blacklight)
                 || !valid_effect_slots(&deck.effects.slots)
+                || !valid_deck_package(&deck.package)
                 || deck.lfos.len() > 3
                 || deck.lfos.iter().any(|lfo| {
                     !effect_value(lfo.rate_hz, 0.01, 20.0)
@@ -214,6 +215,19 @@ impl ProjectFile {
                     "deck {index} contains an unsupported value"
                 )));
             }
+        }
+        if !valid_device_id(&self.settings.midi_clock.input_device)
+            || !valid_device_id(&self.settings.midi_clock.output_device)
+            || self.settings.midi_devices.len() > 32
+            || !self
+                .settings
+                .midi_devices
+                .iter()
+                .all(|id| valid_device_id(id))
+        {
+            return Err(ProjectError::InvalidValue(
+                "MIDI device identity is invalid".to_owned(),
+            ));
         }
         for mapping in &self.midi_mappings {
             if mapping.channel > 15
@@ -253,6 +267,12 @@ pub fn new_project_id() -> String {
     format!("{:032x}", time ^ (process << 64) ^ sequence)
 }
 
+/// Platform port names are opaque; only length and control characters are
+/// checked, so a project written on another machine still loads.
+fn valid_device_id(value: &str) -> bool {
+    value.len() <= 255 && !value.chars().any(char::is_control)
+}
+
 fn valid_identity(value: &str) -> bool {
     value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
@@ -271,6 +291,23 @@ fn valid_effect_slots(slots: &[EffectSlotProject]) -> bool {
         && EffectGroupProject::ALL
             .into_iter()
             .all(|group| slots.iter().filter(|slot| slot.group == group).count() == 1)
+}
+
+fn valid_deck_package(package: &DeckPackageProject) -> bool {
+    unit(package.mix)
+        && (package.package_id.is_empty() || valid_effect_id(&package.package_id))
+        && package.parameters.len() <= 32
+        && package
+            .parameters
+            .iter()
+            .all(|parameter| valid_effect_id(&parameter.id) && parameter.value.is_finite())
+        && {
+            let mut ids = std::collections::HashSet::new();
+            package
+                .parameters
+                .iter()
+                .all(|parameter| ids.insert(parameter.id.as_str()))
+        }
 }
 
 fn valid_master_effects(effects: &MasterEffectsProject) -> bool {
@@ -377,6 +414,9 @@ pub struct ProjectSettings {
     /// MIDI devices the operator had connected; reconnected on load.
     #[serde(default)]
     pub midi_devices: Vec<String>,
+    /// Beat-clock sync, in and out.
+    #[serde(default)]
+    pub midi_clock: MidiClockProject,
 }
 
 impl Default for ProjectSettings {
@@ -393,8 +433,36 @@ impl Default for ProjectSettings {
             master_modulation: MasterModulationProject::default(),
             theme: ThemeProject::default(),
             midi_devices: Vec::new(),
+            midi_clock: MidiClockProject::default(),
         }
     }
+}
+
+/// Saved beat-clock rig.
+///
+/// Devices are stored by the same identifier the device panel uses, so a rig
+/// that reappears in a different port order still reconnects to the right
+/// hardware.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct MidiClockProject {
+    #[serde(default)]
+    pub source: ClockSourceProject,
+    /// Device trusted for incoming clock; empty follows any connected device.
+    #[serde(default)]
+    pub input_device: String,
+    #[serde(default)]
+    pub output_device: String,
+    /// Whether clock was being sent when the project was saved.
+    #[serde(default)]
+    pub send: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClockSourceProject {
+    #[default]
+    Internal,
+    MidiInput,
 }
 
 /// Operator theme choices. Stored as open strings rather than an enum so a
@@ -674,6 +742,8 @@ pub struct DeckProject {
     #[serde(default)]
     pub blend_mode: BlendModeProject,
     pub effects: EffectProject,
+    #[serde(default)]
+    pub package: DeckPackageProject,
     #[serde(default = "default_lfos")]
     pub lfos: Vec<LfoProject>,
     #[serde(default = "default_mod_routes")]
@@ -697,11 +767,39 @@ impl Default for DeckProject {
             transform: TransformProject::default(),
             blend_mode: BlendModeProject::Normal,
             effects: EffectProject::default(),
+            package: DeckPackageProject::default(),
             lfos: default_lfos(),
             mod_routes: default_mod_routes(),
             camera: None,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeckPackageProject {
+    #[serde(default)]
+    pub bypassed: bool,
+    #[serde(default = "default_unit")]
+    pub mix: f32,
+    #[serde(default)]
+    pub package_id: String,
+    #[serde(default)]
+    pub parameters: Vec<EffectParameterValueProject>,
+}
+
+impl Default for DeckPackageProject {
+    fn default() -> Self {
+        Self {
+            bypassed: false,
+            mix: 1.0,
+            package_id: String::new(),
+            parameters: Vec::new(),
+        }
+    }
+}
+
+fn default_unit() -> f32 {
+    1.0
 }
 
 fn default_clip_playback() -> Vec<ClipPlaybackProject> {
@@ -1312,6 +1410,15 @@ mod tests {
         project.decks[0].effects.slots.swap(0, 2);
         project.decks[0].effects.slots[1].bypassed = true;
         project.decks[0].effects.slots[2].mix = 0.35;
+        project.decks[0].package = DeckPackageProject {
+            bypassed: false,
+            mix: 0.72,
+            package_id: "recursive-2d".to_owned(),
+            parameters: vec![EffectParameterValueProject {
+                id: "iterations".to_owned(),
+                value: 6.0,
+            }],
+        };
         project.decks[0].solo = true;
         project.decks[2].bypassed = true;
         project.settings.output = OutputProject {
@@ -1836,5 +1943,50 @@ mod tests {
             .remove("midi_devices");
         let legacy: ProjectFile = serde_json::from_value(value).unwrap();
         assert!(legacy.settings.midi_devices.is_empty());
+    }
+
+    #[test]
+    fn midi_clock_rig_round_trips_and_defaults_to_internal() {
+        let mut project = ProjectFile::default();
+        project.settings.midi_clock = MidiClockProject {
+            source: ClockSourceProject::MidiInput,
+            input_device: "Digitakt".to_owned(),
+            output_device: "Analog Rytm".to_owned(),
+            send: true,
+        };
+        project.validate().expect("a saved clock rig is valid");
+        let json = serde_json::to_string(&project).unwrap();
+        let loaded: ProjectFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.settings.midi_clock, project.settings.midi_clock);
+
+        // A settings object written before clock sync existed still loads,
+        // with the show back on its internal tempo.
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("midi_clock");
+        let legacy: ProjectFile = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            legacy.settings.midi_clock.source,
+            ClockSourceProject::Internal
+        );
+        assert!(!legacy.settings.midi_clock.send);
+        assert!(legacy.settings.midi_clock.output_device.is_empty());
+    }
+
+    #[test]
+    fn rejects_device_identities_that_could_not_name_a_port() {
+        let mut project = ProjectFile::default();
+        project.settings.midi_clock.output_device = "a\u{0}b".to_owned();
+        assert!(project.validate().is_err());
+
+        let mut project = ProjectFile::default();
+        project.settings.midi_clock.input_device = "x".repeat(256);
+        assert!(project.validate().is_err());
+
+        let mut project = ProjectFile::default();
+        project.settings.midi_devices = (0..33).map(|index| format!("device-{index}")).collect();
+        assert!(project.validate().is_err());
     }
 }

@@ -1,7 +1,7 @@
 use oneiroi_media::{RgbaFrame, VideoFramePayload};
 use oneiroi_render::{
-    DeckEffects, DeckTransform, FourDeckCompositor, LayerBlendMode, MixerBus, MixerParams,
-    SourceMode,
+    DeckEffects, DeckPackageSlot, DeckTransform, EffectParameterValue, FourDeckCompositor,
+    LayerBlendMode, MixerBus, MixerParams, SourceMode,
 };
 
 const SIZE: u32 = 4;
@@ -68,6 +68,22 @@ fn render(
     compositor: &mut FourDeckCompositor,
     params: MixerParams,
 ) -> Vec<u8> {
+    render_with_packages(
+        device,
+        queue,
+        compositor,
+        params,
+        &std::array::from_fn(|_| DeckPackageSlot::default()),
+    )
+}
+
+fn render_with_packages(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    compositor: &mut FourDeckCompositor,
+    params: MixerParams,
+    packages: &[DeckPackageSlot; 4],
+) -> Vec<u8> {
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("mixer-test-target"),
         size: wgpu::Extent3d {
@@ -90,7 +106,7 @@ fn render(
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
-    compositor.draw(device, queue, &mut encoder, &view, params);
+    compositor.draw_with_deck_packages(device, queue, &mut encoder, &view, params, packages);
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
             texture: &target,
@@ -123,6 +139,76 @@ fn render(
         })
         .unwrap();
     readback.slice(..).get_mapped_range().to_vec()
+}
+
+#[test]
+fn deck_package_executes_before_blend_and_bypass_restores_the_fused_path() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer.set_output_extent(&device, [SIZE, SIZE]);
+    mixer.upload(&device, &queue, 0, &pattern()).unwrap();
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../effects/chromatic-split/effect.json");
+    mixer.watch_deck_effect_manifests(vec![manifest]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !mixer.deck_effect_loaded("chromatic-split") && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        mixer.poll_deck_effect_reload();
+    }
+    assert!(
+        mixer.deck_effect_loaded("chromatic-split"),
+        "{}",
+        mixer.deck_effect_reload_status()
+    );
+
+    let baseline = render(&device, &queue, &mut mixer, MixerParams::default());
+    let selected = DeckPackageSlot {
+        package_id: "chromatic-split".to_owned(),
+        parameters: vec![
+            EffectParameterValue {
+                id: "amount".to_owned(),
+                value: 0.08,
+            },
+            EffectParameterValue {
+                id: "angle".to_owned(),
+                value: 0.0,
+            },
+            EffectParameterValue {
+                id: "pulse".to_owned(),
+                value: 0.0,
+            },
+        ],
+        ..DeckPackageSlot::default()
+    };
+    let packages = std::array::from_fn(|index| {
+        if index == 0 {
+            selected.clone()
+        } else {
+            DeckPackageSlot::default()
+        }
+    });
+    let effected = render_with_packages(
+        &device,
+        &queue,
+        &mut mixer,
+        MixerParams::default(),
+        &packages,
+    );
+    assert_ne!(effected, baseline, "deck package did not alter its source");
+
+    let mut bypassed = packages;
+    bypassed[0].bypassed = true;
+    let bypassed = render_with_packages(
+        &device,
+        &queue,
+        &mut mixer,
+        MixerParams::default(),
+        &bypassed,
+    );
+    assert_eq!(bypassed, baseline, "bypass must retain the fused fast path");
 }
 
 #[test]

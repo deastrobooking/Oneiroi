@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use oneiroi_graph::ParameterValue;
 use oneiroi_media::{CrossfadeBus, DeckId, FourDeckMixer};
 use oneiroi_render::{
-    DeckLfos, DeckTransform, EffectGroup, EffectTarget, LayerBlendMode, LfoWaveform,
-    MasterEffectChain, MasterEffectKind, MasterModulation, SourceMode,
+    DeckLfos, DeckPackageSlot, DeckTransform, EffectGroup, EffectParameterValue, EffectTarget,
+    LayerBlendMode, LfoWaveform, MasterEffectChain, MasterEffectKind, MasterModulation, SourceMode,
 };
 use oneiroi_session::CommandOperation;
 
@@ -24,6 +24,7 @@ pub(crate) struct StructuralSnapshot {
     effect_slots: [[oneiroi_render::EffectSlot; 3]; 4],
     mirror: [bool; 4],
     lfos: [DeckLfos; 4],
+    deck_packages: [DeckPackageSlot; 4],
     master_effects: MasterEffectChain,
     master_modulation: MasterModulation,
 }
@@ -40,6 +41,7 @@ impl StructuralSnapshot {
             effect_slots: ui.effects.map(|effects| effects.slots),
             mirror: ui.effects.map(|effects| effects.mirror),
             lfos: ui.lfos,
+            deck_packages: ui.deck_packages.clone(),
             master_effects: ui.master_effects.clone(),
             master_modulation: ui.master_modulation,
         }
@@ -59,6 +61,7 @@ impl StructuralSnapshot {
         ui.solo = self.solo;
         ui.bypassed = self.bypassed;
         ui.lfos = self.lfos;
+        ui.deck_packages = self.deck_packages.clone();
         ui.master_effects = self.master_effects.clone();
         ui.master_modulation = self.master_modulation;
     }
@@ -116,6 +119,12 @@ impl StructuralSnapshot {
                 next.effect_slots[deck],
                 self.lfos[deck],
                 next.lfos[deck],
+            );
+            diff_deck_package(
+                &mut commands,
+                &root,
+                &self.deck_packages[deck],
+                &next.deck_packages[deck],
             );
         }
         diff_master_effects(&mut commands, &self.master_effects, &next.master_effects);
@@ -207,9 +216,49 @@ pub(crate) fn apply_session_parameters(
             &format!("{root}.effects.mirror"),
         );
         apply_deck_effect_structure(ui, parameters, deck, &root);
+        apply_deck_package(ui, parameters, deck, &root);
     }
     apply_master_effect_structure(ui, parameters);
     apply_master_modulation_structure(ui, parameters);
+}
+
+fn apply_deck_package(
+    ui: &mut UiState,
+    parameters: &BTreeMap<String, ParameterValue>,
+    deck: usize,
+    root: &str,
+) {
+    let root = format!("{root}.package");
+    let package = &mut ui.deck_packages[deck];
+    assign_bool(
+        &mut package.bypassed,
+        parameters,
+        &format!("{root}.bypassed"),
+    );
+    assign_f32(&mut package.mix, parameters, &format!("{root}.mix"));
+    if let Some(value) = text_at(parameters, &format!("{root}.package_id")) {
+        package.package_id = value.to_owned();
+    }
+    if let Some(ids) = text_at(parameters, &format!("{root}.parameter_ids")) {
+        package.parameters = ids
+            .split('\u{1f}')
+            .filter(|id| !id.is_empty())
+            .map(|id| EffectParameterValue {
+                id: id.to_owned(),
+                value: scalar_at(parameters, &format!("{root}.parameter.{id}")).unwrap_or_default()
+                    as f32,
+            })
+            .collect();
+    } else {
+        for parameter in &mut package.parameters {
+            if let Some(value) =
+                scalar_at(parameters, &format!("{root}.parameter.{}", parameter.id))
+            {
+                parameter.value = value as f32;
+            }
+        }
+    }
+    package.sanitize();
 }
 
 pub(crate) fn session_parameters(
@@ -642,6 +691,59 @@ fn diff_deck_effect_structure(
     }
 }
 
+fn diff_deck_package(
+    commands: &mut Vec<CommandOperation>,
+    deck_root: &str,
+    old: &DeckPackageSlot,
+    new: &DeckPackageSlot,
+) {
+    let root = format!("{deck_root}.package");
+    changed_bool(
+        commands,
+        format!("{root}.bypassed"),
+        old.bypassed,
+        new.bypassed,
+    );
+    changed_f32(commands, format!("{root}.mix"), old.mix, new.mix);
+    changed_text(
+        commands,
+        format!("{root}.package_id"),
+        &old.package_id,
+        &new.package_id,
+    );
+    let old_ids = old
+        .parameters
+        .iter()
+        .map(|parameter| parameter.id.as_str())
+        .collect::<Vec<_>>()
+        .join("\u{1f}");
+    let new_ids = new
+        .parameters
+        .iter()
+        .map(|parameter| parameter.id.as_str())
+        .collect::<Vec<_>>()
+        .join("\u{1f}");
+    changed_text(
+        commands,
+        format!("{root}.parameter_ids"),
+        &old_ids,
+        &new_ids,
+    );
+    for parameter in &new.parameters {
+        let old_value = old
+            .parameters
+            .iter()
+            .find(|candidate| candidate.id == parameter.id)
+            .map(|candidate| candidate.value);
+        if old_value != Some(parameter.value) {
+            commands.push(command(
+                format!("{root}.parameter.{}", parameter.id),
+                ParameterValue::Scalar(f64::from(parameter.value)),
+            ));
+        }
+    }
+}
+
 fn diff_master_effects(
     commands: &mut Vec<CommandOperation>,
     old: &MasterEffectChain,
@@ -860,6 +962,7 @@ mod tests {
         after.transforms[0].crop[2] = 0.25;
         after.blend_modes[1] = LayerBlendMode::Difference;
         after.lfos[2].lanes[1].waveform = LfoWaveform::Square;
+        after.deck_packages[3].package_id = "hyper-recursion".to_owned();
         after.master_effects.slots[0].kind = MasterEffectKind::Blur;
 
         let commands = after_paths(before.commands_to(&after));
@@ -870,6 +973,11 @@ mod tests {
         );
         assert!(commands.iter().any(|path| path == "deck.1.blend_mode"));
         assert!(commands.iter().any(|path| path == "deck.2.lfo.1.waveform"));
+        assert!(
+            commands
+                .iter()
+                .any(|path| path == "deck.3.package.package_id")
+        );
         assert!(commands.iter().any(|path| path == "master.effect.0.kind"));
     }
 
@@ -881,11 +989,13 @@ mod tests {
         mixer.deck_mut(DeckId::A).bus = CrossfadeBus::Right;
         ui.transforms[0].scale = 2.0;
         ui.master_modulation.lfos[0].enabled = true;
+        ui.deck_packages[0].package_id = "recursive-2d".to_owned();
 
         snapshot.apply(&mut ui, &mut mixer);
         assert_eq!(mixer.deck(DeckId::A).bus, CrossfadeBus::Left);
         assert_eq!(ui.transforms[0].scale, 1.0);
         assert!(!ui.master_modulation.lfos[0].enabled);
+        assert!(ui.deck_packages[0].package_id.is_empty());
     }
 
     #[test]
@@ -899,6 +1009,15 @@ mod tests {
         desired.effect_slots[1][2].group = EffectGroup::Geometry;
         desired.lfos[2].lanes[1].waveform = LfoWaveform::Square;
         desired.lfos[2].routes[3].target = EffectTarget::Jitter;
+        desired.deck_packages[3] = DeckPackageSlot {
+            mix: 0.6,
+            package_id: "fractal-volume".to_owned(),
+            parameters: vec![EffectParameterValue {
+                id: "density".to_owned(),
+                value: 1.4,
+            }],
+            ..DeckPackageSlot::default()
+        };
         desired.master_effects.slots[0].kind = MasterEffectKind::Feedback;
         desired.master_modulation.routes[0].target_slot = 1;
         let parameters = before

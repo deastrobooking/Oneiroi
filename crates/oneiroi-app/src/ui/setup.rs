@@ -1,6 +1,6 @@
 //! Pre-show output, project, device, and diagnostics workspace.
 
-use oneiroi_core::{ControlTarget, Quantization};
+use oneiroi_core::{ClockSource, ControlTarget, Quantization};
 use oneiroi_media::FourDeckMixer;
 
 use super::diagnostics::{draw_output_health, draw_pipeline_health, draw_runtime_summary};
@@ -545,23 +545,49 @@ pub(super) fn draw_setup(
 
             ui.separator();
             ui.horizontal(|ui| {
-                ui.add(
+                // While an external clock is driving the show, the tempo
+                // controls are read-only: anything typed here would be
+                // overwritten by the next pulse.
+                let external = state.midi_clock_source == ClockSource::MidiInput
+                    && metrics.midi.clock.locked;
+                ui.add_enabled(
+                    !external,
                     egui::DragValue::new(&mut state.bpm)
                         .range(20.0..=400.0)
                         .speed(0.25)
                         .suffix(" BPM"),
                 );
-                let tap =
+                if external {
+                    ui.colored_label(
+                        palette.accent,
+                        format!(
+                            "MIDI CLOCK · {}",
+                            metrics.midi.clock.following.unwrap_or("external")
+                        ),
+                    )
+                    .on_hover_text("Tempo and beat phase follow the incoming clock");
+                }
+                let tap = ui.add_enabled_ui(!external, |ui| {
                     mappable(ui, midi_map, ControlTarget::TapTempo, actions, |ui| {
                         ui.button("Tap")
-                    });
+                    })
+                })
+                .inner;
                 if tap.clicked() {
                     actions.push(UiAction::TapTempo);
                 }
-                if ui.button("½").on_hover_text("Half tempo").clicked() {
+                if ui
+                    .add_enabled(!external, egui::Button::new("½"))
+                    .on_hover_text("Half tempo")
+                    .clicked()
+                {
                     actions.push(UiAction::HalfTempo);
                 }
-                if ui.button("×2").on_hover_text("Double tempo").clicked() {
+                if ui
+                    .add_enabled(!external, egui::Button::new("×2"))
+                    .on_hover_text("Double tempo")
+                    .clicked()
+                {
                     actions.push(UiAction::DoubleTempo);
                 }
                 ui.selectable_value(

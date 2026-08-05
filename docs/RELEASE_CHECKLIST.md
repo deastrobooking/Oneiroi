@@ -86,8 +86,8 @@ stuck deck selection or stale frame after seek/source replacement.
 - Exercise master package dry/wet, bypass, reorder, Show Mode cards, blackout,
   freeze and composition resize while watching for invalid history reuse.
 
-When the planned `deck-v1` runtime lands, this gate expands to four simultaneous
-1080p deck packages, dry/bypass bit-exactness, transparent-alpha preservation,
+For the `deck-v1` runtime, run four simultaneous 1080p deck packages and verify
+dry/bypass bit-exactness, transparent-alpha preservation,
 effect-before-every-blend ordering, invisible-deck culling and recorded 1080p/
 UHD texture ceilings. See [Shader system](SHADER_SYSTEM.md).
 

@@ -186,6 +186,8 @@ impl State {
                 return false;
             }
             self.program = ProgramTarget::new(&self.gpu.device, self.ui.composition_extent);
+            self.compositor
+                .set_output_extent(&self.gpu.device, self.ui.composition_extent);
             self.master_effect_processor =
                 MasterEffectProcessor::new(&self.gpu.device, &self.program);
             let manifest_paths = self.effect_manifest_paths();

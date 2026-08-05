@@ -2,10 +2,10 @@
 
 use std::time::{Duration, Instant, SystemTime};
 
-use oneiroi_core::{ControlTarget, ControlUpdate, effect_parameter_key};
+use oneiroi_core::{ClockSource, ControlTarget, ControlUpdate, MidiRealtime, effect_parameter_key};
 use oneiroi_io::{
-    AudioInput, AudioInputSnapshot, MidiInputConnection, discover_audio_inputs,
-    discover_midi_inputs,
+    AudioInput, AudioInputSnapshot, MidiClockSender, MidiInputConnection, MidiInputMessage,
+    discover_audio_inputs, discover_midi_inputs, discover_midi_outputs,
 };
 use oneiroi_media::{ClipAddress, DeckId};
 use oneiroi_session::{CommandOperation, CommandOrigin};
@@ -170,6 +170,12 @@ impl State {
         if now.saturating_duration_since(self.last_midi_refresh) >= Duration::from_secs(2) {
             self.refresh_midi_inputs();
         }
+        // Output ports are rescanned on the same cadence as inputs, including
+        // while clocking: that is how an unplugged destination is noticed at
+        // all, since a closed port swallows sends without failing loudly.
+        if now.saturating_duration_since(self.last_midi_output_refresh) >= Duration::from_secs(2) {
+            self.refresh_midi_outputs();
+        }
         // Collect first: ingest needs &mut self.midi while connections are
         // borrowed, so the events leave the borrow before dispatch.
         let batches: Vec<(String, Vec<_>)> = self
@@ -179,11 +185,17 @@ impl State {
             .collect();
         for (device, events) in batches {
             for event in events {
+                let MidiInputMessage::Control(message) = event.message else {
+                    if let MidiInputMessage::Realtime(message) = event.message {
+                        self.apply_midi_clock(&device, message, event.timestamp_micros, now);
+                    }
+                    continue;
+                };
                 let updates = {
                     let ui = &self.ui;
                     let mixer = &self.mixer;
                     let transports = &self.transports;
-                    self.midi.ingest(&device, event.message, |target| {
+                    self.midi.ingest(&device, message, |target| {
                         current_control_value(ui, mixer, transports, target)
                     })
                 };
@@ -196,7 +208,202 @@ impl State {
                 );
             }
         }
+        if let Some(sender) = &self.midi_clock_sender {
+            self.midi_clock_out_stats = sender.stats();
+        }
+        if now.saturating_duration_since(self.last_midi_output_refresh) >= Duration::from_secs(2) {
+            self.refresh_midi_outputs();
+        }
         self.refresh_midi_device_stats();
+    }
+
+    /// Fold one incoming real-time message into the beat clock.
+    ///
+    /// Intervals are measured with the driver's timestamp rather than poll
+    /// time: at 24 PPQN a frame of quantisation is worth several BPM, which
+    /// would make a followed tempo visibly wander.
+    fn apply_midi_clock(
+        &mut self,
+        device: &str,
+        message: MidiRealtime,
+        timestamp_micros: u64,
+        now: Instant,
+    ) {
+        // A pinned device means only that device may clock the show, so a
+        // second controller on the rig cannot fight it for the tempo.
+        if !self.ui.midi_clock_input_device.is_empty() && self.ui.midi_clock_input_device != device
+        {
+            return;
+        }
+        let elapsed = now
+            .saturating_duration_since(self.performance_started)
+            .as_secs_f64();
+        let device_seconds = timestamp_micros as f64 / 1_000_000.0;
+        let update = self.midi_clock.apply(device, message, device_seconds);
+        if self.midi_clock.source() == Some(device) {
+            self.midi_clock_offset = elapsed - device_seconds;
+        }
+        if update.started || update.stopped {
+            self.midi_clock_status = format!(
+                "{device} · transport {}",
+                if update.started { "start" } else { "stop" }
+            );
+        }
+        if self.ui.midi_clock_source != ClockSource::MidiInput {
+            return;
+        }
+        if let Some(bpm) = update.bpm {
+            self.apply_tempo(bpm, CommandOrigin::Midi(device.to_owned()), now);
+            self.tap_tempo.reset();
+        }
+        if let Some(beat) = update.beat {
+            // Phase, not tempo: a follower that only matched BPM would slide
+            // a whole bar away from its master over a long set.
+            self.tempo.anchor_beat(beat, elapsed);
+        }
+    }
+
+    /// Set the show tempo from any origin, keeping every consumer in step.
+    pub(crate) fn apply_tempo(&mut self, bpm: f64, origin: CommandOrigin, now: Instant) {
+        let bpm = bpm.clamp(20.0, 400.0);
+        self.record_show_operation(origin, now, CommandOperation::SetTempo { bpm });
+        self.ui.bpm = bpm;
+        self.tempo.set_bpm(
+            bpm,
+            now.saturating_duration_since(self.performance_started)
+                .as_secs_f64(),
+        );
+        if let Some(sender) = &self.midi_clock_sender {
+            sender.set_bpm(bpm);
+        }
+        self.publish_osc_value("/vjx/tempo", bpm as f32);
+    }
+
+    pub(crate) fn refresh_midi_outputs(&mut self) {
+        match discover_midi_outputs() {
+            Ok(outputs) => {
+                self.midi_outputs = outputs;
+                if self.ui.midi_output_device_id.is_empty()
+                    && let Some(device) = self.midi_outputs.first()
+                {
+                    self.ui.midi_output_device_id = device.id.clone();
+                }
+                // A vanished port cannot be clocked; drop the sender so the
+                // panel stops claiming the show drives downstream gear.
+                if let Some(sender) = &self.midi_clock_sender
+                    && !self
+                        .midi_outputs
+                        .iter()
+                        .any(|device| device.id == sender.device_id())
+                {
+                    self.midi_clock_sender = None;
+                    self.ui.midi_clock_send = false;
+                    self.midi_clock_out_status = "MIDI output unplugged · clock stopped".to_owned();
+                }
+            }
+            Err(error) => {
+                self.midi_clock_out_status = format!("MIDI output discovery failed: {error}");
+            }
+        }
+        self.last_midi_output_refresh = Instant::now();
+    }
+
+    pub(crate) fn connect_midi_clock_output(&mut self, device_id: String) {
+        // Dropping the previous sender stops its downstream device first.
+        self.midi_clock_sender = None;
+        match MidiClockSender::connect(&device_id, self.ui.bpm) {
+            Ok(sender) => {
+                self.midi_clock_out_status = format!("{device_id} connected");
+                self.midi_clock_out_stats = sender.stats();
+                self.midi_clock_sender = Some(sender);
+                self.ui.midi_output_device_id = device_id;
+                if self.ui.midi_clock_send {
+                    self.set_midi_clock_send(true);
+                }
+            }
+            Err(error) => {
+                self.ui.midi_clock_send = false;
+                self.midi_clock_out_status = format!("{device_id} unavailable: {error}");
+            }
+        }
+    }
+
+    pub(crate) fn disconnect_midi_clock_output(&mut self) {
+        // `Drop` sends Stop, so downstream gear never keeps running on a
+        // clock that no longer exists.
+        self.midi_clock_sender = None;
+        self.ui.midi_clock_send = false;
+        self.midi_clock_out_status = "MIDI clock output disconnected".to_owned();
+    }
+
+    pub(crate) fn set_midi_clock_send(&mut self, send: bool) {
+        let Some(sender) = &self.midi_clock_sender else {
+            self.ui.midi_clock_send = false;
+            self.midi_clock_out_status = "Connect a MIDI output first".to_owned();
+            return;
+        };
+        sender.set_bpm(self.ui.bpm);
+        if send {
+            sender.start();
+        } else {
+            sender.stop();
+        }
+        self.ui.midi_clock_send = send;
+        self.midi_clock_out_status = if send {
+            format!("Sending clock at {:.2} BPM", self.ui.bpm)
+        } else {
+            "Clock stopped".to_owned()
+        };
+    }
+
+    /// Resume downstream gear where it left off instead of rewinding it.
+    pub(crate) fn continue_midi_clock(&mut self) {
+        let Some(sender) = &self.midi_clock_sender else {
+            return;
+        };
+        sender.set_bpm(self.ui.bpm);
+        sender.continue_transport();
+        self.ui.midi_clock_send = true;
+        self.midi_clock_out_status = format!("Continuing at {:.2} BPM", self.ui.bpm);
+    }
+
+    /// Re-open the saved clock destination after a project load.
+    ///
+    /// A project that was sending clock resumes sending it, because a rig
+    /// reloaded between sets is expected to come back clocking. Missing
+    /// hardware is reported rather than retried silently: unlike controllers,
+    /// a clock destination that is not there changes what downstream gear
+    /// does, and the operator needs to see that before the set starts.
+    pub(crate) fn restore_midi_clock_output(&mut self) {
+        let device_id = self.ui.midi_output_device_id.clone();
+        let send = self.ui.midi_clock_send;
+        self.midi_clock_sender = None;
+        self.midi_clock.reset();
+        if device_id.is_empty() {
+            self.ui.midi_clock_send = false;
+            self.midi_clock_out_status = "MIDI clock output disconnected".to_owned();
+            return;
+        }
+        self.refresh_midi_outputs();
+        self.ui.midi_clock_send = send;
+        self.connect_midi_clock_output(device_id);
+    }
+
+    /// Switch the tempo master, leaving the show tempo where it is.
+    pub(crate) fn set_clock_source(&mut self, source: ClockSource) {
+        self.ui.midi_clock_source = source;
+        match source {
+            ClockSource::Internal => {
+                self.midi_clock_status = "Internal tempo".to_owned();
+            }
+            ClockSource::MidiInput => {
+                // Start from nothing: a stale estimate from an earlier device
+                // would show as a lock the operator cannot trust.
+                self.midi_clock.reset();
+                self.tap_tempo.reset();
+                self.midi_clock_status = "Waiting for MIDI clock".to_owned();
+            }
+        }
     }
 
     pub(crate) fn connect_osc_input(&mut self) {
@@ -287,15 +494,8 @@ impl State {
         match action {
             OscAction::Control(update) => self.dispatch_control_update(update, origin, now),
             OscAction::Tempo(bpm) => {
-                self.record_show_operation(origin, now, CommandOperation::SetTempo { bpm });
-                self.ui.bpm = bpm;
-                self.tempo.set_bpm(
-                    bpm,
-                    now.saturating_duration_since(self.performance_started)
-                        .as_secs_f64(),
-                );
+                self.apply_tempo(bpm, origin, now);
                 self.tap_tempo.reset();
-                self.publish_osc_value("/vjx/tempo", bpm as f32);
             }
             OscAction::OutputEnabled(enabled) => {
                 self.record_show_operation(
@@ -376,10 +576,7 @@ impl State {
                     .saturating_duration_since(self.performance_started)
                     .as_secs_f64();
                 if let Some(bpm) = self.tap_tempo.tap(elapsed) {
-                    self.record_show_operation(origin, now, CommandOperation::SetTempo { bpm });
-                    self.ui.bpm = bpm;
-                    self.tempo.set_bpm(bpm, elapsed);
-                    self.publish_osc_value("/vjx/tempo", bpm as f32);
+                    self.apply_tempo(bpm, origin, now);
                 }
             }
             return;

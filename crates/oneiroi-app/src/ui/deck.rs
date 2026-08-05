@@ -13,6 +13,8 @@ pub(super) struct DeckControls<'a> {
     pub(super) bypassed: &'a mut bool,
     pub(super) effects: &'a mut DeckEffects,
     pub(super) lfos: &'a mut DeckLfos,
+    pub(super) package: &'a mut DeckPackageSlot,
+    pub(super) packages: &'a [EffectDescriptor],
 }
 
 pub(super) fn draw_deck(
@@ -33,6 +35,8 @@ pub(super) fn draw_deck(
         bypassed,
         effects,
         lfos,
+        package,
+        packages,
     } = controls;
     let accent = palette.deck_color(id);
     let selected = mixer.selected() == id;
@@ -546,6 +550,8 @@ pub(super) fn draw_deck(
                 }
                 ui.weak("Effects run independently on this deck before mixing.");
             });
+            ui.separator();
+            draw_deck_package(ui, id, show_mode, package, packages);
         };
         if show_mode || selected {
             ui.group(effect_controls);
@@ -683,6 +689,161 @@ pub(super) fn draw_deck(
                 });
         }
     });
+}
+
+fn draw_deck_package(
+    ui: &mut egui::Ui,
+    id: DeckId,
+    show_mode: bool,
+    slot: &mut DeckPackageSlot,
+    packages: &[EffectDescriptor],
+) {
+    ui.strong("Algorithmic package");
+    let selected = packages
+        .iter()
+        .find(|candidate| candidate.id == slot.package_id);
+    if show_mode {
+        ui.label(selected.map_or("None", |package| package.name.as_str()));
+    } else {
+        let previous_id = slot.package_id.clone();
+        egui::ComboBox::from_id_salt(("deck-package", id.index()))
+            .selected_text(selected.map_or("None", |package| package.name.as_str()))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut slot.package_id, String::new(), "None");
+                for package in packages {
+                    ui.selectable_value(&mut slot.package_id, package.id.clone(), &package.name);
+                }
+            });
+        if slot.package_id != previous_id {
+            slot.parameters = packages
+                .iter()
+                .find(|candidate| candidate.id == slot.package_id)
+                .map(|package| {
+                    package
+                        .parameters
+                        .iter()
+                        .map(|parameter| EffectParameterValue {
+                            id: parameter.id.clone(),
+                            value: parameter.default,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+    }
+
+    if slot.package_id.is_empty() {
+        ui.weak("Select a deck-v1 package to run it before this layer is blended.");
+        return;
+    }
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut slot.bypassed, "Bypass package");
+        ui.add(egui::Slider::new(&mut slot.mix, 0.0..=1.0).text("wet"));
+    });
+    let Some(package) = packages
+        .iter()
+        .find(|candidate| candidate.id == slot.package_id)
+    else {
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            format!(
+                "Package {:?} is unavailable; deck passes through.",
+                slot.package_id
+            ),
+        );
+        return;
+    };
+    if !package.description.is_empty() && !show_mode {
+        ui.weak(&package.description);
+    }
+    if !package.presets.is_empty() && !show_mode {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Looks");
+            for preset in &package.presets {
+                if ui.small_button(&preset.label).clicked() {
+                    for (parameter_id, preset_value) in &preset.values {
+                        if let Some(value) = slot
+                            .parameters
+                            .iter_mut()
+                            .find(|value| value.id == *parameter_id)
+                        {
+                            value.value = *preset_value;
+                        }
+                    }
+                }
+            }
+        });
+    }
+    if !show_mode {
+        let mut previous_group = None::<&str>;
+        for parameter in &package.parameters {
+            let group = parameter.group.trim();
+            if !group.is_empty() && previous_group != Some(group) {
+                ui.strong(group);
+                previous_group = Some(group);
+            }
+            let value_index = slot
+                .parameters
+                .iter()
+                .position(|value| value.id == parameter.id)
+                .unwrap_or_else(|| {
+                    slot.parameters.push(EffectParameterValue {
+                        id: parameter.id.clone(),
+                        value: parameter.default,
+                    });
+                    slot.parameters.len() - 1
+                });
+            match parameter.control {
+                EffectParameterControl::Slider => {
+                    ui.add(
+                        egui::Slider::new(
+                            &mut slot.parameters[value_index].value,
+                            parameter.minimum..=parameter.maximum,
+                        )
+                        .text(&parameter.label),
+                    );
+                }
+                EffectParameterControl::Toggle => {
+                    let mut enabled = slot.parameters[value_index].value >= 0.5;
+                    if ui.checkbox(&mut enabled, &parameter.label).changed() {
+                        slot.parameters[value_index].value = f32::from(enabled);
+                    }
+                }
+                EffectParameterControl::Choice => {
+                    let selected = parameter
+                        .options
+                        .iter()
+                        .min_by(|left, right| {
+                            (left.value - slot.parameters[value_index].value)
+                                .abs()
+                                .total_cmp(
+                                    &(right.value - slot.parameters[value_index].value).abs(),
+                                )
+                        })
+                        .map_or("Choose", |option| option.label.as_str());
+                    ui.horizontal(|ui| {
+                        ui.label(&parameter.label);
+                        egui::ComboBox::from_id_salt((
+                            "deck-package-choice",
+                            id.index(),
+                            parameter.id.as_str(),
+                        ))
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            for option in &parameter.options {
+                                ui.selectable_value(
+                                    &mut slot.parameters[value_index].value,
+                                    option.value,
+                                    &option.label,
+                                );
+                            }
+                        });
+                    });
+                }
+            }
+        }
+    }
+    slot.sanitize();
 }
 
 pub(super) const EFFECT_TARGETS: [EffectTarget; 18] = [

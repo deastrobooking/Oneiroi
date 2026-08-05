@@ -89,47 +89,16 @@ impl State {
                         .saturating_duration_since(self.performance_started)
                         .as_secs_f64();
                     if let Some(bpm) = self.tap_tempo.tap(elapsed) {
-                        self.record_show_operation(
-                            CommandOrigin::Operator,
-                            now,
-                            CommandOperation::SetTempo { bpm },
-                        );
-                        self.ui.bpm = bpm;
-                        self.tempo.set_bpm(bpm, elapsed);
-                        self.publish_osc_value("/vjx/tempo", bpm as f32);
+                        self.apply_tempo(bpm, CommandOrigin::Operator, now);
                     }
                 }
                 ui::UiAction::HalfTempo => {
-                    let bpm = (self.ui.bpm * 0.5).clamp(20.0, 400.0);
-                    self.record_show_operation(
-                        CommandOrigin::Operator,
-                        now,
-                        CommandOperation::SetTempo { bpm },
-                    );
-                    self.ui.bpm = bpm;
-                    self.tempo.set_bpm(
-                        bpm,
-                        now.saturating_duration_since(self.performance_started)
-                            .as_secs_f64(),
-                    );
+                    self.apply_tempo(self.ui.bpm * 0.5, CommandOrigin::Operator, now);
                     self.tap_tempo.reset();
-                    self.publish_osc_value("/vjx/tempo", bpm as f32);
                 }
                 ui::UiAction::DoubleTempo => {
-                    let bpm = (self.ui.bpm * 2.0).clamp(20.0, 400.0);
-                    self.record_show_operation(
-                        CommandOrigin::Operator,
-                        now,
-                        CommandOperation::SetTempo { bpm },
-                    );
-                    self.ui.bpm = bpm;
-                    self.tempo.set_bpm(
-                        bpm,
-                        now.saturating_duration_since(self.performance_started)
-                            .as_secs_f64(),
-                    );
+                    self.apply_tempo(self.ui.bpm * 2.0, CommandOrigin::Operator, now);
                     self.tap_tempo.reset();
-                    self.publish_osc_value("/vjx/tempo", bpm as f32);
                 }
                 ui::UiAction::SetOutputEnabled(enabled) => {
                     self.record_show_operation(
@@ -235,6 +204,14 @@ impl State {
                 ui::UiAction::DisconnectOscInput => self.disconnect_osc_input(),
                 ui::UiAction::ConnectOscOutput => self.connect_osc_output(),
                 ui::UiAction::DisconnectOscOutput => self.disconnect_osc_output(),
+                ui::UiAction::SetMidiClockSource(source) => self.set_clock_source(source),
+                ui::UiAction::RefreshMidiOutputs => self.refresh_midi_outputs(),
+                ui::UiAction::ConnectMidiClockOutput(device_id) => {
+                    self.connect_midi_clock_output(device_id);
+                }
+                ui::UiAction::DisconnectMidiClockOutput => self.disconnect_midi_clock_output(),
+                ui::UiAction::SetMidiClockSend(enabled) => self.set_midi_clock_send(enabled),
+                ui::UiAction::MidiClockContinue => self.continue_midi_clock(),
                 ui::UiAction::MidiLearn(target) => self.midi.learn(target),
                 ui::UiAction::MidiCancelLearn => self.midi.cancel_learn(),
                 ui::UiAction::MidiClearTarget(target) => self.midi.clear_target(target),

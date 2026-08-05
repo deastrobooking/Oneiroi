@@ -253,13 +253,12 @@ project state, and older projects receive the canonical order during
 deserialization. Modulation resolves named parameters before group evaluation,
 so reordering a group does not invalidate MIDI or matrix targets.
 
-The current deck implementation remains fused into a single compositor pass;
-these built-in groups are not independently executable shader packages.
-Geometry wet mix interpolates transformed UVs, while Color and Stylize wet mix
-interpolate their RGBA stage result. The planned deck-package path will
-materialize only an active deck's processed layer after these groups and before
-bus blending. The inactive path must remain the existing bit-identical fused
-pass. See [Shader system](SHADER_SYSTEM.md) for that staged extraction.
+Built-in deck processing remains fused. Geometry wet mix interpolates
+transformed UVs, while Color and Stylize wet mix interpolate their RGBA stage
+result. Selecting a deck package materializes only that processed layer after
+these groups, runs its stateless `deck-v1` pass, and feeds the result into bus
+blending. Inactive decks remain on the bit-identical fused path. See
+[Shader system](SHADER_SYSTEM.md) for the contract.
 
 The master chain supplies the current multipass boundary. Its two reorderable
 slots accept Empty, Separable blur, Feedback / trails or a Custom package. When
@@ -289,8 +288,9 @@ horizontal scratch target, one ping target, the built-in feedback history, two
 custom slot histories and final output. Both slots reuse scratch/ping and never
 allocate during a frame. Relative to the original final target, bounded
 additional capacity is `6 × width × height × 4` bytes: about 47.5 MiB at 1080p
-or 189.8 MiB at UHD. These figures describe the current SDR baseline, not the
-planned deck targets or optional HDR tier. Each pass has its own uniform buffer,
+or 189.8 MiB at UHD. The deck executor adds five fixed RGBA8-sRGB targets
+(39.6 MiB at 1080p or 158.2 MiB at UHD). These figures do not include the
+optional HDR tier. Each pass has its own uniform buffer,
 preventing later queue writes from changing parameters of earlier encoded
 passes.
 

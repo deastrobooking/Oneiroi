@@ -6,7 +6,7 @@ currently executable package ABI; `ROADMAP.md` owns the wider product order.
 
 ## Executive decision
 
-Oneiroi will keep WGSL, `wgpu` and Naga as its native shader stack. The next
+Oneiroi will keep WGSL, `wgpu` and Naga as its native shader stack. The current
 shader milestone is a bounded per-deck package stage, not compute, arbitrary
 pass graphs, HDR or shader-format import. Those later capabilities build on the
 same typed resource and scheduling boundary, but landing them together would
@@ -19,7 +19,7 @@ source decode
     -> layer transform + crop + Fit / Fill / Stretch source mapping
     -> built-in Geometry UV stage
     -> Color + Levels / Stylize + Key in their relative order
-    -> planned deck package slot
+    -> optional stateless deck package slot
     -> layer blend into Bus A or Bus B
     -> bus crossfade
     -> two package-capable master slots
@@ -37,17 +37,18 @@ executes before Difference, Screen, Multiply and every other layer blend mode.
 | Native language | WGSL parsed by Naga and compiled by `wgpu` 29 |
 | Working color | Linear-sRGB shader math in RGBA8-sRGB render targets; final presentation remains sRGB |
 | Built-in deck effects | Geometry is a fixed UV prepass; Color + Levels and Stylize + Key can exchange relative order inside the fused compositor |
-| Package placement | Master slots only |
+| Package placement | Two master slots plus one optional stateless slot on each deck |
 | Package sequence | One or two fragment passes; this is a bounded sequence, not a DAG |
-| Package ABI | Manifest v1 implicitly targets `master-v1`; manifest v2 validates explicit target/ABI metadata while deck candidates remain catalog-only |
+| Package ABI | Manifest v1 implicitly targets `master-v1`; manifest v2 requires explicit targets and ABI. `deck-v1` may target deck alone or both deck and master |
 | Temporal state | At most one fixed previous-slot-output history texture per physical master slot |
 | Reload | Background parse/compile, generation-tagged swap and last-known-good retention |
 | Discovery | Bundled, active-workspace, configured and user roots with deterministic duplicate handling |
-| Algorithmic packages | Recursive 2D Lab, Fractal Volume 3D and Hyper Recursion 4D+; currently master-only |
+| Algorithmic packages | Chromatic Split, Recursive 2D Lab, Fractal Volume 3D and Hyper Recursion 4D+ execute on either deck or master |
 
-The four logical deck-effect nodes in the typed graph still lower into the
-single optimized compositor pass. They describe the built-in groups above;
-they do not yet represent independently executable effect packages.
+The built-in deck-effect nodes still lower into the optimized compositor. A
+selected package selectively materializes that deck after its built-ins, runs
+one `deck-v1` pass, and supplies the result to the override-aware layer blend.
+Decks without a package remain in the fused compositor.
 
 ## Realtime invariants and the remaining S0 gap
 
@@ -106,7 +107,7 @@ Acceptance:
 
 ### S1 — Extract the per-deck precomposition seam
 
-Status: committed next.
+Status: implemented.
 
 Split deck image production from bus blending while preserving the existing
 fused path when no deck package is active:
@@ -121,8 +122,7 @@ source + built-ins -> materialized layer -> package -> blend-only compositor
 The branch split must be selective: one active package must not force package
 passes for the other three decks. Fixed layer targets and one reusable scratch
 target are budgeted at composition resize or graph preparation, never inside a
-frame. Timing is recorded per extracted branch and package pass before the
-path becomes operator-selectable.
+frame. The path is operator-selectable; per-pass timing telemetry remains.
 
 Acceptance:
 
@@ -135,7 +135,9 @@ Acceptance:
 
 ### S2 — One `deck-v1` package slot per deck
 
-Status: planned after S1 measurements.
+Status: core execution, UI, reload and project-v6 persistence implemented.
+Stable modulation/MIDI/OSC destinations and final alpha/culling telemetry
+remain before this slice is release-complete.
 
 Ship one bounded fragment-package slot after the built-in deck groups and
 before layer blending. The first release supports one pass and no temporal
@@ -240,8 +242,13 @@ The current master SDR target owns seven full-resolution RGBA8-sRGB textures.
 Its additional capacity beyond the direct final target is approximately
 47.5 MiB at 1920×1080 and 189.8 MiB at 3840×2160.
 
-S1 must publish the incremental cost of its fixed deck-layer and scratch
-targets. S5 must publish both SDR and RGBA16Float totals. These figures are
+The deck executor reserves five full-resolution RGBA8-sRGB textures: one
+shared precomposition input and four stable deck outputs. Its incremental cost
+is approximately 39.6 MiB at 1920×1080 and 158.2 MiB at 3840×2160, regardless
+of how many packages are selected. Together with master capacity beyond the
+direct final target, the incremental shader-target budget is about 87.1 MiB at
+1080p and 348.0 MiB at UHD. S5 must publish both SDR and RGBA16Float totals.
+These figures are
 acceptance gates, not estimates hidden in implementation notes.
 
 ## Out of scope for the deck-package milestone

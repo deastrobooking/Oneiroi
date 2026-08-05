@@ -687,6 +687,7 @@ mod tests {
                 && effect.history == EffectHistoryResource::PreviousSlotOutput
         }));
         for (id, parameter_count) in [
+            ("chromatic-split", 3),
             ("recursive-2d", 14),
             ("fractal-volume", 16),
             ("hyper-recursion", 16),
@@ -697,23 +698,29 @@ mod tests {
                 .find(|effect| effect.id == id)
                 .unwrap_or_else(|| panic!("missing bundled algorithmic effect {id}"));
             assert!(effect.supports_target(EffectPackageTarget::Master), "{id}");
-            assert_eq!(effect.abi, EffectPackageAbi::MasterV1, "{id}");
+            assert!(effect.supports_target(EffectPackageTarget::Deck), "{id}");
+            assert_eq!(effect.abi, EffectPackageAbi::DeckV1, "{id}");
             assert_eq!(effect.pass_count, 1, "{id}");
             assert_eq!(effect.parameters.len(), parameter_count, "{id}");
-            assert_eq!(effect.presets.len(), 3, "{id}");
-            assert!(
-                effect
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.control == EffectParameterControl::Choice),
-                "{id} has no algorithm choice"
-            );
-            assert!(
-                effect.parameters.iter().any(|parameter| {
-                    parameter.id == "animate" && parameter.control == EffectParameterControl::Toggle
-                }),
-                "{id} has no animation toggle"
-            );
+            if id != "chromatic-split" {
+                assert_eq!(effect.presets.len(), 3, "{id}");
+            }
+            if id != "chromatic-split" {
+                assert!(
+                    effect
+                        .parameters
+                        .iter()
+                        .any(|parameter| parameter.control == EffectParameterControl::Choice),
+                    "{id} has no algorithm choice"
+                );
+                assert!(
+                    effect.parameters.iter().any(|parameter| {
+                        parameter.id == "animate"
+                            && parameter.control == EffectParameterControl::Toggle
+                    }),
+                    "{id} has no animation toggle"
+                );
+            }
         }
     }
 

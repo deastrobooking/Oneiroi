@@ -205,9 +205,8 @@ blocks or stops program output; the in-memory take remains available.
 
 ## Deliberate limitations of this slice
 
-- Deck source and built-in-effect nodes are fused into the existing compositor;
-  they are not independently executable passes, and custom packages remain
-  master-only.
+- Deck source and built-in-effect nodes stay fused until a package is selected;
+  that deck alone materializes into an independently executable package pass.
 - Node kinds beyond the compatibility graph do not yet have GPU executors.
 - OSC input reaches the same command gateway as operator, keyboard and MIDI
   control. Bundle NTP timetags become bounded monotonic deadlines, and
@@ -217,7 +216,8 @@ blocks or stops program output; the in-memory take remains available.
 - Recovery still assumes the matching project is loaded so clip indices map to
   the same media. Journals identify the project but do not embed its asset
   manifest, and camera/media history is not used to guess a missing baseline.
-- Project v5 persists the active typed graph and scoped deterministic seeds.
+- Project v6 persists the active typed graph, scoped deterministic seeds and
+  per-deck package selection/parameters.
   Persisted graphs must compile, lower and satisfy the active extent budget
   before the project is accepted. Command logs remain external journal files.
 - Shadow-graph editing and commit controls do not yet have operator UI.
@@ -227,9 +227,9 @@ blocks or stops program output; the in-memory take remains available.
 These boundaries preserve project compatibility and the existing live output
 while the graph becomes executable one node family at a time.
 
-The planned deck-package work does not immediately generalize every graph node.
-It first extracts only active deck branches, budgets their fixed layer/scratch
-targets and keeps the no-package path fused. A later typed package graph can use
+The deck-package executor does not immediately generalize every graph node. It
+extracts only active deck branches, budgets fixed layer/scratch targets and
+keeps the no-package path fused. A later typed package graph can use
 the graph compiler's lifetime and budget checks without treating today's
 one/two-pass master sequence as a DAG.
 

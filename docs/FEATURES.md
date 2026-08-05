@@ -29,7 +29,7 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 
 | Area | Present | Still required |
 |---|---|---|
-| MIDI | Native device discovery/input, reconnect, learn UI, activity/drop diagnostics, absolute/momentary/toggle/relative modes, editable ranges, soft takeover, broad target routing and persistence | Output feedback, MIDI clock and physical-controller soak validation |
+| MIDI | Native device discovery/input, reconnect, learn UI, activity/drop diagnostics, absolute/momentary/toggle/relative modes, editable ranges, soft takeover, broad target routing, persistence, and beat-clock sync in and out with transport, Song Position and timing telemetry | Controller feedback output (LED/motorised state) and physical-controller soak validation |
 | Audio analysis | Gain, noise floor, attack/release, normalization, band and transient analysis | Show-device disconnect/soak validation |
 | Effects system | Three persisted built-in deck groups, two persisted package-capable master slots, common bypass/dry-wet/reset, five factory deck presets, bounded ping-pong blur, reset-safe feedback history, named persistence, generation-safe last-known-good hot reload, three master LFOs, eight custom-parameter routes, generated MIDI learn, an atomic one/two-pass sequence and optional fixed per-slot custom history | Selectively extracted per-deck package stage, versioned shared WGSL modules, typed N-pass fragment graph, capability-gated HDR intermediates and budgeted compute/state resources |
 | Output routing | Shared operator/output presentation, connected-display selection, persisted descriptor, topology polling and surface recovery diagnostics | Stronger identity across display topology changes and show-machine soak testing |
@@ -39,13 +39,13 @@ This matrix reflects the current source tree, not the aspirational MVP notes.
 | Performance replay | Serializable show commands, session state, checkpoints, deterministic replay and versioned JSONL journals; operators can start named takes, add labeled timeline markers, scrub full journal history into named branches, safely manage take metadata, export/archive unique bundle copies and edit scoped deterministic seeds | Add marker editing plus portable project/media manifests |
 
 The current shader/package boundary and the phased per-deck upgrade are detailed
-in [Shader system](SHADER_SYSTEM.md). Algorithmic packages are master-only until
-the documented deck precomposition seam, `deck-v1` executor and target-specific
-GPU contract have landed.
+in [Shader system](SHADER_SYSTEM.md). Stateless algorithmic packages now run on
+either a deck or master through the implemented precomposition seam and
+target-specific `deck-v1` GPU contract.
 
 ## Not implemented
 
 - Recent-project list and graphical Save As browser
-- OSC route expansion/discovery, Ableton Link, MIDI clock, NDI, Syphon/Spout and projection mapping
+- OSC route expansion/discovery, Ableton Link, NDI, Syphon/Spout and projection mapping
 - Application packaging, signing and FFmpeg distribution
 - Graph editor, Score view, Spatial view and compiled GPU node execution

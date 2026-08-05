@@ -1,9 +1,11 @@
 {
   "format": "oneiroi-effect",
-  "version": 1,
+  "version": 2,
   "id": "chromatic-split",
   "name": "Chromatic split",
-  "role": "master_effect",
+  "role": "effect",
+  "targets": ["master", "deck"],
+  "abi": "deck-v1",
   "shader": "chromatic_split.wgsl",
   "vertex_entry": "vs_main",
   "fragment_entry": "fs_main",

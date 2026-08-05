@@ -156,6 +156,7 @@ impl State {
         // Reconnect whatever hardware from the saved rig is present right now;
         // the rest reconnects automatically when it appears.
         self.refresh_midi_inputs();
+        self.restore_midi_clock_output();
 
         for deck in DeckId::ALL {
             let index = deck.index();

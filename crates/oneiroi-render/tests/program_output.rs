@@ -549,7 +549,7 @@ fn valid_target_change_retires_the_old_master_pipeline() {
     assert!(
         processor
             .reload_status()
-            .contains("does not target the master-v1"),
+            .contains("does not target the master shader runtime"),
         "{}",
         processor.reload_status()
     );

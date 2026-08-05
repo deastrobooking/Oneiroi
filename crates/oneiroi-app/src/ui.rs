@@ -27,19 +27,22 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use oneiroi_core::{
-    AudioAnalysisSettings, ControlTarget, FIXED_DECK_EFFECT_PARAMETER_COUNT, FrameTime,
-    MappingMode, MidiMapper, Quantization, TempoClock, effect_parameter_key,
+    AudioAnalysisSettings, ClockSource, ControlTarget, FIXED_DECK_EFFECT_PARAMETER_COUNT,
+    FrameTime, MappingMode, MidiMapper, Quantization, TempoClock, effect_parameter_key,
 };
-use oneiroi_io::{AudioInputDevice, AudioInputSnapshot, MidiInputDevice, MidiInputStats};
+use oneiroi_io::{
+    AudioInputDevice, AudioInputSnapshot, MidiInputDevice, MidiInputStats, MidiOutputDevice,
+    MidiOutputStats,
+};
 use oneiroi_media::{
     CLIPS_PER_DECK, CameraDevice, ClipAddress, ClipBank, ClipLaunchMode, CrossfadeBus, DeckId,
     DeckState, DeckTransport, EndMode, FourDeckMixer, LaunchQueue, MediaHealth,
 };
 use oneiroi_render::{
-    BlendModeGroup, DeckEffects, DeckLfos, DeckTransform, EffectDescriptor, EffectHistoryResource,
-    EffectParameterControl, EffectParameterValue, EffectPreset, EffectTarget, LayerBlendMode,
-    LfoWaveform, MasterEffectChain, MasterEffectKind, MasterEffectSlot, MasterModulation,
-    SourceMode,
+    BlendModeGroup, DeckEffects, DeckLfos, DeckPackageSlot, DeckTransform, EffectDescriptor,
+    EffectHistoryResource, EffectParameterControl, EffectParameterValue, EffectPreset,
+    EffectTarget, LayerBlendMode, LfoWaveform, MasterEffectChain, MasterEffectKind,
+    MasterEffectSlot, MasterModulation, SourceMode,
 };
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.
@@ -61,9 +64,10 @@ pub struct UiState {
     pub effect_reload_status: String,
     /// Packages executable by the current master-v1 runtime.
     pub effect_packages: Vec<EffectDescriptor>,
-    /// Validated deck-v1 catalog entries. Selection stays hidden until the
-    /// independently executable deck branch is implemented.
+    /// Validated packages executable by the deck-v1 runtime.
     pub deck_effect_packages: Vec<EffectDescriptor>,
+    pub deck_packages: [DeckPackageSlot; 4],
+    pub deck_effect_reload_status: String,
     pub effect_registry_status: String,
     pub master_modulation: MasterModulation,
     pub effects: [DeckEffects; 4],
@@ -83,6 +87,14 @@ pub struct UiState {
     pub audio_analysis: AudioAnalysisSettings,
     pub midi_device_id: String,
     pub midi_target: ControlTarget,
+    /// Where the transport takes its tempo from.
+    pub midi_clock_source: ClockSource,
+    /// Device trusted for incoming clock; empty follows whichever connected
+    /// device clocks first.
+    pub midi_clock_input_device: String,
+    pub midi_output_device_id: String,
+    /// Whether clock is being sent downstream.
+    pub midi_clock_send: bool,
     pub osc_bind_address: String,
     pub osc_feedback_address: String,
     pub session_recovery_selected: usize,
@@ -124,6 +136,8 @@ impl Default for UiState {
             effect_reload_status: "Built-in master effect pipeline".to_owned(),
             effect_packages: Vec::new(),
             deck_effect_packages: Vec::new(),
+            deck_packages: std::array::from_fn(|_| DeckPackageSlot::default()),
+            deck_effect_reload_status: "Deck effect runtime idle".to_owned(),
             effect_registry_status: "Effect registry not scanned".to_owned(),
             master_modulation: MasterModulation::default(),
             effects: [DeckEffects::default(); 4],
@@ -143,6 +157,10 @@ impl Default for UiState {
             audio_analysis: AudioAnalysisSettings::default(),
             midi_device_id: String::new(),
             midi_target: ControlTarget::Crossfader,
+            midi_clock_source: ClockSource::Internal,
+            midi_clock_input_device: String::new(),
+            midi_output_device_id: String::new(),
+            midi_clock_send: false,
             osc_bind_address: "0.0.0.0:9000".to_owned(),
             osc_feedback_address: "127.0.0.1:9001".to_owned(),
             session_recovery_selected: 0,
@@ -341,6 +359,12 @@ pub enum UiAction {
     DisconnectOscInput,
     ConnectOscOutput,
     DisconnectOscOutput,
+    SetMidiClockSource(ClockSource),
+    RefreshMidiOutputs,
+    ConnectMidiClockOutput(String),
+    DisconnectMidiClockOutput,
+    SetMidiClockSend(bool),
+    MidiClockContinue,
     MidiLearn(ControlTarget),
     MidiCancelLearn,
     MidiClearTarget(ControlTarget),
@@ -417,6 +441,29 @@ pub struct MidiMetrics<'a> {
     pub status: &'a str,
     pub devices: &'a [MidiDeviceStatus],
     pub mapper: &'a mut MidiMapper,
+    pub clock: MidiClockMetrics<'a>,
+}
+
+/// Beat-clock sync state, in and out, as the operator panel sees it.
+///
+/// Copyable so the panel can lift it out of the surrounding `MidiMetrics`
+/// without holding a borrow that fights the mutable mapper next to it.
+#[derive(Clone, Copy)]
+pub struct MidiClockMetrics<'a> {
+    /// Device currently trusted as clock master, if any.
+    pub following: Option<&'a str>,
+    pub locked: bool,
+    pub follower_bpm: Option<f64>,
+    pub follower_running: bool,
+    pub pulses: u64,
+    pub jitter_micros: u64,
+    pub resyncs: u64,
+    pub status: &'a str,
+    pub outputs: &'a [MidiOutputDevice],
+    pub output_connected: bool,
+    pub output_running: bool,
+    pub output_status: &'a str,
+    pub output_stats: MidiOutputStats,
 }
 
 impl MidiMetrics<'_> {
@@ -610,6 +657,8 @@ pub fn draw(
                 let bypassed_ref = &mut state.bypassed;
                 let effects_ref = &mut state.effects;
                 let lfos_ref = &mut state.lfos;
+                let deck_packages_ref = &mut state.deck_packages;
+                let deck_effect_packages = &state.deck_effect_packages;
                 let actions_ref = &mut actions;
                 let mut deck_strip = |ui: &mut egui::Ui, deck_id: DeckId| {
                     draw_deck(
@@ -627,6 +676,8 @@ pub fn draw(
                             bypassed: &mut bypassed_ref[deck_id.index()],
                             effects: &mut effects_ref[deck_id.index()],
                             lfos: &mut lfos_ref[deck_id.index()],
+                            package: &mut deck_packages_ref[deck_id.index()],
+                            packages: deck_effect_packages,
                         },
                         actions_ref,
                     );

@@ -1,10 +1,10 @@
-# Effect package authoring (`master-v1`)
+# Effect package authoring (`master-v1` and `deck-v1`)
 
-This document describes the shader contract that executes today: `master-v1`,
-placed in either of the two master slots. Manifest v1 implies target `master`
-and ABI `master-v1`; manifest v2 must state those values explicitly. The runtime
-supports one or two fragment passes and one optional fixed previous-slot
-history resource. It is not yet a per-deck, compute or arbitrary-DAG contract.
+This document describes both executable shader contracts. `master-v1` runs in
+either master slot with one or two passes and optional fixed history.
+`deck-v1` runs as one stateless pass after one deck's built-ins and before its
+layer blend. Manifest v1 implies master placement; manifest v2 states targets
+and ABI explicitly.
 
 Oneiroi discovers these packages from immediate child directories under every
 resolved effect resource root. Each package directory contains `effect.json`
@@ -213,11 +213,9 @@ Packages cannot request arbitrary auxiliary texture counts, formats or sizes.
 
 ## Per-deck and package-graph roadmap
 
-Per-deck packages are a committed upgrade, but they are deliberately separate
-from the executable `master-v1` authoring contract above. The renderer must
-first materialize only the affected deck branch after its built-in effects and
-before layer blending, preserve the no-package fused fast path, define the
-deck alpha contract and publish the fixed memory/GPU budget.
+Per-deck packages are executable. The renderer materializes only affected deck
+branches after built-in processing and before layer blending. The no-package
+path remains fused, and missing, bypassed or zero-wet packages pass through.
 
 Manifest v2 target metadata is the compatibility foundation for distinguishing
 master and deck placement. Target discovery does not make a deck package
@@ -231,8 +229,8 @@ The catalog-level v2 shape is:
 {
   "format": "oneiroi-effect",
   "version": 2,
-  "id": "future-deck-effect",
-  "name": "Future deck effect",
+  "id": "deck-effect",
+  "name": "Deck effect",
   "role": "effect",
   "targets": ["deck"],
   "abi": "deck-v1",
@@ -249,14 +247,26 @@ The catalog-level v2 shape is:
 }
 ```
 
-Version 2 currently requires exactly one target. `deck-v1` candidates must be
-stateless and one-pass. They are validated and reported separately from master
-packages, but intentionally never offered to the master compiler or operator
-deck UI until S1/S2 are complete. At this stage, deck candidates receive
-manifest, WGSL syntax and entry-point validation; target-specific bind-group
-and real-GPU validation arrives with the deck executor. A v2 master candidate
-uses target `master` with ABI `master-v1`; manifest v1 continues to imply both
-of those values.
+Version 2 requires one or two unique targets. `master-v1` targets master only.
+`deck-v1` must include deck, remains stateless and one-pass, and may also list
+master for dual placement. Deck candidates receive schema, Naga, bind-group and
+real-GPU pipeline validation on the deck reload worker. A selected package's
+ID, bypass, wet value and named parameters persist per deck in project schema
+v6.
+
+`deck-v1` uses the same group-0 bindings as `master-v1`; bindings 1, 2, 4 and
+5 all reference the materialized deck input because history and intermediate
+passes are unsupported. Its append-only uniform tail follows `history_valid`:
+
+```wgsl
+    deck_index: u32,
+    source_extent: vec2<u32>,
+    composition_extent: vec2<u32>,
+```
+
+The complete uniform allocation is 208 bytes. These fields begin at offsets
+180, 184 and 192 bytes respectively. Older dual-placement shaders may declare
+only the original `master-v1` prefix.
 
 Shared WGSL imports arrive later through a versioned, allow-listed module
 namespace. When that happens, fingerprints and hot reload must include every

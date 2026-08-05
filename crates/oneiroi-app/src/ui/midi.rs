@@ -13,6 +13,7 @@ pub(super) fn draw_midi(
     let status = metrics.status;
     let selected_connected = metrics.device_connected(&state.midi_device_id);
     let any_connected = metrics.any_connected();
+    let clock = metrics.clock;
     let midi = &mut *metrics.mapper;
     egui::CollapsingHeader::new("MIDI control")
         .default_open(false)
@@ -97,6 +98,8 @@ pub(super) fn draw_midi(
                 midi.bindings.len()
             ));
 
+            draw_clock_sync(ui, state, inputs, &clock, actions);
+
             let mut remove = None;
             egui::Grid::new("midi-mappings")
                 .striped(true)
@@ -160,6 +163,176 @@ pub(super) fn draw_midi(
             if let Some(index) = remove {
                 actions.push(UiAction::MidiRemoveBinding(index));
             }
+        });
+}
+
+/// Beat-clock sync: follow an external clock, send one downstream, or both.
+fn draw_clock_sync(
+    ui: &mut egui::Ui,
+    state: &mut UiState,
+    inputs: &[MidiInputDevice],
+    clock: &MidiClockMetrics<'_>,
+    actions: &mut Vec<UiAction>,
+) {
+    egui::CollapsingHeader::new("Clock sync")
+        .default_open(false)
+        .show(ui, |ui| {
+            // --- Follow ---------------------------------------------------
+            ui.horizontal(|ui| {
+                ui.label("Tempo from");
+                for (source, label, hint) in [
+                    (
+                        ClockSource::Internal,
+                        "Internal",
+                        "Tempo follows the BPM field and tap tempo",
+                    ),
+                    (
+                        ClockSource::MidiInput,
+                        "MIDI clock in",
+                        "Tempo and beat phase follow an incoming 24 PPQN clock",
+                    ),
+                ] {
+                    if ui
+                        .selectable_label(state.midi_clock_source == source, label)
+                        .on_hover_text(hint)
+                        .clicked()
+                        && state.midi_clock_source != source
+                    {
+                        actions.push(UiAction::SetMidiClockSource(source));
+                    }
+                }
+                ui.separator();
+                ui.label("From");
+                let selected = if state.midi_clock_input_device.is_empty() {
+                    "Any connected device"
+                } else {
+                    state.midi_clock_input_device.as_str()
+                };
+                egui::ComboBox::from_id_salt("midi-clock-input")
+                    .selected_text(selected)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut state.midi_clock_input_device,
+                            String::new(),
+                            "Any connected device",
+                        );
+                        for device in inputs {
+                            ui.selectable_value(
+                                &mut state.midi_clock_input_device,
+                                device.id.clone(),
+                                &device.label,
+                            );
+                        }
+                    });
+            });
+            ui.horizontal(|ui| {
+                let (color, text) = if state.midi_clock_source != ClockSource::MidiInput {
+                    (ui.visuals().weak_text_color(), "Not following".to_owned())
+                } else if clock.locked {
+                    (
+                        ui.visuals().selection.bg_fill,
+                        format!(
+                            "LOCKED to {} · {:.2} BPM · {}",
+                            clock.following.unwrap_or("clock"),
+                            clock.follower_bpm.unwrap_or_default(),
+                            if clock.follower_running {
+                                "running"
+                            } else {
+                                "stopped"
+                            }
+                        ),
+                    )
+                } else {
+                    (
+                        ui.visuals().warn_fg_color,
+                        "Waiting for clock · check the source is sending MIDI clock".to_owned(),
+                    )
+                };
+                ui.colored_label(color, text);
+            });
+            ui.weak(format!(
+                "pulses {} · jitter {:.2} ms · resyncs {}",
+                clock.pulses,
+                clock.jitter_micros as f64 / 1_000.0,
+                clock.resyncs
+            ));
+            if !clock.status.is_empty() {
+                ui.weak(clock.status);
+            }
+
+            ui.separator();
+
+            // --- Send -----------------------------------------------------
+            ui.horizontal(|ui| {
+                ui.label("Clock out");
+                let selected = clock
+                    .outputs
+                    .iter()
+                    .find(|device| device.id == state.midi_output_device_id)
+                    .map_or("No output selected", |device| device.label.as_str());
+                egui::ComboBox::from_id_salt("midi-clock-output")
+                    .selected_text(selected)
+                    .show_ui(ui, |ui| {
+                        for device in clock.outputs {
+                            ui.selectable_value(
+                                &mut state.midi_output_device_id,
+                                device.id.clone(),
+                                &device.label,
+                            );
+                        }
+                    });
+                if ui.button("Refresh outputs").clicked() {
+                    actions.push(UiAction::RefreshMidiOutputs);
+                }
+                if clock.output_connected {
+                    if ui.button("Disconnect").clicked() {
+                        actions.push(UiAction::DisconnectMidiClockOutput);
+                    }
+                } else if ui
+                    .add_enabled(
+                        !state.midi_output_device_id.is_empty(),
+                        egui::Button::new("Connect"),
+                    )
+                    .clicked()
+                {
+                    actions.push(UiAction::ConnectMidiClockOutput(
+                        state.midi_output_device_id.clone(),
+                    ));
+                }
+            });
+            ui.horizontal(|ui| {
+                let mut send = state.midi_clock_send;
+                if ui
+                    .add_enabled(
+                        clock.output_connected,
+                        egui::Checkbox::new(&mut send, "Send clock"),
+                    )
+                    .on_hover_text("Sends Start, then 24 PPQN pulses, until switched off")
+                    .changed()
+                {
+                    actions.push(UiAction::SetMidiClockSend(send));
+                }
+                if ui
+                    .add_enabled(
+                        clock.output_connected && !clock.output_running,
+                        egui::Button::new("Continue"),
+                    )
+                    .on_hover_text("Resume downstream gear in place instead of rewinding")
+                    .clicked()
+                {
+                    actions.push(UiAction::MidiClockContinue);
+                }
+                ui.weak(clock.output_status);
+            });
+            ui.weak(format!(
+                "pulses {} · transport {} · late {} · worst {:.2} ms · resyncs {} · errors {}",
+                clock.output_stats.pulses,
+                clock.output_stats.transport,
+                clock.output_stats.late,
+                clock.output_stats.worst_late_micros as f64 / 1_000.0,
+                clock.output_stats.resyncs,
+                clock.output_stats.errors
+            ));
         });
 }
 

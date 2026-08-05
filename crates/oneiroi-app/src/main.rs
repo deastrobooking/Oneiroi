@@ -22,13 +22,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use oneiroi_core::{
-    Clock, ControlTarget, FIXED_DECK_EFFECT_PARAMETER_COUNT, MediaTime, MidiMapper, Quantization,
-    TapTempo, TempoClock, effect_parameter_key,
+    Clock, ControlTarget, FIXED_DECK_EFFECT_PARAMETER_COUNT, MediaTime, MidiClockFollower,
+    MidiMapper, Quantization, TapTempo, TempoClock, effect_parameter_key,
 };
 use oneiroi_io::{
-    AudioInput, AudioInputDevice, AudioInputSnapshot, MidiInputConnection, MidiInputDevice,
-    ProjectFile, TakeMetadataProject, autosave_path, discover_audio_inputs, discover_midi_inputs,
-    new_project_id,
+    AudioInput, AudioInputDevice, AudioInputSnapshot, MidiClockSender, MidiInputConnection,
+    MidiInputDevice, MidiOutputDevice, MidiOutputStats, ProjectFile, TakeMetadataProject,
+    autosave_path, discover_audio_inputs, discover_midi_inputs, new_project_id,
 };
 use oneiroi_media::{
     CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipRestorer, CrossfadeBus, DeckDecoder,
@@ -132,6 +132,19 @@ struct State {
     /// they reappear and saved with the project.
     midi_wanted: std::collections::BTreeSet<String>,
     last_midi_refresh: Instant,
+    /// Incoming 24 PPQN beat clock.
+    midi_clock: MidiClockFollower,
+    /// Seconds to subtract from app time to reach the clock source's own
+    /// timebase. Pulse intervals are measured with the driver's timestamps,
+    /// which are far steadier than poll time, so lock timeouts have to be
+    /// asked in that same timebase.
+    midi_clock_offset: f64,
+    midi_clock_status: String,
+    midi_outputs: Vec<MidiOutputDevice>,
+    midi_clock_sender: Option<MidiClockSender>,
+    midi_clock_out_status: String,
+    midi_clock_out_stats: MidiOutputStats,
+    last_midi_output_refresh: Instant,
     osc_input: Option<osc::OscInput>,
     osc_stats: osc::OscStats,
     osc_status: String,
@@ -508,7 +521,15 @@ impl State {
         }
         let gpu_info = format!("{} · {:?} · {bc_support}", info.name, info.backend);
 
-        let compositor = FourDeckCompositor::new(&gpu.device, &gpu.queue, PROGRAM_FORMAT);
+        let mut compositor = FourDeckCompositor::new(&gpu.device, &gpu.queue, PROGRAM_FORMAT);
+        compositor.set_output_extent(&gpu.device, ui.composition_extent);
+        compositor.watch_deck_effect_manifests(
+            ui.deck_effect_packages
+                .iter()
+                .map(|effect| effect.manifest_path.clone())
+                .collect(),
+        );
+        ui.deck_effect_reload_status = compositor.deck_effect_reload_status().to_owned();
 
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
@@ -569,6 +590,19 @@ impl State {
         };
         if let Some(device) = midi_inputs.first() {
             ui.midi_device_id = device.id.clone();
+        }
+        let (midi_outputs, midi_output_status) = match oneiroi_io::discover_midi_outputs() {
+            Ok(outputs) if outputs.is_empty() => {
+                (outputs, "No MIDI output devices discovered".to_owned())
+            }
+            Ok(outputs) => {
+                let count = outputs.len();
+                (outputs, format!("{count} MIDI output(s) available"))
+            }
+            Err(error) => (Vec::new(), format!("MIDI output discovery: {error}")),
+        };
+        if let Some(device) = midi_outputs.first() {
+            ui.midi_output_device_id = device.id.clone();
         }
 
         let started = Instant::now();
@@ -644,6 +678,14 @@ impl State {
             midi_status,
             midi_wanted: std::collections::BTreeSet::new(),
             last_midi_refresh: Instant::now(),
+            midi_clock: MidiClockFollower::default(),
+            midi_clock_offset: 0.0,
+            midi_clock_status: String::new(),
+            midi_outputs,
+            midi_clock_sender: None,
+            midi_clock_out_status: midi_output_status,
+            midi_clock_out_stats: MidiOutputStats::default(),
+            last_midi_output_refresh: Instant::now(),
             osc_input: None,
             osc_stats: osc::OscStats::default(),
             osc_status: "OSC input disconnected".to_owned(),
@@ -671,6 +713,10 @@ impl State {
     fn render(&mut self) {
         if self.master_effect_processor.poll_effect_reload() {
             self.ui.effect_reload_status = self.master_effect_processor.reload_status().to_owned();
+        }
+        if self.compositor.poll_deck_effect_reload() {
+            self.ui.deck_effect_reload_status =
+                self.compositor.deck_effect_reload_status().to_owned();
         }
         self.poll_imports();
         self.poll_folder_scans();
@@ -767,6 +813,28 @@ impl State {
                         status: &self.midi_status,
                         devices: &self.midi_device_stats,
                         mapper: &mut self.midi,
+                        clock: ui::MidiClockMetrics {
+                            following: self.midi_clock.source(),
+                            locked: self.midi_clock.is_locked(
+                                now.saturating_duration_since(self.performance_started)
+                                    .as_secs_f64()
+                                    - self.midi_clock_offset,
+                            ),
+                            follower_bpm: self.midi_clock.bpm(),
+                            follower_running: self.midi_clock.is_running(),
+                            pulses: self.midi_clock.pulses(),
+                            jitter_micros: self.midi_clock.jitter_micros(),
+                            resyncs: self.midi_clock.resyncs(),
+                            status: &self.midi_clock_status,
+                            outputs: &self.midi_outputs,
+                            output_connected: self.midi_clock_sender.is_some(),
+                            output_running: self
+                                .midi_clock_sender
+                                .as_ref()
+                                .is_some_and(MidiClockSender::is_running),
+                            output_status: &self.midi_clock_out_status,
+                            output_stats: self.midi_clock_out_stats,
+                        },
                     },
                     osc: ui::OscMetrics {
                         status: &self.osc_status,
@@ -834,20 +902,11 @@ impl State {
             );
         }
         if self.ui.bpm.to_bits() != bpm_before.to_bits() {
-            let bpm = self.ui.bpm.clamp(20.0, 400.0);
+            let bpm = self.ui.bpm;
+            // The journal records the tempo the operator moved *from*, so the
+            // pre-edit value goes back before the command is written.
             self.ui.bpm = bpm_before;
-            self.record_show_operation(
-                CommandOrigin::Operator,
-                now,
-                CommandOperation::SetTempo { bpm },
-            );
-            self.ui.bpm = bpm;
-            self.tempo.set_bpm(
-                bpm,
-                now.saturating_duration_since(self.performance_started)
-                    .as_secs_f64(),
-            );
-            self.publish_osc_value("/vjx/tempo", bpm as f32);
+            self.apply_tempo(bpm, CommandOrigin::Operator, now);
         }
         if self.ui.quantization != quantization_before {
             self.record_show_operation(
@@ -913,7 +972,7 @@ impl State {
                             &self.program.view
                         };
                         let audio = self.audio_snapshot.analysis;
-                        self.compositor.draw(
+                        self.compositor.draw_with_deck_packages(
                             &self.gpu.device,
                             &self.gpu.queue,
                             &mut encoder,
@@ -964,6 +1023,7 @@ impl State {
                                 time_seconds: effect_time,
                                 blackout: self.ui.blackout,
                             },
+                            &self.ui.deck_packages,
                         );
                     }
                     BuiltInRenderStage::MasterEffects { .. } if master_effects_active => {
