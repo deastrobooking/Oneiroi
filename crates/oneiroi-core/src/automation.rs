@@ -175,10 +175,12 @@ impl ClipAutomationLane {
             position: keyframe.position.clamp(0.0, 1.0),
             ..keyframe
         };
-        match self.keyframes.iter_mut().find(|existing| {
-            (existing.position - keyframe.position).abs() < MERGE_DISTANCE
-        }) {
-            Some(existing) => *existing = keyframe,
+        let existing = self
+            .keyframes
+            .iter()
+            .position(|existing| (existing.position - keyframe.position).abs() < MERGE_DISTANCE);
+        match existing {
+            Some(index) => self.keyframes[index] = keyframe,
             None if self.keyframes.len() < MAX_AUTOMATION_KEYFRAMES => {
                 self.keyframes.push(keyframe);
                 self.keyframes
@@ -330,7 +332,10 @@ mod tests {
         assert_eq!(lane.value_at(-4.0), Some(0.0));
         assert_eq!(lane.value_at(9.0), Some(0.0));
         assert_eq!(lane.value_at(f64::NAN), Some(0.0));
-        assert_eq!(ClipAutomationLane::new(ControlTarget::Crossfader).value_at(0.5), None);
+        assert_eq!(
+            ClipAutomationLane::new(ControlTarget::Crossfader).value_at(0.5),
+            None
+        );
     }
 
     #[test]
@@ -356,7 +361,10 @@ mod tests {
             AutomationKeyframe::new(1.0, 1.0),
         ];
         let smooth = lane.value_at(0.5).unwrap();
-        assert!((smooth - 0.5).abs() < 1e-6, "smoothstep is symmetric: {smooth}");
+        assert!(
+            (smooth - 0.5).abs() < 1e-6,
+            "smoothstep is symmetric: {smooth}"
+        );
         assert!(lane.value_at(0.25).unwrap() < 0.25, "flat departure");
 
         lane.keyframes[0].interpolation = CurveType::Exponential;

@@ -11,11 +11,11 @@ pub mod media_time;
 pub mod midi_clock;
 pub mod tempo;
 
+pub use audio::{AUDIO_ANALYSIS_SIZE, AudioAnalysisSettings, AudioAnalyzer, AudioSnapshot};
 pub use automation::{
     AutomationKeyframe, ClipAutomation, ClipAutomationLane, CurveType, MAX_AUTOMATION_KEYFRAMES,
     MAX_AUTOMATION_LANES, clip_position,
 };
-pub use audio::{AUDIO_ANALYSIS_SIZE, AudioAnalysisSettings, AudioAnalyzer, AudioSnapshot};
 pub use clock::{Clock, FrameTime};
 pub use control::{
     ControlTarget, ControlUpdate, FIXED_DECK_EFFECT_PARAMETER_COUNT, MappingMode, MidiBinding,
