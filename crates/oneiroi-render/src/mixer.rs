@@ -1,6 +1,8 @@
 //! Four-source GPU compositor for unified media frames.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 use oneiroi_hap::CompressedPlaneFormat;
@@ -387,17 +389,12 @@ pub struct DeckLfos {
 }
 
 impl DeckLfos {
-    pub fn apply(self, effects: DeckEffects, time_seconds: f32, beat_position: f32) -> DeckEffects {
-        self.apply_with_audio(effects, time_seconds, beat_position, [0.0; 5])
-    }
-
-    pub fn apply_with_audio(
+    pub fn source_values_with_audio(
         self,
-        mut effects: DeckEffects,
         time_seconds: f32,
         beat_position: f32,
         audio_sources: [f32; 5],
-    ) -> DeckEffects {
+    ) -> [f32; 10] {
         let mut source_values = [0.0; 10];
         source_values[3..8].copy_from_slice(&audio_sources.map(|value| value.clamp(0.0, 1.0)));
         source_values[8] = beat_position.rem_euclid(1.0);
@@ -411,10 +408,31 @@ impl DeckLfos {
             } else {
                 time_seconds * lfo.rate_hz.clamp(0.01, 20.0)
             };
-            let value = lfo.waveform.sample(cycle + lfo.phase) * lfo.depth.clamp(0.0, 1.0);
-            source_values[index] = value;
+            source_values[index] =
+                lfo.waveform.sample(cycle + lfo.phase) * lfo.depth.clamp(0.0, 1.0);
+        }
+        source_values
+    }
+
+    pub fn apply(self, effects: DeckEffects, time_seconds: f32, beat_position: f32) -> DeckEffects {
+        self.apply_with_audio(effects, time_seconds, beat_position, [0.0; 5])
+    }
+
+    pub fn apply_with_audio(
+        self,
+        mut effects: DeckEffects,
+        time_seconds: f32,
+        beat_position: f32,
+        audio_sources: [f32; 5],
+    ) -> DeckEffects {
+        let source_values =
+            self.source_values_with_audio(time_seconds, beat_position, audio_sources);
+        for (index, lfo) in self.lanes.into_iter().enumerate() {
+            if !lfo.enabled {
+                continue;
+            }
             if lfo.direct_enabled {
-                modulate(&mut effects, lfo.target, value);
+                modulate(&mut effects, lfo.target, source_values[index]);
             }
         }
         for route in self.routes {
@@ -988,6 +1006,175 @@ struct DeckPackageTargets {
     passes: [DeckEffectPass; 4],
 }
 
+/// Per-frame accounting for the bounded deck-package branch. This makes it
+/// possible to verify that invisible decks do not consume package passes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DeckPackageFrameStats {
+    pub selected: u8,
+    pub executed: u8,
+    pub bypassed_or_dry: u8,
+    pub culled_invisible: u8,
+    pub unavailable: u8,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DeckPackageTimingStats {
+    pub supported: bool,
+    pub sampled_decks: u8,
+    pub precomposition_ms: [f32; 4],
+    pub package_ms: [f32; 4],
+}
+
+const DECK_TIMING_QUERY_COUNT: u32 = 16;
+const DECK_TIMING_BYTES: u64 = DECK_TIMING_QUERY_COUNT as u64 * 8;
+
+struct DeckTimingReadback {
+    buffer: wgpu::Buffer,
+    state: Arc<AtomicU8>,
+    decks: [u8; 4],
+    deck_count: u8,
+}
+
+struct DeckPackageTimer {
+    query_set: wgpu::QuerySet,
+    resolve: wgpu::Buffer,
+    readbacks: [DeckTimingReadback; 3],
+    next_readback: usize,
+    period_ns: f32,
+    latest: DeckPackageTimingStats,
+}
+
+impl DeckPackageTimer {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Self> {
+        if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            return None;
+        }
+        let readback = |index| DeckTimingReadback {
+            buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(match index {
+                    0 => "deck-package-timing-readback-0",
+                    1 => "deck-package-timing-readback-1",
+                    _ => "deck-package-timing-readback-2",
+                }),
+                size: DECK_TIMING_BYTES,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }),
+            state: Arc::new(AtomicU8::new(0)),
+            decks: [0; 4],
+            deck_count: 0,
+        };
+        Some(Self {
+            query_set: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("deck-package-pass-timestamps"),
+                ty: wgpu::QueryType::Timestamp,
+                count: DECK_TIMING_QUERY_COUNT,
+            }),
+            resolve: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("deck-package-timing-resolve"),
+                size: DECK_TIMING_BYTES,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
+            readbacks: std::array::from_fn(readback),
+            next_readback: 0,
+            period_ns: queue.get_timestamp_period(),
+            latest: DeckPackageTimingStats {
+                supported: true,
+                ..DeckPackageTimingStats::default()
+            },
+        })
+    }
+
+    fn timestamp_writes(&self, ordinal: u32, package: bool) -> wgpu::RenderPassTimestampWrites<'_> {
+        let start = ordinal * 4 + u32::from(package) * 2;
+        wgpu::RenderPassTimestampWrites {
+            query_set: &self.query_set,
+            beginning_of_pass_write_index: Some(start),
+            end_of_pass_write_index: Some(start + 1),
+        }
+    }
+
+    fn resolve(&mut self, encoder: &mut wgpu::CommandEncoder, decks: &[u8]) {
+        if decks.is_empty() {
+            return;
+        }
+        let Some(slot_index) = (0..self.readbacks.len())
+            .map(|offset| (self.next_readback + offset) % self.readbacks.len())
+            .find(|index| self.readbacks[*index].state.load(Ordering::Acquire) == 0)
+        else {
+            return;
+        };
+        let slot = &mut self.readbacks[slot_index];
+        slot.decks[..decks.len()].copy_from_slice(decks);
+        slot.deck_count = decks.len() as u8;
+        let query_count = decks.len() as u32 * 4;
+        encoder.resolve_query_set(&self.query_set, 0..query_count, &self.resolve, 0);
+        encoder.copy_buffer_to_buffer(
+            &self.resolve,
+            0,
+            &slot.buffer,
+            0,
+            u64::from(query_count) * 8,
+        );
+        slot.state.store(1, Ordering::Release);
+        self.next_readback = (slot_index + 1) % self.readbacks.len();
+    }
+
+    fn poll(&mut self, device: &wgpu::Device) {
+        for slot in &self.readbacks {
+            if slot
+                .state
+                .compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                let state = Arc::clone(&slot.state);
+                slot.buffer
+                    .slice(..)
+                    .map_async(wgpu::MapMode::Read, move |result| {
+                        state.store(if result.is_ok() { 3 } else { 4 }, Ordering::Release);
+                    });
+            }
+        }
+        let _ = device.poll(wgpu::PollType::Poll);
+        for slot in &self.readbacks {
+            match slot.state.load(Ordering::Acquire) {
+                3 => {
+                    let view = slot.buffer.slice(..).get_mapped_range();
+                    let raw: &[u64] = bytemuck::cast_slice(&view);
+                    let mut latest = DeckPackageTimingStats {
+                        supported: true,
+                        sampled_decks: slot.deck_count,
+                        ..DeckPackageTimingStats::default()
+                    };
+                    for ordinal in 0..usize::from(slot.deck_count) {
+                        let deck = usize::from(slot.decks[ordinal]);
+                        let base = ordinal * 4;
+                        latest.precomposition_ms[deck] =
+                            timestamp_delta_ms(raw[base], raw[base + 1], self.period_ns);
+                        latest.package_ms[deck] =
+                            timestamp_delta_ms(raw[base + 2], raw[base + 3], self.period_ns);
+                    }
+                    drop(view);
+                    slot.buffer.unmap();
+                    self.latest = latest;
+                    slot.state.store(0, Ordering::Release);
+                }
+                4 => {
+                    slot.buffer.unmap();
+                    slot.state.store(0, Ordering::Release);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn timestamp_delta_ms(start: u64, end: u64, period_ns: f32) -> f32 {
+    end.checked_sub(start)
+        .map_or(0.0, |delta| delta as f32 * period_ns / 1_000_000.0)
+}
+
 pub struct FourDeckCompositor {
     pipeline: wgpu::RenderPipeline,
     deck_override_pipeline: wgpu::RenderPipeline,
@@ -1002,6 +1189,8 @@ pub struct FourDeckCompositor {
     bind_group: Option<wgpu::BindGroup>,
     deck_effects: DeckEffectRuntime,
     deck_package_targets: Option<DeckPackageTargets>,
+    deck_package_frame_stats: DeckPackageFrameStats,
+    deck_package_timer: Option<DeckPackageTimer>,
     output_format: wgpu::TextureFormat,
 }
 
@@ -1092,6 +1281,7 @@ impl FourDeckCompositor {
         let transparent = solid_texture(device, queue, [0, 0, 0, 0], "transparent-source");
         let opaque_alpha = solid_texture(device, queue, [255; 4], "opaque-alpha");
         let deck_effects = DeckEffectRuntime::new(device, output_format);
+        let deck_package_timer = DeckPackageTimer::new(device, queue);
 
         Self {
             pipeline,
@@ -1107,8 +1297,23 @@ impl FourDeckCompositor {
             bind_group: None,
             deck_effects,
             deck_package_targets: None,
+            deck_package_frame_stats: DeckPackageFrameStats::default(),
+            deck_package_timer,
             output_format,
         }
+    }
+
+    pub fn deck_package_frame_stats(&self) -> DeckPackageFrameStats {
+        self.deck_package_frame_stats
+    }
+
+    pub fn poll_deck_package_timings(&mut self, device: &wgpu::Device) -> DeckPackageTimingStats {
+        self.deck_package_timer
+            .as_mut()
+            .map_or_else(DeckPackageTimingStats::default, |timer| {
+                timer.poll(device);
+                timer.latest
+            })
     }
 
     /// Allocate the fixed one-input/four-output deck package budget at a
@@ -1309,6 +1514,27 @@ impl FourDeckCompositor {
             }
         });
         let targets_ready = self.deck_package_targets.is_some();
+        let mut package_stats = DeckPackageFrameStats::default();
+        for index in 0..4 {
+            if deck_packages[index].package_id.is_empty() {
+                continue;
+            }
+            package_stats.selected += 1;
+            if !deck_packages[index].active() {
+                package_stats.bypassed_or_dry += 1;
+            } else if params.blackout || levels[index] <= 0.0 || self.sources[index].is_none() {
+                package_stats.culled_invisible += 1;
+            } else if !targets_ready
+                || !self
+                    .deck_effects
+                    .is_loaded(&deck_packages[index].package_id)
+            {
+                package_stats.unavailable += 1;
+            } else {
+                package_stats.executed += 1;
+            }
+        }
+        self.deck_package_frame_stats = package_stats;
         let deck_override_mask = std::array::from_fn(|index| {
             u32::from(
                 targets_ready
@@ -1406,11 +1632,16 @@ impl FourDeckCompositor {
         if deck_override_mask.into_iter().any(|active| active != 0) {
             let source_bind_group = self.bind_group.as_ref().unwrap();
             let targets = self.deck_package_targets.as_ref().unwrap();
+            let mut timed_decks = Vec::with_capacity(4);
             for index in 0..4 {
                 if deck_override_mask[index] == 0 {
                     continue;
                 }
                 {
+                    let timestamp_writes = self
+                        .deck_package_timer
+                        .as_ref()
+                        .map(|timer| timer.timestamp_writes(timed_decks.len() as u32, false));
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("oneiroi-deck-precomposition-pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1423,7 +1654,7 @@ impl FourDeckCompositor {
                             },
                         })],
                         depth_stencil_attachment: None,
-                        timestamp_writes: None,
+                        timestamp_writes,
                         occlusion_query_set: None,
                         multiview_mask: None,
                     });
@@ -1444,8 +1675,15 @@ impl FourDeckCompositor {
                     source_extent,
                     targets.extent,
                     params.time_seconds,
+                    self.deck_package_timer
+                        .as_ref()
+                        .map(|timer| timer.timestamp_writes(timed_decks.len() as u32, true)),
                 );
                 debug_assert!(package_executed);
+                timed_decks.push(index as u8);
+            }
+            if let Some(timer) = &mut self.deck_package_timer {
+                timer.resolve(encoder, &timed_decks);
             }
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

@@ -91,6 +91,15 @@ dry/bypass bit-exactness, transparent-alpha preservation,
 effect-before-every-blend ordering, invisible-deck culling and recorded 1080p/
 UHD texture ceilings. See [Shader system](SHADER_SYSTEM.md).
 
+Use the synthetic release benchmark as a repeatable package-path baseline,
+then corroborate it with the media fixture pass above:
+
+```sh
+cargo run --release -p oneiroi-render --example perf -- \
+  --decks 4 --width 1920 --height 1080 \
+  --deck-package chromatic-split --frames 600 --warmup 60 --runs 3 --json
+```
+
 ## Packaging gate
 
 Before assigning a release version:

@@ -312,10 +312,11 @@ update operator diagnostics while the existing pipeline remains active. Thus
 editing or breaking a watched package cannot replace the last-known-good
 program path.
 
-The explicit **Refresh registry** action still performs its discovery and
-schema/WGSL validation scan synchronously before handing registered packages
-to that worker. `SHADER_SYSTEM.md` tracks migration of the manual scan to a
-bounded, generation-tagged worker as the remaining S0 realtime gate.
+The explicit **Refresh registry** action performs discovery and schema/WGSL
+validation on a bounded, generation-tagged worker before handing registered
+packages to their pipeline workers. Pending scans use latest-wins replacement,
+stale results are discarded and the prior catalog remains visible until the
+newest scan completes.
 
 The bundled processor manifest is resolved from the trusted shipped effect root
 rather than from the process launch directory. Immediate child packages under

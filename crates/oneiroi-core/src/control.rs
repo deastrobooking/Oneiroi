@@ -84,6 +84,7 @@ pub enum ControlTarget {
     EffectParameter { deck: u8, effect: u8, parameter: u8 },
     LfoParameter { deck: u8, lfo: u8, parameter: u8 },
     ModRouteParameter { deck: u8, route: u8, parameter: u8 },
+    DeckEffectParameter { deck: u8, parameter_key: u64 },
     MasterEffectParameter { slot: u8, parameter_key: u64 },
 }
 

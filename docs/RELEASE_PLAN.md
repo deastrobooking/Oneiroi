@@ -14,16 +14,35 @@ Baseline recorded on 2026-08-30 from commit `2bfff4f`:
 The development hash is evidence for the baseline only. The final archive must
 record the hash of the packaged, signed release artifact.
 
+Step 1 validation after the implemented code gates: 273 workspace tests pass;
+the extended decoder soak remains intentionally ignored until target-machine
+certification.
+
 ## 1. Close advertised shader release gates
 
-- [ ] Move manual effect-registry discovery and manifest/WGSL validation to a
+- [x] Move manual effect-registry discovery and manifest/WGSL validation to a
   bounded, generation-tagged worker.
-- [ ] Publish only the newest completed registry scan and retain the visible
+- [x] Publish only the newest completed registry scan and retain the visible
   catalog while a scan is running.
-- [ ] Complete or explicitly defer stable deck-package modulation, MIDI and OSC
-  destinations for the first release.
-- [ ] Complete alpha, invisible-branch culling and per-pass timing validation.
-- [ ] Record four-deck 1080p package performance and the UHD texture ceiling.
+- [x] Add stable, persisted deck-package MIDI destinations.
+- [x] Add stable deck-package OSC input and feedback routes.
+- [x] Add eight bounded, persisted deck-package modulation routes per deck,
+  using stable parameter keys and the existing LFO/audio/beat/bar sources.
+- [x] Add transparent-alpha regression coverage for the deck-package boundary.
+- [x] Add visible per-frame deck-package execution/culling telemetry and
+  regression coverage for invisible-deck culling.
+- [x] Add non-blocking per-deck GPU timestamps for precomposition and package
+  passes, with triple-buffered readback and operator diagnostics.
+- [ ] Validate per-pass GPU timing on release hardware.
+- [x] Extend the release benchmark with selectable `deck-v1` package branches.
+- [x] Record a provisional 2026-08-31 four-deck 1080p result on the development
+  M3 Pro: Chromatic Split, HAP BC1, 3 × 600 measured frames, 3.12 ms median
+  sustained, 320.04 fps, 1.10× run spread, 1.55 ms mean precomposition and
+  1.54 ms mean package GPU time per active deck, passing the 16.67 ms budget.
+- [x] Record the fixed deck-package target ceiling: 39.6 MiB at 1080p and
+  158.2 MiB at UHD (five RGBA8-sRGB textures).
+- [ ] Repeat and archive the four-deck benchmark on the designated show
+  machine; the development result is not release certification.
 - [ ] If any item is deferred, remove or qualify the corresponding promise in
   the release notes and feature documentation.
 
@@ -80,4 +99,3 @@ record the hash of the packaged, signed release artifact.
 - [ ] Assign the release version only after packaging and certification pass.
 - [ ] Tag the certified commit and archive the exact signed bundle hash,
   fixture/project, test record, notices and known issues.
-

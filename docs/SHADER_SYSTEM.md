@@ -50,13 +50,13 @@ selected package selectively materializes that deck after its built-ins, runs
 one `deck-v1` pass, and supplies the result to the override-aware layer blend.
 Decks without a package remain in the fused compositor.
 
-## Realtime invariants and the remaining S0 gap
+## Realtime invariants
 
-Automatic watched-package reload already performs file reads, shader parsing
-and pipeline creation on its worker. Manual **Refresh registry** still performs
-one synchronous discovery and Naga-validation scan on the application thread;
-moving that scan to a bounded, generation-tagged worker is an explicit S0 gate
-before user and per-deck catalogs are allowed to scale.
+Automatic watched-package reload performs file reads, shader parsing and
+pipeline creation on its worker. Manual **Refresh registry** also uses a
+bounded, generation-tagged worker: pending requests use latest-wins replacement,
+stale scan results are discarded and the prior catalog remains visible until
+the newest scan completes.
 
 Every shader upgrade must converge on and preserve these rules:
 
@@ -78,8 +78,8 @@ Every shader upgrade must converge on and preserve these rules:
 
 ### S0 — Contract and tooling foundation
 
-Status: target-aware catalog foundation implemented; asynchronous registry
-discovery and the layout-tooling spike remain.
+Status: target-aware catalog foundation and asynchronous registry discovery
+implemented; the layout-tooling spike remains.
 
 1. Keep one canonical shader roadmap and use consistent terminology across the
    repository.
@@ -94,7 +94,7 @@ discovery and the layout-tooling spike remain.
    incompatible Naga or `wgpu` line.
 7. Move manual registry discovery and schema/WGSL validation to a bounded,
    generation-tagged worker. Publish only the newest completed catalog and
-   keep the prior catalog visible while a scan is running.
+   keep the prior catalog visible while a scan is running. (implemented)
 
 Acceptance:
 
@@ -122,7 +122,10 @@ source + built-ins -> materialized layer -> package -> blend-only compositor
 The branch split must be selective: one active package must not force package
 passes for the other three decks. Fixed layer targets and one reusable scratch
 target are budgeted at composition resize or graph preparation, never inside a
-frame. The path is operator-selectable; per-pass timing telemetry remains.
+frame. The path is operator-selectable. Per-frame selected, executed,
+bypassed/dry, invisible-culled and unavailable counters are visible in
+diagnostics. Triple-buffered timestamp readback reports precomposition and
+package GPU time per active deck without blocking presentation.
 
 Acceptance:
 
@@ -135,9 +138,11 @@ Acceptance:
 
 ### S2 — One `deck-v1` package slot per deck
 
-Status: core execution, UI, reload and project-v6 persistence implemented.
-Stable modulation/MIDI/OSC destinations and final alpha/culling telemetry
-remain before this slice is release-complete.
+Status: core execution, UI, reload, project-v6 persistence, transparent-alpha
+coverage, invisible-branch telemetry and stable MIDI/OSC destinations are
+implemented, including stable modulation/MIDI/OSC destinations and per-pass GPU
+timing. Target show-machine certification remains before this slice is
+release-complete.
 
 Ship one bounded fragment-package slot after the built-in deck groups and
 before layer blending. The first release supports one pass and no temporal

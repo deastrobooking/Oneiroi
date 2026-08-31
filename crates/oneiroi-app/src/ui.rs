@@ -39,10 +39,10 @@ use oneiroi_media::{
     DeckState, DeckTransport, EndMode, FourDeckMixer, LaunchQueue, MediaHealth,
 };
 use oneiroi_render::{
-    BlendModeGroup, DeckEffects, DeckLfos, DeckPackageSlot, DeckTransform, EffectDescriptor,
-    EffectHistoryResource, EffectParameterControl, EffectParameterValue, EffectPreset,
-    EffectTarget, LayerBlendMode, LfoWaveform, MasterEffectChain, MasterEffectKind,
-    MasterEffectSlot, MasterModulation, SourceMode,
+    BlendModeGroup, DeckEffects, DeckLfos, DeckPackageModulationRoute, DeckPackageSlot,
+    DeckTransform, EffectDescriptor, EffectHistoryResource, EffectParameterControl,
+    EffectParameterValue, EffectPreset, EffectTarget, LayerBlendMode, LfoWaveform,
+    MasterEffectChain, MasterEffectKind, MasterEffectSlot, MasterModulation, SourceMode,
 };
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.
@@ -405,6 +405,8 @@ pub struct PerformanceMetrics<'a> {
     pub now_seconds: f64,
     pub scheduler_stats: [oneiroi_media::SchedulerStats; 4],
     pub frame_pool_stats: [oneiroi_media::FramePoolStats; 4],
+    pub deck_package_stats: oneiroi_render::DeckPackageFrameStats,
+    pub deck_package_timings: oneiroi_render::DeckPackageTimingStats,
     pub frame_time: &'a FrameTime,
     pub gpu_info: &'a str,
     pub runtime_status: &'a str,

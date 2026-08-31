@@ -264,17 +264,16 @@ Current foundation:
 
 Delivery order:
 
-1. **S0 — Contract/tooling foundation.** Target-aware catalog partitioning and
-   `wgsl-analyzer` guidance are implemented. Move manual registry discovery to
-   a bounded generation-tagged worker, retain ABI/layout conformance tests, and
-   compare one binding-generation approach against `encase` before choosing
-   either.
+1. **S0 — Contract/tooling foundation.** Target-aware catalog partitioning,
+   asynchronous latest-wins registry discovery and `wgsl-analyzer` guidance
+   are implemented. Retain ABI/layout conformance tests and compare one
+   binding-generation approach against `encase` before choosing either.
 2. **S1 — Per-deck precomposition seam.** Implemented: only package-bearing
    decks materialize after their built-ins, and the no-package path stays fused.
 3. **S2 — One `deck-v1` slot per deck.** Core execution, UI, neutral fallback,
-   project-v6 persistence, reload and memory budget are implemented. Finish
-   stable modulation/MIDI/OSC identity plus alpha/culling telemetry and the
-   four-deck show-machine gate.
+   project-v6 persistence, reload, stable modulation/MIDI/OSC identity,
+   alpha/culling telemetry and per-deck GPU timestamps are implemented. Finish
+   the four-deck show-machine gate.
 4. **S3 — Versioned shared WGSL modules.** Prototype an allow-listed
    `oneiroi-std` namespace and fingerprint every transitive import.
 5. **S4 — Typed N-pass fragment graph.** Declare pass edges, formats,
@@ -288,10 +287,9 @@ Delivery order:
    subset later into validated native packages; Naga's GLSL parser alone is
    not a compatibility layer.
 
-Before S2 becomes operator-selectable, add per-pass GPU timing, invisible-deck
-culling and explicit incremental texture accounting. Package fingerprints in
-projects and missing/changed-package preflight remain part of the S2 release
-gate.
+S2 is operator-selectable with visible invisible-deck culling counters and
+fixed texture accounting. Per-pass GPU timing, package fingerprints in projects
+and missing/changed-package preflight remain release gates.
 
 Acceptance criteria:
 

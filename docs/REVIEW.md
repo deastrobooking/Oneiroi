@@ -13,8 +13,9 @@ than 200 automated tests.
 The main release risk is no longer missing mixer fundamentals. It is show-machine
 certification, application packaging and measured expansion of the shader path.
 Per-deck package execution, selection and persistence are now implemented for
-one stateless pass per deck. Stable deck-package modulation/control identities,
-alpha/culling telemetry and show-machine certification remain. External stage
+one stateless pass per deck. Stable deck-package modulation, MIDI and OSC
+identities, alpha/culling diagnostics and non-blocking per-deck GPU pass timing
+are implemented; show-machine certification remains. External stage
 integrations such as tempo sync and video sharing should follow the release
 gates rather than displace them.
 
@@ -87,9 +88,10 @@ still needed to explain a marginal show machine without attaching a profiler.
 
 Algorithmic WGSL packages execute in the two master slots and one stateless
 slot per deck. The deck path selectively materializes active layers and has a
-fixed 1080p/UHD memory ceiling; transparent-alpha, invisible-branch and
-pass-time telemetry remain release gates. HDR, arbitrary pass graphs and
-compute remain later work.
+fixed 1080p/UHD memory ceiling; transparent-alpha coverage, visible
+invisible-branch counters and per-deck pass-time telemetry are implemented.
+Target-machine measurement remains a release gate. HDR, arbitrary pass graphs
+and compute remain later work.
 See [Shader system](SHADER_SYSTEM.md) for the accepted sequence and invariants.
 
 ## Engineering risks

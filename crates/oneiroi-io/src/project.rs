@@ -308,6 +308,12 @@ fn valid_deck_package(package: &DeckPackageProject) -> bool {
                 .iter()
                 .all(|parameter| ids.insert(parameter.id.as_str()))
         }
+        && package.modulation.iter().all(|route| {
+            route.source < 10
+                && (!route.enabled || route.parameter_key != 0)
+                && route.amount.is_finite()
+                && (-1.0..=1.0).contains(&route.amount)
+        })
 }
 
 fn valid_master_effects(effects: &MasterEffectsProject) -> bool {
@@ -387,6 +393,10 @@ fn valid_control_target(target: ControlTargetProject) -> bool {
             route,
             parameter,
         } => deck < 4 && route < 8 && parameter < 2,
+        ControlTargetProject::DeckEffectParameter {
+            deck,
+            parameter_key,
+        } => deck < 4 && parameter_key != 0,
         ControlTargetProject::MasterEffectParameter {
             slot,
             parameter_key,
@@ -785,6 +795,31 @@ pub struct DeckPackageProject {
     pub package_id: String,
     #[serde(default)]
     pub parameters: Vec<EffectParameterValueProject>,
+    #[serde(default = "default_deck_package_modulation")]
+    pub modulation: [DeckPackageModulationRouteProject; 8],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeckPackageModulationRouteProject {
+    pub enabled: bool,
+    pub source: u8,
+    pub parameter_key: u64,
+    pub amount: f32,
+}
+
+impl Default for DeckPackageModulationRouteProject {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            source: 0,
+            parameter_key: 0,
+            amount: 0.5,
+        }
+    }
+}
+
+fn default_deck_package_modulation() -> [DeckPackageModulationRouteProject; 8] {
+    [DeckPackageModulationRouteProject::default(); 8]
 }
 
 impl Default for DeckPackageProject {
@@ -794,6 +829,7 @@ impl Default for DeckPackageProject {
             mix: 1.0,
             package_id: String::new(),
             parameters: Vec::new(),
+            modulation: default_deck_package_modulation(),
         }
     }
 }
@@ -1182,6 +1218,7 @@ pub enum ControlTargetProject {
     EffectParameter { deck: u8, effect: u8, parameter: u8 },
     LfoParameter { deck: u8, lfo: u8, parameter: u8 },
     ModRouteParameter { deck: u8, route: u8, parameter: u8 },
+    DeckEffectParameter { deck: u8, parameter_key: u64 },
     MasterEffectParameter { slot: u8, parameter_key: u64 },
 }
 
@@ -1418,6 +1455,7 @@ mod tests {
                 id: "iterations".to_owned(),
                 value: 6.0,
             }],
+            ..DeckPackageProject::default()
         };
         project.decks[0].solo = true;
         project.decks[2].bypassed = true;

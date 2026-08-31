@@ -9,6 +9,7 @@
 //! ```sh
 //! cargo run --release -p oneiroi-render --example perf -- --decks 4
 //! cargo run --release -p oneiroi-render --example perf -- --decks 2 --source rgba
+//! cargo run --release -p oneiroi-render --example perf -- --decks 4 --deck-package chromatic-split
 //! cargo run --release -p oneiroi-render --example perf -- --preset halation --master both
 //! ```
 //!
@@ -32,8 +33,9 @@ use std::time::Instant;
 use oneiroi_hap::{CompressedPlaneFormat, DecodedFrame, DecodedPlane};
 use oneiroi_media::{RgbaFrame, VideoFramePayload};
 use oneiroi_render::{
-    DeckEffects, EffectPreset, FourDeckCompositor, MasterEffectChain, MasterEffectKind,
-    MasterEffectProcessor, MasterEffectSlot, MixerBus, MixerParams, PROGRAM_FORMAT, ProgramTarget,
+    DeckEffects, DeckPackageSlot, EffectParameterValue, EffectPreset, FourDeckCompositor,
+    MasterEffectChain, MasterEffectKind, MasterEffectProcessor, MasterEffectSlot, MixerBus,
+    MixerParams, PROGRAM_FORMAT, ProgramTarget, load_effect_package,
 };
 
 /// Distinct frames cycled per deck. More than one so the upload path is
@@ -92,6 +94,7 @@ usage: perf [options]
   --height N         composition height         (default 1080)
   --source hap|rgba  per-deck frame format      (default hap)
   --preset NAME      deck effect preset: neutral|neon|blacklight|glitch|halation
+  --deck-package ID  bundled deck-v1 package ID (for example chromatic-split)
   --master MODE      none|blur|feedback|both    (default none)
   --inflight N       frames submitted before a wait (default 3)
   --runs N           repeat the measurement N times (default 3)
@@ -161,6 +164,7 @@ struct Args {
     height: u32,
     source: Source,
     preset: EffectPreset,
+    deck_package: Option<String>,
     master: Master,
     inflight: usize,
     runs: usize,
@@ -179,6 +183,7 @@ impl Args {
             height: 1080,
             source: Source::Hap,
             preset: EffectPreset::Neutral,
+            deck_package: None,
             master: Master::None,
             inflight: 3,
             runs: 3,
@@ -227,6 +232,7 @@ impl Args {
                         other => return Err(format!("unknown preset `{other}`")),
                     }
                 }
+                "--deck-package" => parsed.deck_package = Some(value()?),
                 "--gpu-timing" => parsed.gpu_timing = true,
                 "--json" => parsed.json = true,
                 "--help" | "-h" => {
@@ -293,7 +299,7 @@ impl Gpu {
         .ok()?;
 
         let available = adapter.features();
-        let mut required = wgpu::Features::empty();
+        let mut required = available & wgpu::Features::TIMESTAMP_QUERY;
         if source == Source::Hap {
             if !available.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
                 return None;
@@ -303,10 +309,9 @@ impl Gpu {
         let info = adapter.get_info();
 
         // Encoder-level timestamps deadlock on Metal: Apple GPUs sample at
-        // stage boundaries, not the blit boundary `write_timestamp` uses, and
-        // the command buffer never completes. Per-pass `timestamp_writes` is
-        // the supported route there, but that has to be plumbed through the
-        // compositor and master passes rather than bolted on from outside.
+        // stage boundaries, not the blit boundary `write_timestamp` uses.
+        // The compositor uses per-pass timestamp_writes on every backend;
+        // this optional pair is only for whole-frame encoder timing.
         let timing_features =
             wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
         let metal = info.backend == wgpu::Backend::Metal;
@@ -461,6 +466,8 @@ struct Report {
     frame_ms: Vec<f64>,
     upload_ms: Vec<f64>,
     gpu_ms: Vec<f64>,
+    deck_precomposition_gpu_ms: Vec<f64>,
+    deck_package_gpu_ms: Vec<f64>,
     /// Wall-clock milliseconds per frame with rendering pipelined.
     sustained_ms: f64,
     upload_bytes_per_frame: usize,
@@ -469,9 +476,52 @@ struct Report {
 fn run(gpu: &Gpu, args: &Args) -> Report {
     let extent = [args.width, args.height];
     let mut compositor = FourDeckCompositor::new(&gpu.device, &gpu.queue, PROGRAM_FORMAT);
+    compositor.set_output_extent(&gpu.device, extent);
     let program = ProgramTarget::new(&gpu.device, extent);
     let mut master = MasterEffectProcessor::new(&gpu.device, &program);
     let chain = args.master.chain();
+    let deck_packages = if let Some(id) = &args.deck_package {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("effects")
+            .join(id)
+            .join("effect.json");
+        let package = load_effect_package(&manifest)
+            .unwrap_or_else(|error| panic!("load deck package {}: {error}", manifest.display()));
+        compositor.watch_deck_effect_manifests(vec![manifest]);
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while !compositor.deck_effect_loaded(id) && Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            compositor.poll_deck_effect_reload();
+        }
+        assert!(
+            compositor.deck_effect_loaded(id),
+            "{}",
+            compositor.deck_effect_reload_status()
+        );
+        let selected = DeckPackageSlot {
+            package_id: id.clone(),
+            parameters: package
+                .manifest
+                .parameters
+                .iter()
+                .map(|parameter| EffectParameterValue {
+                    id: parameter.id.clone(),
+                    value: parameter.default,
+                })
+                .collect(),
+            ..DeckPackageSlot::default()
+        };
+        std::array::from_fn(|index| {
+            if index < args.decks {
+                selected.clone()
+            } else {
+                DeckPackageSlot::default()
+            }
+        })
+    } else {
+        std::array::from_fn(|_| DeckPackageSlot::default())
+    };
 
     let decks = (0..args.decks)
         .map(|deck| generate_frames(args.source, args.width, args.height, deck))
@@ -520,12 +570,13 @@ fn run(gpu: &Gpu, args: &Args) -> Report {
         if let Some(timestamps) = &gpu.timestamps {
             encoder.write_timestamp(&timestamps.query_set, 0);
         }
-        compositor.draw(
+        compositor.draw_with_deck_packages(
             &gpu.device,
             &gpu.queue,
             &mut encoder,
             program.composition_view(),
             *params,
+            &deck_packages,
         );
         master.draw_at(
             &gpu.queue,
@@ -574,10 +625,13 @@ fn run(gpu: &Gpu, args: &Args) -> Report {
     let mut frame_ms = Vec::with_capacity(args.frames);
     let mut upload_ms = Vec::with_capacity(args.frames);
     let mut gpu_ms = Vec::with_capacity(args.frames);
+    let mut deck_precomposition_gpu_ms = Vec::new();
+    let mut deck_package_gpu_ms = Vec::new();
     for frame in 0..args.frames {
         let started = Instant::now();
         let upload = render_frame(&mut compositor, &mut master, &mut params, frame);
         wait();
+        let deck_timings = compositor.poll_deck_package_timings(&gpu.device);
         frame_ms.push(started.elapsed().as_secs_f64() * 1000.0);
         upload_ms.push(upload);
 
@@ -586,6 +640,20 @@ fn run(gpu: &Gpu, args: &Args) -> Report {
         {
             gpu_ms.push(ms);
         }
+        deck_precomposition_gpu_ms.extend(
+            deck_timings
+                .precomposition_ms
+                .into_iter()
+                .filter(|value| *value > 0.0)
+                .map(f64::from),
+        );
+        deck_package_gpu_ms.extend(
+            deck_timings
+                .package_ms
+                .into_iter()
+                .filter(|value| *value > 0.0)
+                .map(f64::from),
+        );
     }
 
     Report {
@@ -593,6 +661,8 @@ fn run(gpu: &Gpu, args: &Args) -> Report {
         frame_ms,
         upload_ms,
         gpu_ms,
+        deck_precomposition_gpu_ms,
+        deck_package_gpu_ms,
         upload_bytes_per_frame,
     }
 }
@@ -626,6 +696,8 @@ struct Summary {
     max_ms: f64,
     upload_mean_ms: f64,
     gpu_mean_ms: Option<f64>,
+    deck_precomposition_gpu_mean_ms: Option<f64>,
+    deck_package_gpu_mean_ms: Option<f64>,
     upload_bytes_per_frame: usize,
     frames: usize,
 }
@@ -652,6 +724,14 @@ impl Summary {
             .iter()
             .flat_map(|report| report.gpu_ms.iter().copied())
             .collect::<Vec<_>>();
+        let deck_precomposition_gpu_samples = reports
+            .iter()
+            .flat_map(|report| report.deck_precomposition_gpu_ms.iter().copied())
+            .collect::<Vec<_>>();
+        let deck_package_gpu_samples = reports
+            .iter()
+            .flat_map(|report| report.deck_package_gpu_ms.iter().copied())
+            .collect::<Vec<_>>();
 
         Self {
             sustained_best_ms: sustained.first().copied().unwrap_or_default(),
@@ -670,6 +750,10 @@ impl Summary {
                     .collect::<Vec<_>>(),
             ),
             gpu_mean_ms: (!gpu_samples.is_empty()).then(|| mean(&gpu_samples)),
+            deck_precomposition_gpu_mean_ms: (!deck_precomposition_gpu_samples.is_empty())
+                .then(|| mean(&deck_precomposition_gpu_samples)),
+            deck_package_gpu_mean_ms: (!deck_package_gpu_samples.is_empty())
+                .then(|| mean(&deck_package_gpu_samples)),
             upload_bytes_per_frame: reports
                 .first()
                 .map(|report| report.upload_bytes_per_frame)
@@ -698,7 +782,7 @@ impl Summary {
         let mut out = String::new();
         let _ = writeln!(
             out,
-            "{} ({})\n{}x{} · {} decks · {} · deck fx {} · master {}\n{} runs x {} frames, {} discarded as warmup",
+            "{} ({})\n{}x{} · {} decks · {} · deck fx {} · deck package {} · master {}\n{} runs x {} frames, {} discarded as warmup",
             gpu.adapter_name,
             gpu.backend,
             args.width,
@@ -706,6 +790,7 @@ impl Summary {
             args.decks,
             args.source.label(),
             args.preset.label(),
+            args.deck_package.as_deref().unwrap_or("none"),
             args.master.label(),
             args.runs,
             args.frames,
@@ -728,6 +813,16 @@ impl Summary {
         let _ = writeln!(out, "  upload     mean {:6.2} ms", self.upload_mean_ms);
         if let Some(gpu_ms) = self.gpu_mean_ms {
             let _ = writeln!(out, "  gpu        mean {:6.2} ms", gpu_ms);
+        }
+        if let (Some(pre_ms), Some(package_ms)) = (
+            self.deck_precomposition_gpu_mean_ms,
+            self.deck_package_gpu_mean_ms,
+        ) {
+            let _ = writeln!(
+                out,
+                "  deck GPU   precomposition {:6.2} ms · package {:6.2} ms per active deck",
+                pre_ms, package_ms
+            );
         }
         let _ = writeln!(
             out,
@@ -770,11 +865,12 @@ impl Summary {
         format!(
             concat!(
                 r#"{{"adapter":"{}","backend":"{}","width":{},"height":{},"decks":{},"#,
-                r#""source":"{}","preset":"{}","master":"{}","runs":{},"frames":{},"warmup":{},"#,
+                r#""source":"{}","preset":"{}","deck_package":"{}","master":"{}","runs":{},"frames":{},"warmup":{},"#,
                 r#""inflight":{},"sustained_runs_ms":[{}],"sustained_best_ms":{:.4},"#,
                 r#""sustained_median_ms":{:.4},"sustained_worst_ms":{:.4},"sustained_median_fps":{:.2},"#,
                 r#""spread":{:.4},"mean_ms":{:.4},"p50_ms":{:.4},"p95_ms":{:.4},"p99_ms":{:.4},"#,
                 r#""max_ms":{:.4},"upload_mean_ms":{:.4},"gpu_mean_ms":{},"#,
+                r#""deck_precomposition_gpu_mean_ms":{},"deck_package_gpu_mean_ms":{},"#,
                 r#""upload_bytes_per_frame":{},"upload_gb_per_second":{:.4},"#,
                 r#""budget_ms":{:.4},"pass":{}}}"#
             ),
@@ -785,6 +881,7 @@ impl Summary {
             args.decks,
             args.source.label(),
             args.preset.label(),
+            args.deck_package.as_deref().unwrap_or("none"),
             args.master.label(),
             args.runs,
             args.frames,
@@ -806,6 +903,10 @@ impl Summary {
                 Some(ms) => format!("{ms:.4}"),
                 None => "null".to_string(),
             },
+            self.deck_precomposition_gpu_mean_ms
+                .map_or_else(|| "null".to_owned(), |ms| format!("{ms:.4}")),
+            self.deck_package_gpu_mean_ms
+                .map_or_else(|| "null".to_owned(), |ms| format!("{ms:.4}")),
             self.upload_bytes_per_frame,
             self.upload_gb_per_second(self.sustained_median_ms),
             args.budget_ms,

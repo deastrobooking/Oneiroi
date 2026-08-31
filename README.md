@@ -226,14 +226,14 @@ two fragment passes and optional fixed history per master slot. Stateless,
 one-pass `deck-v1` packages run after a deck's built-ins and before its layer
 blend; dual-placement packages can run in either runtime. Watched changes compile away
 from presentation and swap only after the complete candidate succeeds. Manual
-registry refresh still performs one synchronous validation scan; moving that
-scan to the reload worker is the remaining S0 scaling gate.
+registry refresh also runs on a bounded latest-wins worker and discards stale
+scan generations.
 
 Per-deck packages now execute through a selectively materialized branch while
 the no-package path stays fused. Each deck exposes package selection, generated
-parameters, looks, bypass and wet controls, with project-v6 persistence and
-last-known-good reload. Stable deck-package modulation/MIDI/OSC identities are
-the remaining S2 control work. Shared WGSL modules, typed
+parameters, looks, bypass and wet controls, with project-v6 persistence,
+last-known-good reload, eight stable modulation routes, stable MIDI/OSC
+destinations and per-deck GPU pass timing. Show-machine certification remains. Shared WGSL modules, typed
 N-pass graphs, optional HDR intermediates, compute effects and offline
 ISF/ShaderToy conversion follow as separately budgeted phases.
 

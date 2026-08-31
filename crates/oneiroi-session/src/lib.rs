@@ -507,6 +507,10 @@ pub fn control_parameter_path(target: ControlTarget) -> String {
             route,
             parameter,
         } => format!("deck.{deck}.mod_route.{route}.parameter.{parameter}"),
+        ControlTarget::DeckEffectParameter {
+            deck,
+            parameter_key,
+        } => format!("deck.{deck}.package.parameter.{parameter_key:016x}"),
         ControlTarget::MasterEffectParameter {
             slot,
             parameter_key,

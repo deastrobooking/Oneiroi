@@ -713,6 +713,19 @@ impl State {
                     }
                 }
             }
+            ControlTarget::DeckEffectParameter {
+                deck,
+                parameter_key,
+            } => {
+                if let Some(deck) = deck_id(deck)
+                    && let Some(effect) = self.ui.deck_packages.get_mut(deck.index())
+                    && let Some(parameter) = effect.parameters.iter_mut().find(|parameter| {
+                        effect_parameter_key(&effect.package_id, &parameter.id) == parameter_key
+                    })
+                {
+                    parameter.value = update.value;
+                }
+            }
             ControlTarget::MasterEffectParameter {
                 slot,
                 parameter_key,

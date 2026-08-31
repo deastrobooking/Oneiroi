@@ -198,8 +198,10 @@ fn deck_package_executes_before_blend_and_bypass_restores_the_fused_path() {
         &packages,
     );
     assert_ne!(effected, baseline, "deck package did not alter its source");
+    assert_eq!(mixer.deck_package_frame_stats().selected, 1);
+    assert_eq!(mixer.deck_package_frame_stats().executed, 1);
 
-    let mut bypassed = packages;
+    let mut bypassed = packages.clone();
     bypassed[0].bypassed = true;
     let bypassed = render_with_packages(
         &device,
@@ -209,6 +211,32 @@ fn deck_package_executes_before_blend_and_bypass_restores_the_fused_path() {
         &bypassed,
     );
     assert_eq!(bypassed, baseline, "bypass must retain the fused fast path");
+    assert_eq!(mixer.deck_package_frame_stats().bypassed_or_dry, 1);
+
+    mixer
+        .upload(&device, &queue, 0, &solid([255, 64, 32, 0]))
+        .unwrap();
+    let transparent_baseline = render(&device, &queue, &mut mixer, MixerParams::default());
+    let transparent_effected = render_with_packages(
+        &device,
+        &queue,
+        &mut mixer,
+        MixerParams::default(),
+        &packages,
+    );
+    assert_eq!(
+        transparent_effected, transparent_baseline,
+        "a package that preserves alpha must not reveal transparent RGB"
+    );
+
+    let mut invisible_params = MixerParams::default();
+    invisible_params.levels[0] = 0.0;
+    let invisible_baseline = render(&device, &queue, &mut mixer, invisible_params);
+    let invisible_effected =
+        render_with_packages(&device, &queue, &mut mixer, invisible_params, &packages);
+    assert_eq!(invisible_effected, invisible_baseline);
+    assert_eq!(mixer.deck_package_frame_stats().executed, 0);
+    assert_eq!(mixer.deck_package_frame_stats().culled_invisible, 1);
 }
 
 #[test]

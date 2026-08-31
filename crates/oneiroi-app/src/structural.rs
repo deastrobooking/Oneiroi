@@ -258,6 +258,21 @@ fn apply_deck_package(
             }
         }
     }
+    for (route_index, route) in package.modulation.iter_mut().enumerate() {
+        let path = format!("{root}.modulation.route.{route_index}");
+        assign_bool(&mut route.enabled, parameters, &format!("{path}.enabled"));
+        if let Some(value) = integer_at(parameters, &format!("{path}.source"))
+            && let Ok(value) = u8::try_from(value)
+        {
+            route.source = value;
+        }
+        if let Some(value) = text_at(parameters, &format!("{path}.parameter_key"))
+            && let Ok(value) = u64::from_str_radix(value, 16)
+        {
+            route.parameter_key = value;
+        }
+        assign_f32(&mut route.amount, parameters, &format!("{path}.amount"));
+    }
     package.sanitize();
 }
 
@@ -742,6 +757,35 @@ fn diff_deck_package(
             ));
         }
     }
+    for route in 0..new.modulation.len() {
+        let path = format!("{root}.modulation.route.{route}");
+        changed_bool(
+            commands,
+            format!("{path}.enabled"),
+            old.modulation[route].enabled,
+            new.modulation[route].enabled,
+        );
+        changed_i64(
+            commands,
+            format!("{path}.source"),
+            i64::from(old.modulation[route].source),
+            i64::from(new.modulation[route].source),
+        );
+        let old_key = format!("{:016x}", old.modulation[route].parameter_key);
+        let new_key = format!("{:016x}", new.modulation[route].parameter_key);
+        changed_text(
+            commands,
+            format!("{path}.parameter_key"),
+            &old_key,
+            &new_key,
+        );
+        changed_f32(
+            commands,
+            format!("{path}.amount"),
+            old.modulation[route].amount,
+            new.modulation[route].amount,
+        );
+    }
 }
 
 fn diff_master_effects(
@@ -1017,6 +1061,12 @@ mod tests {
                 value: 1.4,
             }],
             ..DeckPackageSlot::default()
+        };
+        desired.deck_packages[3].modulation[0] = oneiroi_render::DeckPackageModulationRoute {
+            enabled: true,
+            source: 7,
+            parameter_key: oneiroi_core::effect_parameter_key("fractal-volume", "density"),
+            amount: -0.4,
         };
         desired.master_effects.slots[0].kind = MasterEffectKind::Feedback;
         desired.master_modulation.routes[0].target_slot = 1;

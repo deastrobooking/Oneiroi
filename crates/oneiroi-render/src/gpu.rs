@@ -63,7 +63,8 @@ impl Gpu {
 
         let adapter_info = adapter.get_info();
         let adapter_features = adapter.features();
-        let requested_features = adapter_features & wgpu::Features::TEXTURE_COMPRESSION_BC;
+        let requested_features = adapter_features
+            & (wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::TIMESTAMP_QUERY);
         log::info!(
             "adapter: {} ({:?}, {:?}); BC textures: {}",
             adapter_info.name,

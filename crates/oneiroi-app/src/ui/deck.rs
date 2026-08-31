@@ -551,7 +551,7 @@ pub(super) fn draw_deck(
                 ui.weak("Effects run independently on this deck before mixing.");
             });
             ui.separator();
-            draw_deck_package(ui, id, show_mode, package, packages);
+            draw_deck_package(ui, id, show_mode, package, packages, actions);
         };
         if show_mode || selected {
             ui.group(effect_controls);
@@ -697,6 +697,7 @@ fn draw_deck_package(
     show_mode: bool,
     slot: &mut DeckPackageSlot,
     packages: &[EffectDescriptor],
+    actions: &mut Vec<UiAction>,
 ) {
     ui.strong("Algorithmic package");
     let selected = packages
@@ -729,6 +730,7 @@ fn draw_deck_package(
                         .collect()
                 })
                 .unwrap_or_default();
+            slot.modulation.fill(DeckPackageModulationRoute::default());
         }
     }
 
@@ -841,7 +843,81 @@ fn draw_deck_package(
                     });
                 }
             }
+            let target = ControlTarget::DeckEffectParameter {
+                deck: id.index() as u8,
+                parameter_key: effect_parameter_key(&slot.package_id, &parameter.id),
+            };
+            ui.horizontal(|ui| {
+                if ui.small_button("MIDI learn").clicked() {
+                    actions.push(UiAction::MidiLearn(target));
+                }
+                if ui.small_button("Clear").clicked() {
+                    actions.push(UiAction::MidiClearTarget(target));
+                }
+            });
         }
+        egui::CollapsingHeader::new("Package modulation")
+            .id_salt(("deck-package-modulation", id.index()))
+            .default_open(false)
+            .show(ui, |ui| {
+                const SOURCES: [&str; 10] = [
+                    "LFO 1",
+                    "LFO 2",
+                    "LFO 3",
+                    "Audio RMS",
+                    "Bass",
+                    "Mid",
+                    "High",
+                    "Transient",
+                    "Beat phase",
+                    "Bar phase",
+                ];
+                for (route_index, route) in slot.modulation.iter_mut().enumerate() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.checkbox(&mut route.enabled, format!("Route {}", route_index + 1));
+                        egui::ComboBox::from_id_salt((
+                            "deck-package-mod-source",
+                            id.index(),
+                            route_index,
+                        ))
+                        .selected_text(
+                            SOURCES
+                                .get(usize::from(route.source))
+                                .copied()
+                                .unwrap_or("Unknown"),
+                        )
+                        .show_ui(ui, |ui| {
+                            for (source, label) in SOURCES.iter().enumerate() {
+                                ui.selectable_value(&mut route.source, source as u8, *label);
+                            }
+                        });
+                        let selected = package
+                            .parameters
+                            .iter()
+                            .find(|parameter| {
+                                effect_parameter_key(&package.id, &parameter.id)
+                                    == route.parameter_key
+                            })
+                            .map_or("Choose parameter", |parameter| parameter.label.as_str());
+                        egui::ComboBox::from_id_salt((
+                            "deck-package-mod-target",
+                            id.index(),
+                            route_index,
+                        ))
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            for parameter in &package.parameters {
+                                ui.selectable_value(
+                                    &mut route.parameter_key,
+                                    effect_parameter_key(&package.id, &parameter.id),
+                                    &parameter.label,
+                                );
+                            }
+                        });
+                        ui.add(egui::Slider::new(&mut route.amount, -1.0..=1.0).text("amount"));
+                    });
+                }
+            });
     }
     slot.sanitize();
 }

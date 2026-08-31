@@ -79,6 +79,16 @@
 - Added per-deck package selection, generated controls, looks, wet/bypass,
   last-known-good reload diagnostics and project-v6 persistence. Chromatic
   Split and all three algorithmic packages now support deck/master placement.
+- Added stable, persisted MIDI destinations plus OSC input/feedback addresses
+  for deck-package parameters; manifest reordering does not change control
+  identity.
+- Added eight persisted deck-package modulation routes per deck, sharing the
+  existing LFO, audio-band, transient, beat-phase and bar-phase sources.
+- Added visible deck-package execution/culling counters and real-GPU coverage
+  for transparent-alpha preservation and invisible-deck culling.
+- Added triple-buffered, non-blocking GPU timestamp readback for each active
+  deck's precomposition and package passes, surfaced in operator diagnostics
+  and the repeatable release benchmark.
 - Required manifest v2 to declare its ABI explicitly, and preserved exact
   resource-root precedence when a higher-priority package becomes temporarily
   invalid instead of promoting a lower-priority duplicate.

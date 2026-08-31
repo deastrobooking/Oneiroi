@@ -39,6 +39,7 @@ Deck, clip and scene numbers in OSC addresses are one-based.
 | `/vjx/deck/{1-4}/select` | optional trigger | Select deck |
 | `/vjx/deck/{1-4}/restart` | optional trigger | Restart deck |
 | `/vjx/deck/{1-4}/clip/{1-8}/launch` | optional trigger | Launch clip |
+| `/vjx/deck/{1-4}/package/{parameter-key}` | float | Set a deck-package parameter by its 16-digit stable hexadecimal key |
 | `/vjx/scene/{1-8}/launch` | optional trigger | Launch scene |
 
 Trigger routes default to `1` when sent without arguments. Sending a trigger
@@ -52,6 +53,10 @@ first render frame at or after the deadline. Immediate and past timetags run
 on receipt. The pending queue is capped at 1,024 messages and the scheduling
 horizon at 24 hours; rejected future messages increment the schedule-drop
 counter. Journal `ShowTime` records actual execution rather than arrival.
+
+Package parameter keys are derived from the package ID and parameter ID and do
+not change when a manifest is reordered. The MIDI mapping UI shows the human
+parameter label while persisting the same stable key.
 
 Feedback uses the same addresses listed above with one float argument. Trigger
 routes emit `1`; continuous and boolean routes emit their accepted concrete

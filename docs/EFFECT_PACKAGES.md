@@ -179,10 +179,11 @@ amount is bipolar and spans half of the declared parameter range at magnitude
 
 ## Lifecycle and safety
 
-Choose **Refresh registry** after adding a package. The button currently runs
-one synchronous discovery plus schema/WGSL validation scan; moving that manual
-scan to the bounded reload worker is the remaining S0 scaling gate. Once a
-package is registered, its manifest and WGSL are fingerprinted every 500 ms.
+Choose **Refresh registry** after adding a package. Registry discovery and
+schema/WGSL validation run on a bounded, generation-tagged worker. A newer
+request replaces a pending request, stale results are discarded and the prior
+catalog stays visible during the scan. Once a package is registered, its
+manifest and WGSL are fingerprinted every 500 ms.
 Naga validates syntax and entry points, and wgpu validates the fixed
 bind-group/pipeline contract on the worker. A successful candidate replaces
 that package pipeline between frames.
@@ -217,11 +218,10 @@ Per-deck packages are executable. The renderer materializes only affected deck
 branches after built-in processing and before layer blending. The no-package
 path remains fused, and missing, bypassed or zero-wet packages pass through.
 
-Manifest v2 target metadata is the compatibility foundation for distinguishing
-master and deck placement. Target discovery does not make a deck package
-executable: the first operator-facing deck release will use a dedicated
-`deck-v1` ABI, one stateless fragment slot per deck and neutral fallback for an
-unsupported or missing package.
+Manifest v2 target metadata distinguishes master and deck placement. The
+operator-facing deck runtime uses a dedicated `deck-v1` ABI, one stateless
+fragment slot per deck and neutral fallback for an unsupported or missing
+package.
 
 The catalog-level v2 shape is:
 
@@ -251,8 +251,11 @@ Version 2 requires one or two unique targets. `master-v1` targets master only.
 `deck-v1` must include deck, remains stateless and one-pass, and may also list
 master for dual placement. Deck candidates receive schema, Naga, bind-group and
 real-GPU pipeline validation on the deck reload worker. A selected package's
-ID, bypass, wet value and named parameters persist per deck in project schema
-v6.
+ID, bypass, wet value, named parameters and eight stable-key modulation routes
+persist per deck in project schema v6. The routes use the existing three deck
+LFOs plus RMS, bass, mid, high, transient, beat-phase and bar-phase sources.
+Generated parameter controls expose MIDI learn, and OSC addresses use the same
+stable package/parameter key.
 
 `deck-v1` uses the same group-0 bindings as `master-v1`; bindings 1, 2, 4 and
 5 all reference the materialized deck input because history and intermediate

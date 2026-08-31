@@ -715,6 +715,7 @@ impl State {
 
     fn render(&mut self) {
         self.poll_effect_registry_refresh();
+        let deck_package_timings = self.compositor.poll_deck_package_timings(&self.gpu.device);
         if self.master_effect_processor.poll_effect_reload() {
             self.ui.effect_reload_status = self.master_effect_processor.reload_status().to_owned();
         }
@@ -783,6 +784,8 @@ impl State {
                     frame_pool_stats: std::array::from_fn(|index| {
                         self.decoders[index].frame_pool_stats()
                     }),
+                    deck_package_stats: self.compositor.deck_package_frame_stats(),
+                    deck_package_timings,
                     frame_time: &time,
                     gpu_info: &self.gpu_info,
                     runtime_status: &runtime_status,
@@ -976,6 +979,30 @@ impl State {
                             &self.program.view
                         };
                         let audio = self.audio_snapshot.analysis;
+                        let audio_sources = [
+                            audio.rms,
+                            audio.bass,
+                            audio.mid,
+                            audio.high,
+                            audio.transient,
+                        ];
+                        let deck_packages = std::array::from_fn(|index| {
+                            let slot = &self.ui.deck_packages[index];
+                            let schema = self
+                                .ui
+                                .deck_effect_packages
+                                .iter()
+                                .find(|package| package.id == slot.package_id)
+                                .map_or(&[][..], |package| package.parameters.as_slice());
+                            slot.modulated(
+                                self.ui.lfos[index].source_values_with_audio(
+                                    effect_time,
+                                    beat_position,
+                                    audio_sources,
+                                ),
+                                schema,
+                            )
+                        });
                         self.compositor.draw_with_deck_packages(
                             &self.gpu.device,
                             &self.gpu.queue,
@@ -1014,20 +1041,14 @@ impl State {
                                         self.ui.effects[index],
                                         effect_time,
                                         beat_position,
-                                        [
-                                            audio.rms,
-                                            audio.bass,
-                                            audio.mid,
-                                            audio.high,
-                                            audio.transient,
-                                        ],
+                                        audio_sources,
                                     )
                                 }),
                                 master_opacity: self.ui.master_opacity,
                                 time_seconds: effect_time,
                                 blackout: self.ui.blackout,
                             },
-                            &self.ui.deck_packages,
+                            &deck_packages,
                         );
                     }
                     BuiltInRenderStage::MasterEffects { .. } if master_effects_active => {
@@ -1223,6 +1244,17 @@ fn current_control_value(
                 _ => 0.0,
             })
             .unwrap_or_default(),
+        ControlTarget::DeckEffectParameter {
+            deck,
+            parameter_key,
+        } => deck_id(deck)
+            .and_then(|deck| ui.deck_packages.get(deck.index()))
+            .and_then(|effect| {
+                effect.parameters.iter().find(|parameter| {
+                    effect_parameter_key(&effect.package_id, &parameter.id) == parameter_key
+                })
+            })
+            .map_or(0.0, |parameter| parameter.value),
         ControlTarget::MasterEffectParameter {
             slot,
             parameter_key,
@@ -1282,6 +1314,15 @@ fn performance_control_snapshot(
                     parameter,
                 });
             }
+        }
+        for parameter in &ui.deck_packages[usize::from(deck)].parameters {
+            targets.push(ControlTarget::DeckEffectParameter {
+                deck,
+                parameter_key: effect_parameter_key(
+                    &ui.deck_packages[usize::from(deck)].package_id,
+                    &parameter.id,
+                ),
+            });
         }
     }
     for (slot, effect) in ui.master_effects.slots.iter().enumerate() {

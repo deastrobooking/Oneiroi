@@ -436,6 +436,10 @@ pub(super) fn midi_target_label(target: ControlTarget) -> String {
                 .copied()
                 .unwrap_or("Unknown")
         ),
+        ControlTarget::DeckEffectParameter {
+            deck,
+            parameter_key,
+        } => format!("Deck {} · custom {:016x}", deck_label(deck), parameter_key),
         ControlTarget::MasterEffectParameter {
             slot,
             parameter_key,
@@ -444,31 +448,58 @@ pub(super) fn midi_target_label(target: ControlTarget) -> String {
 }
 
 pub(super) fn midi_target_label_for_state(target: ControlTarget, state: &UiState) -> String {
-    let ControlTarget::MasterEffectParameter {
-        slot,
-        parameter_key,
-    } = target
-    else {
-        return midi_target_label(target);
-    };
-    let slot_index = usize::from(slot);
-    let Some(effect) = state.master_effects.slots.get(slot_index) else {
-        return midi_target_label(target);
-    };
-    let label = state
-        .effect_packages
-        .iter()
-        .find(|package| package.id == effect.package_id)
-        .and_then(|package| {
-            package
-                .parameters
-                .iter()
-                .find(|parameter| effect_parameter_key(&package.id, &parameter.id) == parameter_key)
-        });
-    label.map_or_else(
-        || midi_target_label(target),
-        |parameter| format!("Master slot {} · {}", slot_index + 1, parameter.label),
-    )
+    match target {
+        ControlTarget::DeckEffectParameter {
+            deck,
+            parameter_key,
+        } => {
+            let deck_index = usize::from(deck);
+            let label = state
+                .deck_packages
+                .get(deck_index)
+                .and_then(|effect| {
+                    state
+                        .deck_effect_packages
+                        .iter()
+                        .find(|package| package.id == effect.package_id)
+                })
+                .and_then(|package| {
+                    package.parameters.iter().find(|parameter| {
+                        effect_parameter_key(&package.id, &parameter.id) == parameter_key
+                    })
+                });
+            label.map_or_else(
+                || midi_target_label(target),
+                |parameter| format!("Deck {} · {}", deck_label(deck), parameter.label),
+            )
+        }
+        ControlTarget::MasterEffectParameter {
+            slot,
+            parameter_key,
+        } => {
+            let slot_index = usize::from(slot);
+            let label = state
+                .master_effects
+                .slots
+                .get(slot_index)
+                .and_then(|effect| {
+                    state
+                        .effect_packages
+                        .iter()
+                        .find(|package| package.id == effect.package_id)
+                })
+                .and_then(|package| {
+                    package.parameters.iter().find(|parameter| {
+                        effect_parameter_key(&package.id, &parameter.id) == parameter_key
+                    })
+                });
+            label.map_or_else(
+                || midi_target_label(target),
+                |parameter| format!("Master slot {} · {}", slot_index + 1, parameter.label),
+            )
+        }
+        _ => midi_target_label(target),
+    }
 }
 
 #[cfg(test)]

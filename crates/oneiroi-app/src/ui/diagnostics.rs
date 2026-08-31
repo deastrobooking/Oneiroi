@@ -115,4 +115,35 @@ pub(super) fn draw_pipeline_health(ui: &mut egui::Ui, metrics: &PerformanceMetri
         "RGBA pool alloc {allocated} · reuse {reused} · live {in_flight} · discard {discarded} · {:.1} MiB",
         bytes as f64 / (1024.0 * 1024.0)
     ));
+    let packages = metrics.deck_package_stats;
+    ui.separator();
+    ui.label(format!(
+        "deck packages selected {} · executed {} · invisible culled {} · bypass/dry {} · unavailable {}",
+        packages.selected,
+        packages.executed,
+        packages.culled_invisible,
+        packages.bypassed_or_dry,
+        packages.unavailable
+    ));
+    let timings = metrics.deck_package_timings;
+    if timings.supported {
+        let samples = (0..4)
+            .filter(|index| {
+                timings.precomposition_ms[*index] > 0.0 || timings.package_ms[*index] > 0.0
+            })
+            .map(|index| {
+                format!(
+                    "{} pre {:.2} ms + package {:.2} ms",
+                    char::from(b'A' + index as u8),
+                    timings.precomposition_ms[index],
+                    timings.package_ms[index]
+                )
+            })
+            .collect::<Vec<_>>();
+        if !samples.is_empty() {
+            ui.weak(format!("deck GPU timing · {}", samples.join(" · ")));
+        }
+    } else {
+        ui.weak("deck GPU timing unavailable on this adapter");
+    }
 }

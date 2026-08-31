@@ -5,23 +5,23 @@ use oneiroi_core::{
 use oneiroi_io::{
     AudioAnalysisProject, BlendModeProject, CameraProject, ClipLaunchModeProject,
     ClipPlaybackProject, ClockSourceProject, ControlTargetProject, CrossfadeBusProject,
-    DeckPackageProject, DeckProject, EffectGroupProject, EffectParameterValueProject,
-    EffectProject, EffectSlotProject, EffectTargetProject, EndModeProject, LfoProject,
-    LfoWaveformProject, MappingModeProject, MasterEffectKindProject, MasterEffectSlotProject,
-    MasterEffectsProject, MasterLfoProject, MasterModulationProject, MasterModulationRouteProject,
-    MidiClockProject, MidiMappingProject, MidiMessageProject, ModRouteProject, OutputProject,
-    ProjectFile, ProjectSettings, QuantizationProject, SourceModeProject, ThemeProject,
-    TransformProject, TransportProject,
+    DeckPackageModulationRouteProject, DeckPackageProject, DeckProject, EffectGroupProject,
+    EffectParameterValueProject, EffectProject, EffectSlotProject, EffectTargetProject,
+    EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject, MasterEffectKindProject,
+    MasterEffectSlotProject, MasterEffectsProject, MasterLfoProject, MasterModulationProject,
+    MasterModulationRouteProject, MidiClockProject, MidiMappingProject, MidiMessageProject,
+    ModRouteProject, OutputProject, ProjectFile, ProjectSettings, QuantizationProject,
+    SourceModeProject, ThemeProject, TransformProject, TransportProject,
 };
 use oneiroi_media::{
     CLIPS_PER_DECK, CameraConfig, CameraDevice, ClipAddress, ClipBank, ClipLaunchMode,
     ClipPlayback, CrossfadeBus, DeckId, DeckTransport, EndMode, FourDeckMixer,
 };
 use oneiroi_render::{
-    DeckEffects, DeckLfos, DeckPackageSlot, DeckTransform, EffectGroup, EffectLfo,
-    EffectParameterValue, EffectSlot, EffectTarget, LayerBlendMode, LfoWaveform, MasterEffectChain,
-    MasterEffectKind, MasterEffectSlot, MasterLfo, MasterModulation, MasterModulationRoute,
-    ModulationRoute, SourceMode,
+    DeckEffects, DeckLfos, DeckPackageModulationRoute, DeckPackageSlot, DeckTransform, EffectGroup,
+    EffectLfo, EffectParameterValue, EffectSlot, EffectTarget, LayerBlendMode, LfoWaveform,
+    MasterEffectChain, MasterEffectKind, MasterEffectSlot, MasterLfo, MasterModulation,
+    MasterModulationRoute, ModulationRoute, SourceMode,
 };
 
 use crate::ui::UiState;
@@ -458,6 +458,14 @@ fn deck_package_to_project(package: &DeckPackageSlot) -> DeckPackageProject {
                 value: parameter.value,
             })
             .collect(),
+        modulation: package
+            .modulation
+            .map(|route| DeckPackageModulationRouteProject {
+                enabled: route.enabled,
+                source: route.source,
+                parameter_key: route.parameter_key,
+                amount: route.amount,
+            }),
     }
 }
 
@@ -474,6 +482,12 @@ fn deck_package_from_project(package: &DeckPackageProject) -> DeckPackageSlot {
                 value: parameter.value,
             })
             .collect(),
+        modulation: package.modulation.map(|route| DeckPackageModulationRoute {
+            enabled: route.enabled,
+            source: route.source,
+            parameter_key: route.parameter_key,
+            amount: route.amount,
+        }),
     };
     slot.sanitize();
     slot
@@ -932,6 +946,13 @@ fn target_to_project(target: ControlTarget) -> ControlTargetProject {
             route,
             parameter,
         },
+        ControlTarget::DeckEffectParameter {
+            deck,
+            parameter_key,
+        } => ControlTargetProject::DeckEffectParameter {
+            deck,
+            parameter_key,
+        },
         ControlTarget::MasterEffectParameter {
             slot,
             parameter_key,
@@ -984,6 +1005,13 @@ fn target_from_project(target: ControlTargetProject) -> ControlTarget {
             route,
             parameter,
         },
+        ControlTargetProject::DeckEffectParameter {
+            deck,
+            parameter_key,
+        } => ControlTarget::DeckEffectParameter {
+            deck,
+            parameter_key,
+        },
         ControlTargetProject::MasterEffectParameter {
             slot,
             parameter_key,
@@ -1028,6 +1056,15 @@ mod tests {
         binding.output_range = [-1.0, 1.0];
         binding.soft_takeover = true;
         assert_eq!(midi_from_project(&midi_to_project(&binding)), binding);
+    }
+
+    #[test]
+    fn deck_package_midi_target_round_trips_by_stable_parameter_key() {
+        let target = ControlTarget::DeckEffectParameter {
+            deck: 2,
+            parameter_key: oneiroi_core::effect_parameter_key("recursive-2d", "iterations"),
+        };
+        assert_eq!(target_from_project(target_to_project(target)), target);
     }
 
     #[test]
@@ -1122,7 +1159,7 @@ mod tests {
 
     #[test]
     fn deck_package_conversion_preserves_selection_and_named_parameters() {
-        let package = DeckPackageSlot {
+        let mut package = DeckPackageSlot {
             bypassed: true,
             mix: 0.4,
             package_id: "recursive-2d".to_owned(),
@@ -1130,6 +1167,13 @@ mod tests {
                 id: "iterations".to_owned(),
                 value: 7.0,
             }],
+            ..DeckPackageSlot::default()
+        };
+        package.modulation[0] = DeckPackageModulationRoute {
+            enabled: true,
+            source: 4,
+            parameter_key: oneiroi_core::effect_parameter_key("recursive-2d", "iterations"),
+            amount: -0.75,
         };
         assert_eq!(
             deck_package_from_project(&deck_package_to_project(&package)),

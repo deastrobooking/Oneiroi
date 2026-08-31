@@ -10,6 +10,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use bytemuck::{Pod, Zeroable};
+use oneiroi_core::effect_parameter_key;
 
 use crate::{
     EffectPackageAbi, EffectPackageTarget, EffectParameterSchema, EffectParameterValue,
@@ -17,6 +18,26 @@ use crate::{
 };
 
 pub const DECK_EFFECT_PARAMETER_CAPACITY: usize = 32;
+pub const DECK_PACKAGE_MODULATION_ROUTES: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DeckPackageModulationRoute {
+    pub enabled: bool,
+    pub source: u8,
+    pub parameter_key: u64,
+    pub amount: f32,
+}
+
+impl Default for DeckPackageModulationRoute {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            source: 0,
+            parameter_key: 0,
+            amount: 0.5,
+        }
+    }
+}
 
 /// One stateless package stage placed after a deck's built-in processing and
 /// before its layer blend.
@@ -26,6 +47,7 @@ pub struct DeckPackageSlot {
     pub mix: f32,
     pub package_id: String,
     pub parameters: Vec<EffectParameterValue>,
+    pub modulation: [DeckPackageModulationRoute; DECK_PACKAGE_MODULATION_ROUTES],
 }
 
 impl Default for DeckPackageSlot {
@@ -35,6 +57,7 @@ impl Default for DeckPackageSlot {
             mix: 1.0,
             package_id: String::new(),
             parameters: Vec::new(),
+            modulation: [DeckPackageModulationRoute::default(); DECK_PACKAGE_MODULATION_ROUTES],
         }
     }
 }
@@ -54,6 +77,43 @@ impl DeckPackageSlot {
             !parameter.id.is_empty() && parameter.id.len() <= 64 && parameter.value.is_finite()
         });
         self.parameters.truncate(DECK_EFFECT_PARAMETER_CAPACITY);
+        for route in &mut self.modulation {
+            if route.source >= 10 || route.parameter_key == 0 {
+                route.enabled = false;
+            }
+            route.amount = if route.amount.is_finite() {
+                route.amount.clamp(-1.0, 1.0)
+            } else {
+                0.5
+            };
+        }
+    }
+
+    pub fn modulated(&self, sources: [f32; 10], schema: &[EffectParameterSchema]) -> Self {
+        let mut slot = self.clone();
+        for parameter in schema {
+            let key = effect_parameter_key(&slot.package_id, &parameter.id);
+            let modulation = slot
+                .modulation
+                .iter()
+                .filter(|route| route.enabled && route.parameter_key == key)
+                .filter_map(|route| {
+                    sources
+                        .get(usize::from(route.source))
+                        .map(|source| source * route.amount.clamp(-1.0, 1.0))
+                })
+                .sum::<f32>();
+            if let Some(value) = slot
+                .parameters
+                .iter_mut()
+                .find(|value| value.id == parameter.id)
+            {
+                value.value = (value.value
+                    + modulation * (parameter.maximum - parameter.minimum) * 0.5)
+                    .clamp(parameter.minimum, parameter.maximum);
+            }
+        }
+        slot
     }
 }
 
@@ -354,6 +414,7 @@ impl DeckEffectRuntime {
         source_extent: [u32; 2],
         composition_extent: [u32; 2],
         time_seconds: f32,
+        timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) -> bool {
         let Some(registered) = self.pipelines.get(&slot.package_id) else {
             return false;
@@ -414,7 +475,7 @@ impl DeckEffectRuntime {
                 },
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes,
             occlusion_query_set: None,
             multiview_mask: None,
         });
@@ -612,5 +673,40 @@ mod tests {
             192
         );
         assert_eq!(size_of::<DeckEffectGlobals>(), 208);
+    }
+
+    #[test]
+    fn package_modulation_uses_stable_keys_and_declared_ranges() {
+        let schema = EffectParameterSchema {
+            id: "amount".to_owned(),
+            label: "Amount".to_owned(),
+            minimum: -2.0,
+            maximum: 2.0,
+            default: 0.0,
+            group: String::new(),
+            control: crate::EffectParameterControl::Slider,
+            options: Vec::new(),
+        };
+        let mut slot = DeckPackageSlot {
+            package_id: "test-package".to_owned(),
+            parameters: vec![EffectParameterValue {
+                id: "amount".to_owned(),
+                value: 0.25,
+            }],
+            ..DeckPackageSlot::default()
+        };
+        slot.modulation[0] = DeckPackageModulationRoute {
+            enabled: true,
+            source: 3,
+            parameter_key: effect_parameter_key("test-package", "amount"),
+            amount: 0.5,
+        };
+        let mut sources = [0.0; 10];
+        sources[3] = 1.0;
+
+        let modulated = slot.modulated(sources, &[schema]);
+
+        assert_eq!(modulated.parameters[0].value, 1.25);
+        assert_eq!(slot.parameters[0].value, 0.25);
     }
 }

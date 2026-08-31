@@ -458,6 +458,10 @@ pub(crate) fn feedback_for_control(update: ControlUpdate) -> Option<(String, f32
             format!("/vjx/deck/{}/clip/{}/launch", deck + 1, slot + 1)
         }
         ControlTarget::SceneLaunch(slot) => format!("/vjx/scene/{}/launch", slot + 1),
+        ControlTarget::DeckEffectParameter {
+            deck,
+            parameter_key,
+        } => format!("/vjx/deck/{}/package/{parameter_key:016x}", deck + 1),
         ControlTarget::TapTempo
         | ControlTarget::EffectParameter { .. }
         | ControlTarget::LfoParameter { .. }
@@ -487,6 +491,15 @@ fn map_indexed_route(address: &str, value: Option<&OscArgument>) -> Option<OscAc
             ControlTarget::ClipLaunch {
                 deck,
                 slot: one_based_index(slot, 8)?,
+            },
+            value,
+        ),
+        ["package", parameter_key] => continuous(
+            ControlTarget::DeckEffectParameter {
+                deck,
+                parameter_key: u64::from_str_radix(parameter_key, 16)
+                    .ok()
+                    .filter(|key| *key != 0)?,
             },
             value,
         ),
@@ -573,6 +586,28 @@ mod tests {
                 target: ControlTarget::SceneLaunch(0),
                 value: 1.0,
             }))
+        );
+    }
+
+    #[test]
+    fn maps_and_feeds_back_stable_deck_package_parameters() {
+        let key = oneiroi_core::effect_parameter_key("recursive-2d", "iterations");
+        let message = OscMessage {
+            address: format!("/vjx/deck/3/package/{key:016x}"),
+            arguments: vec![OscArgument::Float(0.75)],
+            timetag: None,
+        };
+        let update = ControlUpdate {
+            target: ControlTarget::DeckEffectParameter {
+                deck: 2,
+                parameter_key: key,
+            },
+            value: 0.75,
+        };
+        assert_eq!(map_message(&message), Some(OscAction::Control(update)));
+        assert_eq!(
+            feedback_for_control(update),
+            Some((message.address, update.value))
         );
     }
 
