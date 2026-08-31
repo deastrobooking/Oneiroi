@@ -78,6 +78,7 @@ struct State {
     gpu: Gpu,
     program: ProgramTarget,
     master_effect_processor: MasterEffectProcessor,
+    effect_registry_worker: effects::EffectRegistryWorker,
     operator_presenter: ProgramPresenter,
     compositor: FourDeckCompositor,
     egui_state: egui_winit::State,
@@ -455,6 +456,7 @@ impl State {
             effects::effect_registry_status(&effect_registry, &effect_roots);
         (ui.effect_packages, ui.deck_effect_packages) =
             effects::partition_effect_packages(effect_registry.effects);
+        let effect_registry_worker = effects::EffectRegistryWorker::spawn();
         if let Some(id) = preferred_display_id {
             ui.output_display_id = id;
         }
@@ -621,6 +623,7 @@ impl State {
             gpu,
             program,
             master_effect_processor,
+            effect_registry_worker,
             operator_presenter,
             compositor,
             egui_state,
@@ -711,6 +714,7 @@ impl State {
     }
 
     fn render(&mut self) {
+        self.poll_effect_registry_refresh();
         if self.master_effect_processor.poll_effect_reload() {
             self.ui.effect_reload_status = self.master_effect_processor.reload_status().to_owned();
         }

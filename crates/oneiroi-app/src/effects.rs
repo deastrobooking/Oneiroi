@@ -2,6 +2,8 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::{self, JoinHandle};
 
 use oneiroi_render::{
     EffectDescriptor, EffectPackageTarget, EffectRegistry, discover_effect_packages,
@@ -10,6 +12,114 @@ use oneiroi_render::{
 use super::State;
 
 const EFFECT_PATH_ENV: &str = "ONEIROI_EFFECT_PATH";
+
+struct EffectRegistryRequest {
+    generation: u64,
+    roots: Vec<PathBuf>,
+    previous: Vec<EffectDescriptor>,
+}
+
+struct EffectRegistryResult {
+    generation: u64,
+    roots: Vec<PathBuf>,
+    registry: EffectRegistry,
+}
+
+#[derive(Default)]
+struct EffectRegistryRequestState {
+    pending: Option<EffectRegistryRequest>,
+    shutdown: bool,
+}
+
+/// One bounded, latest-wins registry scan worker. Manual refresh replaces any
+/// request that has not started yet, and the presentation thread only accepts
+/// a result matching the newest requested generation.
+pub(crate) struct EffectRegistryWorker {
+    request: Arc<(Mutex<EffectRegistryRequestState>, Condvar)>,
+    result: Arc<Mutex<Option<EffectRegistryResult>>>,
+    generation: u64,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl EffectRegistryWorker {
+    pub(crate) fn spawn() -> Self {
+        let request = Arc::new((
+            Mutex::new(EffectRegistryRequestState::default()),
+            Condvar::new(),
+        ));
+        let result = Arc::new(Mutex::new(None));
+        let worker_request = Arc::clone(&request);
+        let worker_result = Arc::clone(&result);
+        let thread = thread::Builder::new()
+            .name("oneiroi-effect-registry".to_owned())
+            .spawn(move || effect_registry_worker(worker_request, worker_result))
+            .expect("spawn effect registry worker");
+        Self {
+            request,
+            result,
+            generation: 0,
+            thread: Some(thread),
+        }
+    }
+
+    pub(crate) fn request(&mut self, roots: Vec<PathBuf>, previous: Vec<EffectDescriptor>) -> u64 {
+        self.generation = self.generation.wrapping_add(1).max(1);
+        let (slot, ready) = &*self.request;
+        slot.lock().expect("effect registry request lock").pending = Some(EffectRegistryRequest {
+            generation: self.generation,
+            roots,
+            previous,
+        });
+        ready.notify_one();
+        self.generation
+    }
+
+    pub(crate) fn poll(&self) -> Option<(Vec<PathBuf>, EffectRegistry)> {
+        let result = self
+            .result
+            .lock()
+            .expect("effect registry result lock")
+            .take()?;
+        (result.generation == self.generation).then_some((result.roots, result.registry))
+    }
+}
+
+impl Drop for EffectRegistryWorker {
+    fn drop(&mut self) {
+        let (state, ready) = &*self.request;
+        state.lock().expect("effect registry request lock").shutdown = true;
+        ready.notify_one();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn effect_registry_worker(
+    request: Arc<(Mutex<EffectRegistryRequestState>, Condvar)>,
+    result: Arc<Mutex<Option<EffectRegistryResult>>>,
+) {
+    loop {
+        let request = {
+            let (state, ready) = &*request;
+            let mut state = state.lock().expect("effect registry request lock");
+            while state.pending.is_none() && !state.shutdown {
+                state = ready.wait(state).expect("effect registry request wait");
+            }
+            if state.shutdown {
+                return;
+            }
+            state.pending.take().expect("pending request")
+        };
+        let mut registry = discover_effect_registry(&request.roots);
+        retain_last_known_effects(&mut registry, &request.previous, &request.roots);
+        *result.lock().expect("effect registry result lock") = Some(EffectRegistryResult {
+            generation: request.generation,
+            roots: request.roots,
+            registry,
+        });
+    }
+}
 
 /// Resolve the shipped effect directory without relying on the process launch
 /// directory. A macOS app bundle keeps resources under `Contents/Resources`;
@@ -269,10 +379,16 @@ impl State {
 
     pub(crate) fn refresh_effect_registry(&mut self) {
         let roots = effect_resource_roots(&self.workspace);
-        let mut registry = discover_effect_registry(&roots);
         let mut previous = self.ui.effect_packages.clone();
         previous.extend(self.ui.deck_effect_packages.iter().cloned());
-        retain_last_known_effects(&mut registry, &previous, &roots);
+        let generation = self.effect_registry_worker.request(roots, previous);
+        self.ui.effect_registry_status = format!("Refreshing effect registry (scan {generation})");
+    }
+
+    pub(crate) fn poll_effect_registry_refresh(&mut self) {
+        let Some((roots, registry)) = self.effect_registry_worker.poll() else {
+            return;
+        };
         self.ui.effect_registry_status = effect_registry_status(&registry, &roots);
         (self.ui.effect_packages, self.ui.deck_effect_packages) =
             partition_effect_packages(registry.effects);
@@ -283,6 +399,36 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registry_worker_publishes_only_the_newest_requested_generation() {
+        let bundled_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("effects");
+        let missing_root = std::env::temp_dir().join(format!(
+            "oneiroi-missing-effect-root-{}",
+            std::process::id()
+        ));
+        let mut worker = EffectRegistryWorker::spawn();
+        worker.request(vec![missing_root], Vec::new());
+        worker.request(vec![bundled_root.clone()], Vec::new());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let (roots, registry) = loop {
+            if let Some(result) = worker.poll() {
+                break result;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for the newest registry scan"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+
+        assert_eq!(roots, vec![bundled_root]);
+        assert!(!registry.effects.is_empty());
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+    }
 
     #[test]
     fn bundled_effects_do_not_depend_on_the_launch_directory() {
