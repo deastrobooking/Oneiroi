@@ -4,6 +4,8 @@ Four-deck live-performance video mixer with GPU-native HAP playback and
 FFmpeg fallback, linear-light composition, deterministic show recovery and a
 validated WGSL custom effect-package runtime.
 
+Repository: <https://github.com/deastrobooking/VIRTUAL>
+
 
 ## At a glance
 

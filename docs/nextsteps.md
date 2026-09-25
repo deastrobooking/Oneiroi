@@ -2,11 +2,11 @@ Updated todo list
 
 Searched for files matching `**/crates/virtual-media/src/decode_ffmpeg.rs`, 1 match
 
-Read [](file:///Users/home/Desktop/ECOSYSTEM/VIRTUAL/crates/virtual-media/src/decode_ffmpeg.rs#1-1), lines 1 to 80
+Read [`crates/virtual-media/src/decode_ffmpeg.rs`](../crates/virtual-media/src/decode_ffmpeg.rs), lines 1 to 80
 
 Searched for text `ffmpeg::format::input` (`**/crates/virtual-media/src/decode_ffmpeg.rs`), 2 results
 
-Read [](file:///Users/home/Desktop/ECOSYSTEM/VIRTUAL/crates/virtual-media/src/decode_ffmpeg.rs#130-130), lines 130 to 220
+Read [`crates/virtual-media/src/decode_ffmpeg.rs`](../crates/virtual-media/src/decode_ffmpeg.rs), lines 130 to 220
 
 Searched for files matching `**/crates/virtual-app/src/media.rs`, 1 match
 
@@ -111,7 +111,7 @@ Created 3 todos
 
 Updated todo list
 
-Read [](file:///Users/home/Desktop/ECOSYSTEM/VIRTUAL/effects/chromatic-split/effect.json)
+Read [`effects/chromatic-split/effect.json`](../effects/chromatic-split/effect.json)
 
 Here is a curated list of high-impact visual effects tailored specifically for VIRTUAL's architecture (supporting 1-pass or 2-pass fragment shaders, temporal history buffers, and modulation routing).
 
