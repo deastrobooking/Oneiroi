@@ -1,0 +1,124 @@
+{
+  "format": "oneiroi-effect",
+  "version": 2,
+  "id": "kaleidoscope",
+  "name": "Kaleidoscope",
+  "description": "Radial mirrored wedges with adjustable symmetry, spiral twist and a movable center.",
+  "role": "effect",
+  "targets": [
+    "master",
+    "deck"
+  ],
+  "abi": "deck-v1",
+  "shader": "kaleidoscope.wgsl",
+  "parameters": [
+    {
+      "id": "segments",
+      "label": "Segments",
+      "minimum": 2,
+      "maximum": 24,
+      "default": 6,
+      "group": "Geometry"
+    },
+    {
+      "id": "rotation",
+      "label": "Rotation",
+      "minimum": -3.141593,
+      "maximum": 3.141593,
+      "default": 0,
+      "group": "Geometry"
+    },
+    {
+      "id": "zoom",
+      "label": "Zoom",
+      "minimum": 0.25,
+      "maximum": 4,
+      "default": 1,
+      "group": "Geometry"
+    },
+    {
+      "id": "source-angle",
+      "label": "Source angle",
+      "minimum": -3.141593,
+      "maximum": 3.141593,
+      "default": 0.4,
+      "group": "Geometry"
+    },
+    {
+      "id": "center-x",
+      "label": "Center X",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "group": "Position"
+    },
+    {
+      "id": "center-y",
+      "label": "Center Y",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "group": "Position"
+    },
+    {
+      "id": "spin",
+      "label": "Spin speed",
+      "minimum": -2,
+      "maximum": 2,
+      "default": 0,
+      "group": "Motion"
+    },
+    {
+      "id": "twist",
+      "label": "Spiral twist",
+      "minimum": -8,
+      "maximum": 8,
+      "default": 0,
+      "group": "Geometry"
+    }
+  ],
+  "presets": [
+    {
+      "id": "sixfold",
+      "label": "Sixfold",
+      "values": {
+        "segments": 6,
+        "rotation": 0,
+        "zoom": 1,
+        "source-angle": 0.4,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "spin": 0,
+        "twist": 0
+      }
+    },
+    {
+      "id": "stained-glass",
+      "label": "Stained glass",
+      "values": {
+        "segments": 12,
+        "rotation": 0.26,
+        "zoom": 0.7,
+        "source-angle": 1.2,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "spin": 0,
+        "twist": 0
+      }
+    },
+    {
+      "id": "spiral-bloom",
+      "label": "Spiral bloom",
+      "values": {
+        "segments": 8,
+        "rotation": 0,
+        "zoom": 0.8,
+        "source-angle": 0.4,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "spin": 0.15,
+        "twist": 4
+      }
+    }
+  ]
+}

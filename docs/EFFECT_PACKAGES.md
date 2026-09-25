@@ -41,6 +41,9 @@ again, changes identity, or is removed.
 | Thermal Contours | Deck or master | 1 | Iron/Aurora/Monochrome palettes, heat contrast, contours, edge detail; Iron heat, Aurora map, Topography |
 | Gravitational Lens | Deck or master | 1 | Mass, radius, vortex, falloff, movable center, pulse; Singularity, Liquid orbit, Repulsor |
 | Anamorphic Flare | Master | 2 | Soft highlight extraction, horizontal streaks, tint and dispersion; Cinema blue, Golden hour, Laser streaks |
+| Kaleidoscope | Deck or master | 1 | 2–24 radial segments, rotation, zoom, source angle, center, spin, spiral twist; Sixfold, Stained glass, Spiral bloom |
+| Mirror Symmetry | Deck or master | 1 | Left/right, top/bottom or four-way reflection, rotated axis, source side, center, zoom, spin; Bilateral, Four-way, Diagonal |
+| Mirror Mosaic | Deck or master | 1 | 1–12 columns/rows, rotated grid, source zoom/center, horizontal/vertical drift; Hall of mirrors, Diamond glass, Moving grid |
 
 Choose a package in the selected deck's package slot or either master slot,
 then choose a named look. The generated parameter controls support the existing
@@ -54,11 +57,25 @@ gather, so measure its cost on the intended show machine. All kernels have fixed
 work bounds. Coordinates in the existing polynomial recursion packages are now
 bounded before the next iteration to prevent overflow at extreme settings.
 
+Kaleidoscope, Mirror Symmetry and Mirror Mosaic reflect coordinates at image
+boundaries, avoiding stretched borders when zoomed out or rotated. They transform
+RGBA together, preserving source transparency. Radial geometry and rotation are
+aspect-correct. Segment, row and column sliders round to whole numbers. Rotation,
+source angle and twist use radians; spin uses radians per second and mosaic drift
+uses tiles per second. Zero spin/drift holds a static look. Positive source side
+samples the right/bottom half at zero axis rotation; Negative samples left/top.
+Kaleidoscope and Mirror Symmetry move the reflection center with Center X/Y;
+Mirror Mosaic's Source center moves the sampled region within every tile.
+Each uses two texture samples per pixel, including the dry sample, with no loops
+or history buffers.
+
 A reproducible GPU preview tool renders a synthetic chart through a bundled
 master package (use `none` for the original):
 
 ```sh
 cargo run -p oneiroi-render --example effect_preview -- analog-crt > preview.ppm
+# Optional second argument selects a named preset:
+cargo run -p oneiroi-render --example effect_preview -- kaleidoscope spiral-bloom > spiral.ppm
 ```
 
 ## Manifest

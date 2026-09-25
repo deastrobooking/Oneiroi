@@ -27,6 +27,9 @@ already work. This pass adds visual variety without changing the runtime ABI.
 | Thermal Contours | Deck and master | Iron heat, Aurora map, Topography |
 | Gravitational Lens | Deck and master | Singularity, Liquid orbit, Repulsor |
 | Anamorphic Flare | Master, two passes | Cinema blue, Golden hour, Laser streaks |
+| Kaleidoscope | Deck and master | Sixfold, Stained glass, Spiral bloom |
+| Mirror Symmetry | Deck and master | Bilateral, Four-way, Diagonal |
+| Mirror Mosaic | Deck and master | Hall of mirrors, Diamond glass, Moving grid |
 
 Each integrates with existing dry/wet, bypass, named parameter persistence,
 MIDI Learn and modulation. Refresh the package registry or restart the app to
@@ -35,10 +38,13 @@ for controls and the preview command.
 
 ## Validation
 
-- Workspace: 290 tests passed, zero failures, one separately opt-in decoder soak.
+- Workspace: 291 tests passed, zero failures, one separately opt-in decoder soak.
 - Strict Clippy for all targets/features, formatting and release build passed.
 - GPU readback covers the new deck presets, transparent input, bypass and dry
   identity; master tests exercise the new one/two-pass packages and presets.
+- Mirror GPU readback verifies reflected source pixels, both axes, source-side
+  selection and fourfold radial symmetry. Master readback verifies constant-field
+  coverage at all presets and parameter extremes. All nine looks were previewed.
 - Existing recursive packages are exercised at extreme settings with opaque
   input to check coverage after escaping polynomial iterations.
 - The `effect_preview` example renders a repeatable synthetic chart through

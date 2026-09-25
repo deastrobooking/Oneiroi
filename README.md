@@ -106,6 +106,8 @@ The current source tree includes:
 - Analog CRT, Thermal Contours and Gravitational Lens packages for deck or
   master placement, plus a two-pass Anamorphic Flare master effect, each with
   three named looks.
+- Kaleidoscope, Mirror Symmetry and Mirror Mosaic for deck or master placement,
+  with nine presets, movable centers, rotation, zoom and animated spin/drift.
 - Bundled dual-placement algorithmic effects for recursive 2D transforms, volumetric
   3D fractal fields and projected 4D–6D recursion, with grouped controls and
   three one-click looks per package. They execute in a master slot or in the

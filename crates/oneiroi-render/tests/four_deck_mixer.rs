@@ -1120,7 +1120,14 @@ fn new_deck_packages_render_presets_and_preserve_bypass_and_transparency() {
         eprintln!("no GPU adapter; skipping");
         return;
     };
-    let ids = ["analog-crt", "thermal-contours", "gravitational-lens"];
+    let ids = [
+        "analog-crt",
+        "thermal-contours",
+        "gravitational-lens",
+        "kaleidoscope",
+        "mirror-symmetry",
+        "mirror-mosaic",
+    ];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects");
     let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
     mixer.set_output_extent(&device, [SIZE, SIZE]);
@@ -1224,5 +1231,112 @@ fn new_deck_packages_render_presets_and_preserve_bypass_and_transparency() {
             transparent,
             "{id} leaks transparent color"
         );
+    }
+}
+
+#[test]
+fn mirror_packages_reflect_the_requested_axes_and_source_side() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let ids = ["mirror-symmetry", "kaleidoscope", "mirror-mosaic"];
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects");
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer.set_output_extent(&device, [SIZE, SIZE]);
+    mixer.upload(&device, &queue, 0, &pattern()).unwrap();
+    mixer.watch_deck_effect_manifests(
+        ids.iter()
+            .map(|id| root.join(id).join("effect.json"))
+            .collect(),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while ids.iter().any(|id| !mixer.deck_effect_loaded(id)) && std::time::Instant::now() < deadline
+    {
+        mixer.poll_deck_effect_reload();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let baseline = render(&device, &queue, &mut mixer, MixerParams::default());
+    let pixel = |image: &[u8], x: u32, y: u32| -> [u8; 4] {
+        let offset = (y * ROW_BYTES + x * 4) as usize;
+        image[offset..offset + 4].try_into().unwrap()
+    };
+    let near = |a: [u8; 4], b: [u8; 4], context: &str| {
+        assert!(
+            a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 2),
+            "{context}: {a:?} != {b:?}"
+        );
+    };
+    // Compare actual image pairs, not just successful shader compilation.
+    for (id, mode, side, horizontal, vertical) in [
+        ("mirror-symmetry", 0.0, 0.0, true, false),
+        ("mirror-symmetry", 0.0, 1.0, true, false),
+        ("mirror-symmetry", 1.0, 0.0, false, true),
+        ("mirror-symmetry", 2.0, 0.0, true, true),
+        ("kaleidoscope", 0.0, 0.0, true, true),
+        ("mirror-mosaic", 0.0, 0.0, true, true),
+    ] {
+        assert!(
+            mixer.deck_effect_loaded(id),
+            "{id}: {}",
+            mixer.deck_effect_reload_status()
+        );
+        let package =
+            oneiroi_render::load_effect_package(root.join(id).join("effect.json")).unwrap();
+        let mut packages = std::array::from_fn(|_| DeckPackageSlot::default());
+        packages[0].package_id = id.to_owned();
+        packages[0].parameters = package
+            .manifest
+            .parameters
+            .iter()
+            .map(|p| EffectParameterValue {
+                id: p.id.clone(),
+                value: match p.id.as_str() {
+                    "mode" => mode,
+                    "side" => side,
+                    "segments" => 4.0,
+                    _ => p.default,
+                },
+            })
+            .collect();
+        let result = render_with_packages(
+            &device,
+            &queue,
+            &mut mixer,
+            MixerParams::default(),
+            &packages,
+        );
+        assert_ne!(result, baseline, "{id} did not transform input");
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let actual = pixel(&result, x, y);
+                if horizontal {
+                    near(actual, pixel(&result, SIZE - 1 - x, y), id);
+                }
+                if vertical {
+                    near(actual, pixel(&result, x, SIZE - 1 - y), id);
+                }
+                if id == "mirror-symmetry" {
+                    let source_x = if horizontal {
+                        if side < 0.5 {
+                            x.max(SIZE - 1 - x)
+                        } else {
+                            x.min(SIZE - 1 - x)
+                        }
+                    } else {
+                        x
+                    };
+                    let source_y = if vertical { y.max(SIZE - 1 - y) } else { y };
+                    near(
+                        actual,
+                        pixel(&baseline, source_x, source_y),
+                        "reflected source pixel",
+                    );
+                }
+                if id == "kaleidoscope" {
+                    near(actual, pixel(&result, y, SIZE - 1 - x), "fourfold rotation");
+                }
+            }
+        }
     }
 }

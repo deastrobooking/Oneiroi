@@ -1,0 +1,124 @@
+{
+  "format": "oneiroi-effect",
+  "version": 2,
+  "id": "mirror-mosaic",
+  "name": "Mirror Mosaic",
+  "description": "A grid of alternating reflected video tiles with rotation, zoom and animated drift.",
+  "role": "effect",
+  "targets": [
+    "master",
+    "deck"
+  ],
+  "abi": "deck-v1",
+  "shader": "mirror_mosaic.wgsl",
+  "parameters": [
+    {
+      "id": "columns",
+      "label": "Columns",
+      "minimum": 1,
+      "maximum": 12,
+      "default": 2,
+      "group": "Geometry"
+    },
+    {
+      "id": "rows",
+      "label": "Rows",
+      "minimum": 1,
+      "maximum": 12,
+      "default": 2,
+      "group": "Geometry"
+    },
+    {
+      "id": "rotation",
+      "label": "Grid rotation",
+      "minimum": -3.141593,
+      "maximum": 3.141593,
+      "default": 0,
+      "group": "Geometry"
+    },
+    {
+      "id": "zoom",
+      "label": "Source zoom",
+      "minimum": 0.25,
+      "maximum": 4,
+      "default": 1,
+      "group": "Geometry"
+    },
+    {
+      "id": "center-x",
+      "label": "Source center X",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "group": "Position"
+    },
+    {
+      "id": "center-y",
+      "label": "Source center Y",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "group": "Position"
+    },
+    {
+      "id": "drift-x",
+      "label": "Horizontal drift",
+      "minimum": -2,
+      "maximum": 2,
+      "default": 0,
+      "group": "Motion"
+    },
+    {
+      "id": "drift-y",
+      "label": "Vertical drift",
+      "minimum": -2,
+      "maximum": 2,
+      "default": 0,
+      "group": "Motion"
+    }
+  ],
+  "presets": [
+    {
+      "id": "hall-of-mirrors",
+      "label": "Hall of mirrors",
+      "values": {
+        "columns": 2,
+        "rows": 2,
+        "rotation": 0,
+        "zoom": 1,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "drift-x": 0,
+        "drift-y": 0
+      }
+    },
+    {
+      "id": "diamond-glass",
+      "label": "Diamond glass",
+      "values": {
+        "columns": 4,
+        "rows": 4,
+        "rotation": 0.7853982,
+        "zoom": 1.4,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "drift-x": 0,
+        "drift-y": 0
+      }
+    },
+    {
+      "id": "moving-grid",
+      "label": "Moving grid",
+      "values": {
+        "columns": 6,
+        "rows": 3,
+        "rotation": 0,
+        "zoom": 1.2,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "drift-x": 0.12,
+        "drift-y": -0.08
+      }
+    }
+  ]
+}

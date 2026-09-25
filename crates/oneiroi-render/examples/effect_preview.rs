@@ -1,5 +1,6 @@
 //! Render a bundled effect over a synthetic test chart to a 512x512 PPM.
 //! `cargo run -p oneiroi-render --example effect_preview -- analog-crt > preview.ppm`
+//! An optional second argument selects a preset, e.g. `kaleidoscope spiral-bloom`.
 
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -15,6 +16,7 @@ const SIZE: u32 = 512;
 
 fn main() -> anyhow::Result<()> {
     let id = std::env::args().nth(1).unwrap_or_else(|| "none".to_owned());
+    let preset_id = std::env::args().nth(2);
     anyhow::ensure!(
         id.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
@@ -36,6 +38,17 @@ fn main() -> anyhow::Result<()> {
             .join(&id)
             .join("effect.json");
         let package = load_effect_package(&path)?;
+        let preset = preset_id
+            .as_ref()
+            .map(|id| {
+                package
+                    .manifest
+                    .presets
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown preset: {id}"))
+            })
+            .transpose()?;
         processor.watch_effect_manifests(vec![path]);
         let deadline = Instant::now() + Duration::from_secs(5);
         while !processor.custom_effect_loaded(&id) && Instant::now() < deadline {
@@ -56,7 +69,10 @@ fn main() -> anyhow::Result<()> {
                 .iter()
                 .map(|p| EffectParameterValue {
                     id: p.id.clone(),
-                    value: p.default,
+                    value: preset
+                        .and_then(|look| look.values.get(&p.id))
+                        .copied()
+                        .unwrap_or(p.default),
                 })
                 .collect(),
             ..MasterEffectSlot::default()

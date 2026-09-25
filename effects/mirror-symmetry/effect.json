@@ -1,0 +1,139 @@
+{
+  "format": "oneiroi-effect",
+  "version": 2,
+  "id": "mirror-symmetry",
+  "name": "Mirror Symmetry",
+  "description": "Bilateral or four-way reflections with a rotatable axis, source side and movable center.",
+  "role": "effect",
+  "targets": [
+    "master",
+    "deck"
+  ],
+  "abi": "deck-v1",
+  "shader": "mirror_symmetry.wgsl",
+  "parameters": [
+    {
+      "id": "mode",
+      "label": "Symmetry",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0,
+      "group": "Geometry",
+      "control": "choice",
+      "options": [
+        {
+          "label": "Left / right",
+          "value": 0
+        },
+        {
+          "label": "Top / bottom",
+          "value": 1
+        },
+        {
+          "label": "Four-way",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "id": "rotation",
+      "label": "Axis rotation",
+      "minimum": -3.141593,
+      "maximum": 3.141593,
+      "default": 0,
+      "group": "Geometry"
+    },
+    {
+      "id": "zoom",
+      "label": "Zoom",
+      "minimum": 0.25,
+      "maximum": 4,
+      "default": 1,
+      "group": "Geometry"
+    },
+    {
+      "id": "side",
+      "label": "Source side",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0,
+      "group": "Geometry",
+      "control": "choice",
+      "options": [
+        {
+          "label": "Positive",
+          "value": 0
+        },
+        {
+          "label": "Negative",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "id": "center-x",
+      "label": "Center X",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "group": "Position"
+    },
+    {
+      "id": "center-y",
+      "label": "Center Y",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "group": "Position"
+    },
+    {
+      "id": "spin",
+      "label": "Axis spin",
+      "minimum": -2,
+      "maximum": 2,
+      "default": 0,
+      "group": "Motion"
+    }
+  ],
+  "presets": [
+    {
+      "id": "bilateral",
+      "label": "Bilateral",
+      "values": {
+        "mode": 0,
+        "rotation": 0,
+        "zoom": 1,
+        "side": 0,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "spin": 0
+      }
+    },
+    {
+      "id": "four-way",
+      "label": "Four-way",
+      "values": {
+        "mode": 2,
+        "rotation": 0,
+        "zoom": 1,
+        "side": 0,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "spin": 0
+      }
+    },
+    {
+      "id": "diagonal",
+      "label": "Diagonal",
+      "values": {
+        "mode": 0,
+        "rotation": 0.7853982,
+        "zoom": 0.85,
+        "side": 1,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "spin": 0
+      }
+    }
+  ]
+}

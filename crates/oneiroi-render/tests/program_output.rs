@@ -1008,6 +1008,9 @@ fn new_master_packages_render_and_preserve_dry_identity() {
         "thermal-contours",
         "gravitational-lens",
         "anamorphic-flare",
+        "kaleidoscope",
+        "mirror-symmetry",
+        "mirror-mosaic",
     ];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects");
     let program = ProgramTarget::new(&device, [SIZE, SIZE]);
@@ -1090,9 +1093,12 @@ fn new_master_packages_render_and_preserve_dry_identity() {
             color,
             &chain,
         );
-        // A lens cannot change a constant field. CRT's corner is intentionally
-        // transparent; deck coverage and pattern behavior are checked separately.
-        if id != "gravitational-lens" {
+        // Geometric effects cannot change a constant field. CRT's corner is
+        // intentionally transparent; patterned coverage is tested on decks.
+        let mirrored = matches!(id, "kaleidoscope" | "mirror-symmetry" | "mirror-mosaic");
+        if mirrored {
+            assert_eq!(effected, baseline, "{id} changed a constant field");
+        } else if id != "gravitational-lens" {
             assert_ne!(effected, baseline, "{id} rendered identity");
         }
         if id == "anamorphic-flare" || id == "thermal-contours" {
@@ -1108,7 +1114,7 @@ fn new_master_packages_render_and_preserve_dry_identity() {
                     value: preset.values.get(&p.id).copied().unwrap_or(p.default),
                 })
                 .collect();
-            let _ = render_master_color(
+            let result = render_master_color(
                 &device,
                 &queue,
                 &program,
@@ -1117,6 +1123,41 @@ fn new_master_packages_render_and_preserve_dry_identity() {
                 color,
                 &chain,
             );
+            if mirrored {
+                assert_eq!(
+                    result, baseline,
+                    "{id}/{} changed a constant field",
+                    preset.id
+                );
+            }
+        }
+        if mirrored {
+            // Even at extreme centers, zoom, repeats and motion, the corner
+            // readback must sample the opaque source rather than empty space.
+            for maximum in [false, true] {
+                chain.slots[0].parameters = package
+                    .manifest
+                    .parameters
+                    .iter()
+                    .map(|p| EffectParameterValue {
+                        id: p.id.clone(),
+                        value: if maximum { p.maximum } else { p.minimum },
+                    })
+                    .collect();
+                assert_eq!(
+                    render_master_color(
+                        &device,
+                        &queue,
+                        &program,
+                        &mut processor,
+                        &presenter,
+                        color,
+                        &chain,
+                    ),
+                    baseline,
+                    "{id} extreme parameters (maximum={maximum})"
+                );
+            }
         }
     }
 }

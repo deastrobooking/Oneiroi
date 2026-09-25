@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Kaleidoscope and mirrors (2026-09-25)
+
+- Added Kaleidoscope, Mirror Symmetry and Mirror Mosaic to deck and master
+  package slots, with three complete presets each and existing MIDI/modulation
+  support. Controls include radial segments, bilateral/four-way reflection,
+  tile counts, rotation, zoom, centers and animated spin/drift.
+- Reflected image boundaries prevent stretched borders; the shaders preserve
+  sampled alpha and use a fixed two texture samples per pixel without history.
+- Added GPU readback checks for reflection axes, source-side selection, radial
+  symmetry, all presets, extreme parameters, transparency, dry mix and bypass.
+- The GPU preview example now accepts an optional preset ID.
+
 ### Capture inputs and effects (2026-09-25)
 
 - Added native macOS discovery of cameras and external video/muxed capture
