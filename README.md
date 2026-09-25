@@ -1,8 +1,4 @@
-# Oneiroi
-
-The word Oneiroi is pronounced oh-NY-roy.Pronunciation BreakdownOh: Sounds like the letter "O" (as in "open").NY: Sounds like the word "ny" (rhymes with my, fly, or tie).roy: Sounds like the name Roy (rhymes with boy or toy)
-
-In Greek mythology, the Oneiroi are the personified, dark-winged spirits of dreams, composed of key figures such as Morpheus, Phobetor, and Phantasos
+# VIRTUAL
 
 Four-deck live-performance video mixer with GPU-native HAP playback and
 FFmpeg fallback, linear-light composition, deterministic show recovery and a
@@ -11,7 +7,7 @@ validated WGSL custom effect-package runtime.
 
 ## At a glance
 
-| Path | What Oneiroi provides |
+| Path | What VIRTUAL provides |
 |---|---|
 | Media | Direct block-compressed HAP playback, conventional FFmpeg decode, stills and low-latency cameras |
 | Performance | Four decks, 32 clip slots, eight scenes, A/B buses, 35 blend modes, MIDI (including beat-clock sync in and out), OSC and audio/beat modulation |
@@ -56,7 +52,7 @@ The current source tree includes:
   vertical flip, four-edge crop, and Fit/Fill/Stretch source modes, with
   transparent pixels outside transformed layer bounds.
 - Thirty-five alpha-correct per-deck blend modes inside each bus, grouped as
-  Standard, Contrast, Component and Oneiroi in the picker. The separable and
+  Standard, Contrast, Component and VIRTUAL in the picker. The separable and
   non-separable modes follow W3C Compositing and Blending Level 1, so Color
   Dodge, Soft Light, Vivid Light, Hue, Color, Luminosity and the rest match
   what a compositing tool does; every mode has a hand-derived GPU readback
@@ -114,7 +110,7 @@ The current source tree includes:
   stateless package slot on any deck.
 - Launch-directory-independent effect discovery from development, adjacent
   release and macOS bundle resources, plus the per-user effect directory and
-  optional `ONEIROI_EFFECT_PATH` roots.
+  optional `VIRTUAL_EFFECT_PATH` roots.
 - Three master LFOs and eight stable-ID custom-parameter routes with audio,
   beat and bar sources, plus generated per-parameter MIDI Learn/Clear controls.
 - Declarative one- or two-pass custom package sequences compiled and installed
@@ -163,7 +159,7 @@ The current source tree includes:
 - Internal 20–400 BPM clock with immediate, next-beat and next-bar launch
   quantization, preserving musical phase across tempo changes.
 - Aggregate dropped, repeated and late-frame monitoring in the operator UI.
-- Versioned `.oneiroi` JSON projects containing all 32 media paths, active and
+- Versioned `.virtual` JSON projects containing all 32 media paths, active and
   selected clips, per-clip playback settings, mixer/transport/effect state,
   tempo settings and MIDI maps.
 - Atomic Save/Save As-style path workflow, `Cmd/Ctrl+S`, bounded background
@@ -229,7 +225,7 @@ The current source tree includes:
 
 ## Shader system direction
 
-Oneiroi uses WGSL compiled through Naga and `wgpu`. `master-v1` provides one or
+VIRTUAL uses WGSL compiled through Naga and `wgpu`. `master-v1` provides one or
 two fragment passes and optional fixed history per master slot. Stateless,
 one-pass `deck-v1` packages run after a deck's built-ins and before its layer
 blend; dual-placement packages can run in either runtime. Watched changes compile away
@@ -254,11 +250,11 @@ resources, temporal deck effects and multi-pass deck packages have not landed.
 ```sh
 cargo run          # the app; select a deck and drop movies
 cargo run -- a.mp4 b.mov c.mkv d.webm  # preload decks A-D
-cargo run -- show.oneiroi              # open and restore a project
-ONEIROI_EFFECT_PATH=/path/to/effects cargo run  # add package roots
+cargo run -- show.virtual              # open and restore a project
+VIRTUAL_EFFECT_PATH=/path/to/effects cargo run  # add package roots
 cargo test         # includes a headless GPU readback test
-cargo run -p oneiroi-media --example probe_movie -- footage.mp4
-cargo run -p oneiroi-render --example dump_frame > frame.raw \
+cargo run -p virtual-media --example probe_movie -- footage.mp4
+cargo run -p virtual-render --example dump_frame > frame.raw \
   && ffmpeg -f rawvideo -pix_fmt rgba -s 512x512 -i frame.raw -y frame.png
 ```
 
@@ -290,7 +286,7 @@ and NV12 are available when the device requires a specific format.
 This path supports capture hardware exposed to macOS as AVFoundation video
 inputs. Cards requiring a vendor-only SDK are not integrated. Match the incoming
 HDMI/SDI signal and the card's supported mode; there is no universal connector
-switch. Audio is selected separately. Grant macOS camera access to Oneiroi (or
+switch. Audio is selected separately. Grant macOS camera access to VIRTUAL (or
 Terminal during development). Use **Manual input / custom size** for a device
 name/index or a non-preset resolution. See [video inputs](docs/VIDEO_INPUTS.md)
 for setup and troubleshooting.
@@ -313,15 +309,15 @@ for setup and troubleshooting.
 
 | Crate | Owns |
 |---|---|
-| `oneiroi-core` | Clock, parameters, modulation, scene graph. No GPU, no I/O — testable headless. |
-| `oneiroi-graph` | Typed node contracts, validation, plan compilation, transient resource scheduling and graph transactions. |
-| `oneiroi-hap-sys` | Pinned Vidvox HAP C reference source and raw bindings. |
-| `oneiroi-hap` | Bounded safe HAP decode to GPU-native BC planes. |
-| `oneiroi-media` | Demux, codec dispatch, frame queues and scheduling. |
-| `oneiroi-render` | wgpu device, surface, render passes. Knows nothing about winit or egui. |
-| `oneiroi-io` | Versioned project persistence plus bounded native MIDI and audio input adapters. |
-| `oneiroi-session` | Event-sourced commands, state checkpoints, replay, branches and performance takes. |
-| `oneiroi-app` | Windowing, UI, wiring. |
+| `virtual-core` | Clock, parameters, modulation, scene graph. No GPU, no I/O — testable headless. |
+| `virtual-graph` | Typed node contracts, validation, plan compilation, transient resource scheduling and graph transactions. |
+| `virtual-hap-sys` | Pinned Vidvox HAP C reference source and raw bindings. |
+| `virtual-hap` | Bounded safe HAP decode to GPU-native BC planes. |
+| `virtual-media` | Demux, codec dispatch, frame queues and scheduling. |
+| `virtual-render` | wgpu device, surface, render passes. Knows nothing about winit or egui. |
+| `virtual-io` | Versioned project persistence plus bounded native MIDI and audio input adapters. |
+| `virtual-session` | Event-sourced commands, state checkpoints, replay, branches and performance takes. |
+| `virtual-app` | Windowing, UI, wiring. |
 
 ## Decisions already locked in
 
@@ -341,6 +337,6 @@ clips run at 24/25/30fps.
 ## Not decided yet
 
 - Ableton Link is GPLv2+ or a proprietary licence obtained from Ableton. Settle
-  this before `oneiroi-io` depends on it.
+  this before `virtual-io` depends on it.
 - Whether ffmpeg is vendored and statically linked, and the LGPL consequences
   for distribution.

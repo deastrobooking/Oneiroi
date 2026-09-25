@@ -1,6 +1,6 @@
 # MIDI beat-clock sync
 
-Oneiroi follows an external MIDI beat clock and generates one for other gear.
+VIRTUAL follows an external MIDI beat clock and generates one for other gear.
 Both directions live in **Setup → MIDI control → Clock sync**.
 
 The clock is the standard 24 pulses per quarter note (PPQN) beat clock, plus
@@ -54,7 +54,7 @@ stay under operator and mapping control.
 ## Sending clock downstream
 
 1. Pick a destination under **Clock out** and press **Connect**.
-2. Tick **Send clock**. Oneiroi sends Start, then 24 PPQN pulses at the show
+2. Tick **Send clock**. VIRTUAL sends Start, then 24 PPQN pulses at the show
    tempo, until the box is cleared — which sends Stop.
 3. **Continue** resumes downstream gear in place instead of rewinding it.
 
@@ -78,7 +78,7 @@ sender and clears **Send clock** rather than leaving the panel claiming the show
 is still clocking.
 
 Following and sending compose: with **Tempo from** set to MIDI clock in and
-**Send clock** on, Oneiroi re-clocks its own tempo downstream, which is the
+**Send clock** on, VIRTUAL re-clocks its own tempo downstream, which is the
 usual way to put gear without a clock input behind a master that has one.
 
 ## What is saved

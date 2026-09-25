@@ -109,10 +109,10 @@
 ### Mixer and control integration
 
 - Added 27 blend modes alongside the original eight modes, including component
-  and Oneiroi signature families.
+  and VIRTUAL signature families.
 - Restored launch-independent discovery for bundled algorithmic effect
   packages, with additional executable-adjacent, macOS bundle, per-user and
-  `ONEIROI_EFFECT_PATH` roots.
+  `VIRTUAL_EFFECT_PATH` roots.
 - Kept each custom effect's last-known-good GPU pipeline active while registry
   refresh recompiles it; a refresh no longer creates a temporary pass-through
   frame.

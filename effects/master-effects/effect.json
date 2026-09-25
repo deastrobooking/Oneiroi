@@ -2,7 +2,7 @@
   "format": "oneiroi-effect",
   "version": 1,
   "id": "master-effects",
-  "name": "Oneiroi master effects",
+  "name": "VIRTUAL master effects",
   "role": "master_processor",
   "shader": "master_effects.wgsl",
   "vertex_entry": "vs_main",

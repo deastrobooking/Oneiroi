@@ -1,15 +1,15 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/oneiroi-core",
-    "crates/oneiroi-graph",
-    "crates/oneiroi-hap",
-    "crates/oneiroi-hap-sys",
-    "crates/oneiroi-media",
-    "crates/oneiroi-render",
-    "crates/oneiroi-io",
-    "crates/oneiroi-session",
-    "crates/oneiroi-app",
+    "crates/virtual-core",
+    "crates/virtual-graph",
+    "crates/virtual-hap",
+    "crates/virtual-hap-sys",
+    "crates/virtual-media",
+    "crates/virtual-render",
+    "crates/virtual-io",
+    "crates/virtual-session",
+    "crates/virtual-app",
 ]
 
 [workspace.package]
@@ -19,14 +19,14 @@ license = "MIT OR Apache-2.0"
 rust-version = "1.95"
 
 [workspace.dependencies]
-oneiroi-core = { path = "crates/oneiroi-core" }
-oneiroi-graph = { path = "crates/oneiroi-graph" }
-oneiroi-hap = { path = "crates/oneiroi-hap" }
-oneiroi-hap-sys = { path = "crates/oneiroi-hap-sys" }
-oneiroi-media = { path = "crates/oneiroi-media" }
-oneiroi-render = { path = "crates/oneiroi-render" }
-oneiroi-io = { path = "crates/oneiroi-io" }
-oneiroi-session = { path = "crates/oneiroi-session" }
+virtual-core = { path = "crates/virtual-core" }
+virtual-graph = { path = "crates/virtual-graph" }
+virtual-hap = { path = "crates/virtual-hap" }
+virtual-hap-sys = { path = "crates/virtual-hap-sys" }
+virtual-media = { path = "crates/virtual-media" }
+virtual-render = { path = "crates/virtual-render" }
+virtual-io = { path = "crates/virtual-io" }
+virtual-session = { path = "crates/virtual-session" }
 
 # wgpu is pinned to 29 because egui-wgpu 0.35 depends on wgpu 29.0.
 # Bumping wgpu ahead of egui-wgpu puts two incompatible wgpu versions in the

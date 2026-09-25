@@ -1,0 +1,29 @@
+[package]
+name = "virtual-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "virtual"
+path = "src/main.rs"
+
+[dependencies]
+virtual-core.workspace = true
+virtual-graph.workspace = true
+virtual-io.workspace = true
+virtual-media.workspace = true
+virtual-render.workspace = true
+virtual-session.workspace = true
+
+anyhow.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+egui-winit.workspace = true
+env_logger.workspace = true
+log.workspace = true
+pollster.workspace = true
+rfd.workspace = true
+wgpu.workspace = true
+winit.workspace = true

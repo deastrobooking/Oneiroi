@@ -150,7 +150,7 @@ are implemented.
 Implementation sequence:
 
 1. Add input-device enumeration and a bounded audio callback adapter in
-   `oneiroi-io`. (implemented)
+   `virtual-io`. (implemented)
 2. Copy callback samples into a fixed-capacity queue; never perform FFT or UI
    work inside the callback. (implemented)
 3. Publish smoothed broadband RMS, bass, mid, high and transient signals from
@@ -266,7 +266,7 @@ Current foundation:
    last-known-good retention are implemented. Slot-local rejected-generation
    and compile diagnostics remain.
 2. Launch-independent development, executable-adjacent, macOS bundle,
-   active-workspace, per-user and `ONEIROI_EFFECT_PATH` discovery is
+   active-workspace, per-user and `VIRTUAL_EFFECT_PATH` discovery is
    implemented with deterministic duplicate handling.
 3. Compact Show Mode master cards with identity, bypass and wet controls are
    implemented. A protected path to advanced parameters remains.
@@ -288,7 +288,7 @@ Delivery order:
    alpha/culling telemetry and per-deck GPU timestamps are implemented. Finish
    the four-deck show-machine gate.
 4. **S3 — Versioned shared WGSL modules.** Prototype an allow-listed
-   `oneiroi-std` namespace and fingerprint every transitive import.
+   `virtual-std` namespace and fingerprint every transitive import.
 5. **S4 — Typed N-pass fragment graph.** Declare pass edges, formats,
    resolutions, lifetimes and fallback through the graph compiler.
 6. **S5 — Optional HDR intermediates.** Gate RGBA16Float by adapter support,

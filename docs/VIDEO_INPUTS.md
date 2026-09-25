@@ -1,6 +1,6 @@
 # Cameras and video capture cards
 
-Oneiroi routes macOS video inputs to any of its four decks. This includes
+VIRTUAL routes macOS video inputs to any of its four decks. This includes
 cameras and capture cards whose drivers expose them through AVFoundation.
 The input can use deck effects, blending, freeze and camera-to-clip recording.
 Video inputs are live and cannot seek. Embedded capture-card audio is not
@@ -29,7 +29,7 @@ API. Opening and decoding use FFmpeg's
 Enumerating devices does not start video capture:
 
 ```sh
-cargo run -p oneiroi-media --example list_video_inputs
+cargo run -p virtual-media --example list_video_inputs
 ```
 
 If the card is missing, check power, cabling, driver installation and whether
@@ -37,7 +37,7 @@ macOS exposes it as a camera/video input. Grant camera permission to the app or
 Terminal when running from Cargo. A card available only through a proprietary
 SDK needs a separate adapter; a model-specific adapter is not included here.
 Unsupported resolution/rate or missing signal is reported as an input error.
-Reconnect using a supported mode; Oneiroi does not automatically change the
+Reconnect using a supported mode; VIRTUAL does not automatically change the
 card's HDMI/SDI connector or deinterlace an incoming signal.
 
 Physical capture-card validation remains necessary: verify signal loss,

@@ -1,0 +1,124 @@
+{
+  "format": "oneiroi-effect",
+  "version": 2,
+  "id": "god-rays",
+  "name": "God Rays",
+  "description": "Thresholded radial light shafts gathered toward a movable source.",
+  "role": "effect",
+  "targets": [
+    "master",
+    "deck"
+  ],
+  "abi": "deck-v1",
+  "shader": "god_rays.wgsl",
+  "parameters": [
+    {
+      "id": "center-x",
+      "label": "Light X",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "group": "Light"
+    },
+    {
+      "id": "center-y",
+      "label": "Light Y",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.2,
+      "group": "Light"
+    },
+    {
+      "id": "length",
+      "label": "Ray length",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.8,
+      "group": "Light"
+    },
+    {
+      "id": "threshold",
+      "label": "Highlight threshold",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.55,
+      "group": "Light"
+    },
+    {
+      "id": "intensity",
+      "label": "Intensity",
+      "minimum": 0,
+      "maximum": 3,
+      "default": 1,
+      "group": "Light"
+    },
+    {
+      "id": "decay",
+      "label": "Ray decay",
+      "minimum": 0.8,
+      "maximum": 1,
+      "default": 0.97,
+      "group": "Light"
+    },
+    {
+      "id": "warmth",
+      "label": "Warmth",
+      "minimum": -1,
+      "maximum": 1,
+      "default": 0.25,
+      "group": "Color"
+    },
+    {
+      "id": "softness",
+      "label": "Threshold softness",
+      "minimum": 0.01,
+      "maximum": 0.5,
+      "default": 0.15,
+      "group": "Light"
+    }
+  ],
+  "presets": [
+    {
+      "id": "sunbeams",
+      "label": "Sunbeams",
+      "values": {
+        "center-x": 0.5,
+        "center-y": 0.2,
+        "length": 0.8,
+        "threshold": 0.55,
+        "intensity": 1,
+        "decay": 0.97,
+        "warmth": 0.25,
+        "softness": 0.15
+      }
+    },
+    {
+      "id": "stage-light",
+      "label": "Stage light",
+      "values": {
+        "center-x": 0.25,
+        "center-y": 0.1,
+        "length": 1,
+        "threshold": 0.65,
+        "intensity": 1.8,
+        "decay": 0.97,
+        "warmth": -0.7,
+        "softness": 0.15
+      }
+    },
+    {
+      "id": "halo",
+      "label": "Halo",
+      "values": {
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "length": 0.5,
+        "threshold": 0.4,
+        "intensity": 1.4,
+        "decay": 0.99,
+        "warmth": 0.25,
+        "softness": 0.15
+      }
+    }
+  ]
+}

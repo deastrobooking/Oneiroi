@@ -1,12 +1,12 @@
 # Shader system
 
-This document is the canonical description and upgrade plan for Oneiroi's
+This document is the canonical description and upgrade plan for VIRTUAL's
 shader runtime. `EFFECT_PACKAGES.md` remains the authoring reference for the
 currently executable package ABI; `ROADMAP.md` owns the wider product order.
 
 ## Executive decision
 
-Oneiroi will keep WGSL, `wgpu` and Naga as its native shader stack. The current
+VIRTUAL will keep WGSL, `wgpu` and Naga as its native shader stack. The current
 shader milestone is a bounded per-deck package stage, not compute, arbitrary
 pass graphs, HDR or shader-format import. Those later capabilities build on the
 same typed resource and scheduling boundary, but landing them together would
@@ -172,7 +172,7 @@ Acceptance:
 
 Status: planned.
 
-Prototype a versioned `oneiroi-std` namespace for color conversion, blend
+Prototype a versioned `virtual-std` namespace for color conversion, blend
 functions, hashes/noise, SDF/raymarch helpers and common fullscreen bindings.
 `naga-oil` is a candidate composer, not a dependency decision. Any composer
 must use an allow-listed module namespace, produce useful source-mapped errors
@@ -224,7 +224,7 @@ Status: later.
 Naga's GLSL frontend is only a parser; it does not provide ISF metadata,
 ShaderToy uniforms/channels, GLSL dialect normalization, resource policy or
 license provenance. Import will therefore be an offline conversion and
-validation tool that emits a normal Oneiroi package. Implement ISF first, then
+validation tool that emits a normal VIRTUAL package. Implement ISF first, then
 a narrower ShaderToy adapter. Runtime loading of arbitrary GLSL is not part of
 the initial design.
 

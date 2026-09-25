@@ -1,0 +1,102 @@
+{
+  "format": "oneiroi-effect",
+  "version": 2,
+  "id": "turbulent-displace",
+  "name": "Turbulent Displace",
+  "description": "Layered curl-like coordinate distortion for liquid, heat and flowing video.",
+  "role": "effect",
+  "targets": [
+    "master",
+    "deck"
+  ],
+  "abi": "deck-v1",
+  "shader": "turbulent_displace.wgsl",
+  "parameters": [
+    {
+      "id": "amount",
+      "label": "Displacement",
+      "minimum": 0,
+      "maximum": 0.3,
+      "default": 0.075,
+      "group": "Geometry"
+    },
+    {
+      "id": "scale",
+      "label": "Field scale",
+      "minimum": 1,
+      "maximum": 24,
+      "default": 6,
+      "group": "Geometry"
+    },
+    {
+      "id": "speed",
+      "label": "Flow speed",
+      "minimum": -3,
+      "maximum": 3,
+      "default": 0.6,
+      "group": "Motion"
+    },
+    {
+      "id": "detail",
+      "label": "Flow detail",
+      "minimum": 1,
+      "maximum": 4,
+      "default": 3,
+      "group": "Geometry"
+    },
+    {
+      "id": "rotation",
+      "label": "Field rotation",
+      "minimum": -3.141593,
+      "maximum": 3.141593,
+      "default": 0,
+      "group": "Geometry"
+    },
+    {
+      "id": "seed",
+      "label": "Field seed",
+      "minimum": 0,
+      "maximum": 20,
+      "default": 2,
+      "group": "Geometry"
+    }
+  ],
+  "presets": [
+    {
+      "id": "liquid",
+      "label": "Liquid",
+      "values": {
+        "amount": 0.075,
+        "scale": 6,
+        "speed": 0.6,
+        "detail": 3,
+        "rotation": 0,
+        "seed": 2
+      }
+    },
+    {
+      "id": "heat-haze",
+      "label": "Heat haze",
+      "values": {
+        "amount": 0.018,
+        "scale": 18,
+        "speed": 1.2,
+        "detail": 2,
+        "rotation": 0,
+        "seed": 2
+      }
+    },
+    {
+      "id": "storm",
+      "label": "Storm",
+      "values": {
+        "amount": 0.18,
+        "scale": 4,
+        "speed": 0.4,
+        "detail": 4,
+        "rotation": 0.6,
+        "seed": 2
+      }
+    }
+  ]
+}

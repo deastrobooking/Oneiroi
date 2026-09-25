@@ -11,7 +11,7 @@ certification and macOS packaging remain open. See the reliability entry in
 
 ## Executive assessment
 
-Oneiroi is a functional four-deck VJ instrument with a credible media and
+VIRTUAL is a functional four-deck VJ instrument with a credible media and
 rendering foundation. Direct HAP upload, bounded FFmpeg fallback, independent
 A/B composition, deck and master effects, audio/MIDI/OSC control, clean program
 output and deterministic session recovery are implemented and covered by more
@@ -105,7 +105,7 @@ See [Shader system](SHADER_SYSTEM.md) for the accepted sequence and invariants.
 
 ### Concentrated application orchestration
 
-`oneiroi-app/src/main.rs` remains roughly 1,450 lines and still coordinates
+`virtual-app/src/main.rs` remains roughly 1,450 lines and still coordinates
 windowing, media, projects, cameras, tempo and rendering. Action dispatch,
 output lifecycle and the toolbar/setup/diagnostics surfaces have been extracted;
 `ui.rs` is now roughly 990 lines with focused `clips`, `deck`, `master_fx`,

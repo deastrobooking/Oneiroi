@@ -1,6 +1,6 @@
 # Graph and session runtime
 
-Oneiroi now has the first control-plane slice needed to grow beyond a fixed
+VIRTUAL now has the first control-plane slice needed to grow beyond a fixed
 layer mixer without destabilizing the proven renderer.
 
 ## Current boundary
@@ -21,7 +21,7 @@ Deck D source -> Deck D built-ins ----/          |
                                          program output
 ```
 
-That produces an immutable 11-node `RenderPlan`. `oneiroi-render` now lowers
+That produces an immutable 11-node `RenderPlan`. `virtual-render` now lowers
 that logical graph into three executable stages:
 
 ```text
@@ -44,7 +44,7 @@ package-capable boundary. The selective deck-branch extraction and future
 
 ## Typed graph
 
-`oneiroi-graph` owns:
+`virtual-graph` owns:
 
 - Stable node, graph-revision and schema identities
 - Typed ports for textures, masks, depth, motion, audio, spectra, geometry,
@@ -102,7 +102,7 @@ Transactions can also be discarded before commit.
 
 ## Commands, checkpoints and takes
 
-`oneiroi-session` defines serializable `ShowCommand`, `ShowTime`,
+`virtual-session` defines serializable `ShowCommand`, `ShowTime`,
 `SessionState`, `StateCheckpoint`, `PerformanceTake` and `SessionEventLog`
 types. The event log is append-only: alternate decisions create a branch or a
 new named take instead of rewriting recorded commands.
@@ -151,13 +151,13 @@ apply the remaining commands.
 
 The in-memory take now feeds a bounded 4,096-record background writer. The
 render thread only performs `try_send`; file serialization, writes and syncing
-run on `oneiroi-session-journal`.
+run on `virtual-session-journal`.
 
 Each run creates:
 
 ```text
-.oneiroi/session/session-<process>-<time>.jsonl
-.oneiroi/session/session-<process>-<time>.checkpoint.json
+.virtual/session/session-<process>-<time>.jsonl
+.virtual/session/session-<process>-<time>.checkpoint.json
 ```
 
 The JSONL stream begins with a versioned format header and contains tagged
@@ -190,7 +190,7 @@ continues to use the smaller atomic-checkpoint tail.
 Labeled marker records share the journal timeline without consuming command
 sequence numbers. Marker buttons move the recovery cursor to exact show time.
 Project take entries can be exported to a chosen directory or archived under
-`.oneiroi/archive`; each action creates a unique directory containing copied
+`.virtual/archive`; each action creates a unique directory containing copied
 journal and checkpoint files and never moves, overwrites or deletes the live
 source bundle.
 

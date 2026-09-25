@@ -1,6 +1,6 @@
 # OSC transport
 
-Oneiroi accepts bounded OSC 1.0 input over UDP. Open **OSC input**, enter a
+VIRTUAL accepts bounded OSC 1.0 input over UDP. Open **OSC input**, enter a
 local bind address such as `0.0.0.0:9000`, then choose **Listen**. Use
 `127.0.0.1:9000` when only software on the same machine should connect.
 

@@ -11,13 +11,13 @@ cargo fmt --check
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo build --release
-shasum -a 256 target/release/oneiroi
+shasum -a 256 target/release/virtual
 ```
 
 Before a numbered release, also run the opt-in decoder soak:
 
 ```sh
-cargo test -p oneiroi-media --test hap_mov_demux \
+cargo test -p virtual-media --test hap_mov_demux \
   extended_decoder_reopen_soak -- --ignored --exact
 ```
 
@@ -36,7 +36,7 @@ show content to the repository.
 
 ## Thirty-minute performance pass
 
-1. Start `target/release/oneiroi` and load the fixture project.
+1. Start `target/release/virtual` and load the fixture project.
 2. Run two 1080p60 HAP decks for ten minutes, then four for twenty minutes.
 3. Exercise scenes, quantized launches, seek/restart, crossfader, deck FX,
    master effects, freeze, blackout and Show Mode.
@@ -117,7 +117,7 @@ Use the synthetic release benchmark as a repeatable package-path baseline,
 then corroborate it with the media fixture pass above:
 
 ```sh
-cargo run --release -p oneiroi-render --example perf -- \
+cargo run --release -p virtual-render --example perf -- \
   --decks 4 --width 1920 --height 1080 \
   --deck-package chromatic-split --frames 600 --warmup 60 --runs 3 --json
 ```

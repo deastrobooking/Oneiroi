@@ -1,0 +1,16 @@
+[package]
+name = "virtual-media"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+virtual-core.workspace = true
+virtual-hap.workspace = true
+
+ffmpeg-next.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+cc = "1"

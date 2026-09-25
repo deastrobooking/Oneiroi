@@ -2490,7 +2490,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "oneiroi-app"
+name = "virtual-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2499,12 +2499,12 @@ dependencies = [
  "egui-winit",
  "env_logger",
  "log",
- "oneiroi-core",
- "oneiroi-graph",
- "oneiroi-io",
- "oneiroi-media",
- "oneiroi-render",
- "oneiroi-session",
+ "virtual-core",
+ "virtual-graph",
+ "virtual-io",
+ "virtual-media",
+ "virtual-render",
+ "virtual-session",
  "pollster",
  "rfd",
  "wgpu",
@@ -2512,7 +2512,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oneiroi-core"
+name = "virtual-core"
 version = "0.1.0"
 dependencies = [
  "rustfft",
@@ -2521,7 +2521,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oneiroi-graph"
+name = "virtual-graph"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -2529,16 +2529,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "oneiroi-hap"
+name = "virtual-hap"
 version = "0.1.0"
 dependencies = [
- "oneiroi-hap-sys",
+ "virtual-hap-sys",
  "smallvec",
  "thiserror 2.0.19",
 ]
 
 [[package]]
-name = "oneiroi-hap-sys"
+name = "virtual-hap-sys"
 version = "0.1.0"
 dependencies = [
  "cc",
@@ -2546,42 +2546,42 @@ dependencies = [
 ]
 
 [[package]]
-name = "oneiroi-io"
+name = "virtual-io"
 version = "0.1.0"
 dependencies = [
  "cpal",
  "log",
  "midir",
- "oneiroi-core",
- "oneiroi-graph",
+ "virtual-core",
+ "virtual-graph",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
 ]
 
 [[package]]
-name = "oneiroi-media"
+name = "virtual-media"
 version = "0.1.0"
 dependencies = [
  "cc",
  "ffmpeg-next",
- "oneiroi-core",
- "oneiroi-hap",
+ "virtual-core",
+ "virtual-hap",
  "thiserror 2.0.19",
 ]
 
 [[package]]
-name = "oneiroi-render"
+name = "virtual-render"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
  "log",
  "naga",
- "oneiroi-core",
- "oneiroi-graph",
- "oneiroi-hap",
- "oneiroi-media",
+ "virtual-core",
+ "virtual-graph",
+ "virtual-hap",
+ "virtual-media",
  "pollster",
  "serde",
  "serde_json",
@@ -2590,11 +2590,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "oneiroi-session"
+name = "virtual-session"
 version = "0.1.0"
 dependencies = [
- "oneiroi-core",
- "oneiroi-graph",
+ "virtual-core",
+ "virtual-graph",
  "serde",
  "serde_json",
  "thiserror 2.0.19",

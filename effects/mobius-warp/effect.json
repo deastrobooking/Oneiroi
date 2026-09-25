@@ -1,0 +1,124 @@
+{
+  "format": "oneiroi-effect",
+  "version": 2,
+  "id": "mobius-warp",
+  "name": "M\u00f6bius Warp",
+  "description": "Complex-plane M\u00f6bius mapping with bounded poles, reflection and animated rotation.",
+  "role": "effect",
+  "targets": [
+    "master",
+    "deck"
+  ],
+  "abi": "deck-v1",
+  "shader": "mobius_warp.wgsl",
+  "parameters": [
+    {
+      "id": "bend-x",
+      "label": "Bend real",
+      "minimum": -2,
+      "maximum": 2,
+      "default": 0.6,
+      "group": "Geometry"
+    },
+    {
+      "id": "bend-y",
+      "label": "Bend imaginary",
+      "minimum": -2,
+      "maximum": 2,
+      "default": 0.25,
+      "group": "Geometry"
+    },
+    {
+      "id": "zoom",
+      "label": "Zoom",
+      "minimum": 0.25,
+      "maximum": 4,
+      "default": 1,
+      "group": "Geometry"
+    },
+    {
+      "id": "rotation",
+      "label": "Rotation",
+      "minimum": -3.141593,
+      "maximum": 3.141593,
+      "default": 0,
+      "group": "Geometry"
+    },
+    {
+      "id": "center-x",
+      "label": "Center X",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "group": "Position"
+    },
+    {
+      "id": "center-y",
+      "label": "Center Y",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "group": "Position"
+    },
+    {
+      "id": "spin",
+      "label": "Spin speed",
+      "minimum": -2,
+      "maximum": 2,
+      "default": 0,
+      "group": "Motion"
+    },
+    {
+      "id": "pole-softness",
+      "label": "Pole softness",
+      "minimum": 0.01,
+      "maximum": 0.25,
+      "default": 0.05,
+      "group": "Geometry"
+    }
+  ],
+  "presets": [
+    {
+      "id": "conformal",
+      "label": "Conformal",
+      "values": {
+        "bend-x": 0.6,
+        "bend-y": 0.25,
+        "zoom": 1,
+        "rotation": 0,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "spin": 0,
+        "pole-softness": 0.05
+      }
+    },
+    {
+      "id": "looking-glass",
+      "label": "Looking glass",
+      "values": {
+        "bend-x": 1.4,
+        "bend-y": -0.6,
+        "zoom": 0.8,
+        "rotation": 0.5,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "spin": 0,
+        "pole-softness": 0.05
+      }
+    },
+    {
+      "id": "orbit",
+      "label": "Orbit",
+      "values": {
+        "bend-x": -0.8,
+        "bend-y": 1.1,
+        "zoom": 1.3,
+        "rotation": 0,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "spin": 0.2,
+        "pole-softness": 0.05
+      }
+    }
+  ]
+}

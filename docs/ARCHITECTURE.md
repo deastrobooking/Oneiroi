@@ -1,4 +1,4 @@
-# Oneiroi architecture
+# VIRTUAL architecture
 
 ## Runtime shape
 
@@ -60,15 +60,15 @@ the same acceptance boundary.
 
 | Crate | Responsibility |
 |---|---|
-| `oneiroi-core` | Exact media time, frame clock, tempo/tap tempo and device-neutral control mapping |
-| `oneiroi-graph` | Typed ports and node contracts, graph validation, immutable plan compilation, resource lifetimes and shadow transactions |
-| `oneiroi-hap-sys` | Pinned Vidvox HAP reference implementation and raw FFI |
-| `oneiroi-hap` | Validated safe HAP decode into BC-compressed planes |
-| `oneiroi-media` | Probe, demux, decode workers, clip bank, transport, scheduling, thumbnails and cameras |
-| `oneiroi-render` | Render-plan lowering, GPU resources, HAP/RGBA upload, effects, LFO resolution and four-deck composition |
-| `oneiroi-io` | Versioned project JSON, atomic save and recovery paths |
-| `oneiroi-session` | Serializable show commands, session state, checkpoints, replay, branches, named takes and bounded crash-safe journal persistence |
-| `oneiroi-app` | Window/event loop, UI and orchestration |
+| `virtual-core` | Exact media time, frame clock, tempo/tap tempo and device-neutral control mapping |
+| `virtual-graph` | Typed ports and node contracts, graph validation, immutable plan compilation, resource lifetimes and shadow transactions |
+| `virtual-hap-sys` | Pinned Vidvox HAP reference implementation and raw FFI |
+| `virtual-hap` | Validated safe HAP decode into BC-compressed planes |
+| `virtual-media` | Probe, demux, decode workers, clip bank, transport, scheduling, thumbnails and cameras |
+| `virtual-render` | Render-plan lowering, GPU resources, HAP/RGBA upload, effects, LFO resolution and four-deck composition |
+| `virtual-io` | Versioned project JSON, atomic save and recovery paths |
+| `virtual-session` | Serializable show commands, session state, checkpoints, replay, branches, named takes and bounded crash-safe journal persistence |
+| `virtual-app` | Window/event loop, UI and orchestration |
 
 The graph and session crates remain device-neutral. See
 [Graph and session runtime](GRAPH_RUNTIME.md) for the compatibility boundary
@@ -377,10 +377,10 @@ changing the internal result of the other bus.
 
 Each incoming layer selects one of 35 blend functions against the straight-color
 backdrop, then uses the source and backdrop alpha terms to produce a
-premultiplied bus accumulator. Standard, Contrast, Component and Oneiroi modes
+premultiplied bus accumulator. Standard, Contrast, Component and VIRTUAL modes
 therefore share correct source-over coverage and operate in linear light. The
 separable and non-separable standard modes follow the W3C compositing formulas;
-the nine Oneiroi modes retain the same alpha contract.
+the nine VIRTUAL modes retain the same alpha contract.
 
 Before writing mixer globals, the CPU resolves deck visibility. If any Solo is
 active, only soloed decks remain eligible; Bypass then excludes its deck even
@@ -403,7 +403,7 @@ surfaces. A planned RGBA16Float tier applies only to internal intermediates;
 final presentation remains sRGB.
 Their small uniform also selects calibration modes: a generated color-bar/grid
 test card and a magenta identification frame/crosshair. Display discovery and
-window placement remain in `oneiroi-app`; the render crate has no winit types.
+window placement remain in `virtual-app`; the render crate has no winit types.
 Surface acquisition returns an explicit health status alongside the optional
 frame. Lost, outdated and suboptimal surfaces reconfigure automatically; the
 application records skips, timeouts, occlusion, validation failures and the
@@ -414,7 +414,7 @@ Operator-window resizing does not change composition resolution.
 
 ## Persistence
 
-`.oneiroi` files are versioned JSON. The current schema is version 5 and
+`.virtual` files are versioned JSON. The current schema is version 5 and
 version-one through version-four files are migrated on load. Version 3 adds
 stable custom-effect package IDs and named parameter values. Saves write a
 temporary sibling and rename it atomically. Newly introduced fields use
@@ -423,7 +423,7 @@ state is intentionally separate from the user's saved project.
 
 ## Audio analysis
 
-`oneiroi-io` owns CPAL device enumeration and the live stream. Its callback
+`virtual-io` owns CPAL device enumeration and the live stream. Its callback
 downmixes interleaved input into fixed 1024-sample stack chunks and uses
 `try_send` on an eight-slot synchronous queue. It never performs FFT, waits on
 a lock or touches UI state. Queue pressure drops the newest completed chunk
@@ -445,7 +445,7 @@ sources 8 and 9.
 
 ## MIDI input and mapping
 
-`oneiroi-io` uses the platform MIDI service through `midir`. Discovery assigns
+`virtual-io` uses the platform MIDI service through `midir`. Discovery assigns
 a stable name-based identity, and the selected port feeds a 256-event
 synchronous queue. The callback only parses note, CC or pitch-bend packets,
 increments atomics and calls `try_send`; a full queue drops the newest event
@@ -454,7 +454,7 @@ and records the loss.
 The main thread drains available events once per frame and passes them to the
 device-neutral `MidiMapper`. Learn state, absolute and relative decoding,
 toggle/momentary behavior, inversion, output scaling and pickup live in
-`oneiroi-core`. Resolved updates then reach mixer, transport, clip/scene,
+`virtual-core`. Resolved updates then reach mixer, transport, clip/scene,
 effect, LFO or matrix state. Blackout and master freeze are applied directly,
 while clip and scene launches retain musical quantization. Device topology is
 polled every two seconds; a missing selected controller is dropped safely and

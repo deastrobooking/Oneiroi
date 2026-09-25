@@ -1,16 +1,16 @@
 Updated todo list
 
-Searched for files matching `**/crates/oneiroi-media/src/decode_ffmpeg.rs`, 1 match
+Searched for files matching `**/crates/virtual-media/src/decode_ffmpeg.rs`, 1 match
 
-Read [](file:///Users/home/Desktop/ECOSYSTEM/Oneiroi/crates/oneiroi-media/src/decode_ffmpeg.rs#1-1), lines 1 to 80
+Read [](file:///Users/home/Desktop/ECOSYSTEM/VIRTUAL/crates/virtual-media/src/decode_ffmpeg.rs#1-1), lines 1 to 80
 
-Searched for text `ffmpeg::format::input` (`**/crates/oneiroi-media/src/decode_ffmpeg.rs`), 2 results
+Searched for text `ffmpeg::format::input` (`**/crates/virtual-media/src/decode_ffmpeg.rs`), 2 results
 
-Read [](file:///Users/home/Desktop/ECOSYSTEM/Oneiroi/crates/oneiroi-media/src/decode_ffmpeg.rs#130-130), lines 130 to 220
+Read [](file:///Users/home/Desktop/ECOSYSTEM/VIRTUAL/crates/virtual-media/src/decode_ffmpeg.rs#130-130), lines 130 to 220
 
-Searched for files matching `**/crates/oneiroi-app/src/media.rs`, 1 match
+Searched for files matching `**/crates/virtual-app/src/media.rs`, 1 match
 
-Option 2 (**SRT / RTSP Live Feed via FFmpeg**) is a great fit for Oneiroi because **`oneiroi-media` already uses `ffmpeg_next`** for live camera capture and hardware video decoding. 
+Option 2 (**SRT / RTSP Live Feed via FFmpeg**) is a great fit for VIRTUAL because **`virtual-media` already uses `ffmpeg_next`** for live camera capture and hardware video decoding. 
 
 Adding network live streams requires **zero new heavy dependencies** or external server binaries — FFmpeg already natively handles SRT, RTSP, RTMP, and HTTP streams!
 
@@ -21,19 +21,19 @@ Adding network live streams requires **zero new heavy dependencies** or external
 1. **On the Phone (iOS / Android):**
    * Install a free, high-performance camera streaming app like **Larix Broadcaster** or **OBS Camera**.
    * Set output to **SRT** or **RTSP**.
-   * Enter the Oneiroi host IP (e.g. `srt://192.168.1.120:9000?mode=listener` or `rtsp://192.168.1.120:8554/live`).
+   * Enter the VIRTUAL host IP (e.g. `srt://192.168.1.120:9000?mode=listener` or `rtsp://192.168.1.120:8554/live`).
    * Tap record/stream.
 
-2. **In Oneiroi:**
+2. **In VIRTUAL:**
    * In the deck slot media chooser, select **"Connect Network Stream"**.
    * Enter the stream listener URL or port.
-   * Oneiroi ingests, decodes, and routes the feed directly into the deck mixer like any local clip or webcam.
+   * VIRTUAL ingests, decodes, and routes the feed directly into the deck mixer like any local clip or webcam.
 
 ---
 
 ### Implementation Blueprint for Your Agent
 
-Here is the exact technical plan your agent can follow to add SRT/RTSP stream support to `oneiroi-media` and `oneiroi-app`:
+Here is the exact technical plan your agent can follow to add SRT/RTSP stream support to `virtual-media` and `virtual-app`:
 
 #### 1. Define Network Stream Schemes & Config in capture.rs
 Add stream URL descriptors alongside existing `camera://` logic:
@@ -111,9 +111,9 @@ Created 3 todos
 
 Updated todo list
 
-Read [](file:///Users/home/Desktop/ECOSYSTEM/Oneiroi/effects/chromatic-split/effect.json)
+Read [](file:///Users/home/Desktop/ECOSYSTEM/VIRTUAL/effects/chromatic-split/effect.json)
 
-Here is a curated list of high-impact visual effects tailored specifically for Oneiroi's architecture (supporting 1-pass or 2-pass fragment shaders, temporal history buffers, and modulation routing).
+Here is a curated list of high-impact visual effects tailored specifically for VIRTUAL's architecture (supporting 1-pass or 2-pass fragment shaders, temporal history buffers, and modulation routing).
 
 ---
 

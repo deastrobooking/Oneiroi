@@ -1,0 +1,137 @@
+{
+  "format": "oneiroi-effect",
+  "version": 2,
+  "id": "feedback-transform",
+  "name": "Feedback Transform",
+  "description": "Previous-output feedback with zoom, rotation, translation and controlled color decay.",
+  "role": "effect",
+  "targets": [
+    "master"
+  ],
+  "abi": "master-v1",
+  "shader": "feedback_transform.wgsl",
+  "parameters": [
+    {
+      "id": "decay",
+      "label": "Persistence",
+      "minimum": 0,
+      "maximum": 0.98,
+      "default": 0.82,
+      "group": "Feedback"
+    },
+    {
+      "id": "zoom",
+      "label": "Feedback zoom",
+      "minimum": 0.8,
+      "maximum": 1.2,
+      "default": 1.015,
+      "group": "Geometry"
+    },
+    {
+      "id": "rotation",
+      "label": "Feedback rotation",
+      "minimum": -0.25,
+      "maximum": 0.25,
+      "default": 0.015,
+      "group": "Geometry"
+    },
+    {
+      "id": "gain",
+      "label": "Feedback gain",
+      "minimum": 0,
+      "maximum": 1.1,
+      "default": 0.99,
+      "group": "Feedback"
+    },
+    {
+      "id": "shift-x",
+      "label": "Translation X",
+      "minimum": -0.1,
+      "maximum": 0.1,
+      "default": 0,
+      "group": "Position"
+    },
+    {
+      "id": "shift-y",
+      "label": "Translation Y",
+      "minimum": -0.1,
+      "maximum": 0.1,
+      "default": 0,
+      "group": "Position"
+    },
+    {
+      "id": "saturation",
+      "label": "Saturation retention",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.98,
+      "group": "Color"
+    },
+    {
+      "id": "edge-mode",
+      "label": "Edges",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0,
+      "group": "Geometry",
+      "control": "choice",
+      "options": [
+        {
+          "label": "Transparent",
+          "value": 0
+        },
+        {
+          "label": "Mirror",
+          "value": 1
+        }
+      ]
+    }
+  ],
+  "presets": [
+    {
+      "id": "echo-tunnel",
+      "label": "Echo tunnel",
+      "values": {
+        "decay": 0.82,
+        "zoom": 1.015,
+        "rotation": 0.015,
+        "gain": 0.99,
+        "shift-x": 0,
+        "shift-y": 0,
+        "saturation": 0.98,
+        "edge-mode": 0
+      }
+    },
+    {
+      "id": "spiral-memory",
+      "label": "Spiral memory",
+      "values": {
+        "decay": 0.9,
+        "zoom": 1.03,
+        "rotation": 0.06,
+        "gain": 0.99,
+        "shift-x": 0,
+        "shift-y": 0,
+        "saturation": 0.98,
+        "edge-mode": 1
+      }
+    },
+    {
+      "id": "drifting-ghosts",
+      "label": "Drifting ghosts",
+      "values": {
+        "decay": 0.88,
+        "zoom": 1,
+        "rotation": 0,
+        "gain": 0.99,
+        "shift-x": 0.008,
+        "shift-y": -0.004,
+        "saturation": 0.9,
+        "edge-mode": 0
+      }
+    }
+  ],
+  "resources": {
+    "history": "previous_slot_output"
+  }
+}

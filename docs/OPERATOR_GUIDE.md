@@ -1,9 +1,9 @@
-# Oneiroi operator guide
+# VIRTUAL operator guide
 
 ## Session journal
 
 Every app run records its supported performance commands under
-`.oneiroi/session/` in the current workspace. The operator header reports
+`.virtual/session/` in the current workspace. The operator header reports
 journaled command and checkpoint counts, queue overruns and persistence errors.
 
 Journal writing is bounded and asynchronous. If storage stalls or fails,
@@ -14,7 +14,7 @@ rendered frames.
 Open **Session recovery**, select **Scan journals**, choose a prior take and
 select **Restore take**. The active journal is never offered as a recovery
 candidate. The panel reports checkpoints and safely ignored torn tails. Load
-the matching `.oneiroi` project first so recovered clip launches resolve to the
+the matching `.virtual` project first so recovered clip launches resolve to the
 same media slots. Restore applies mixer, transport, output, effect, LFO and
 modulation state, then continues recording in a fresh journal.
 
@@ -34,7 +34,7 @@ catalog entry and deliberately leaves the journal file on disk.
 
 Choose **Export copy** to copy the selected take into the displayed export
 directory (relative paths resolve from the workspace), or **Archive copy** to
-copy it under `.oneiroi/archive`. Each operation creates a new unique folder
+copy it under `.virtual/archive`. Each operation creates a new unique folder
 with the journal and its checkpoint when present. Existing exports and source
 session files are never overwritten, moved or removed.
 
@@ -60,22 +60,22 @@ modulation routing, master effects/modulation, and accepted media assignments
 are also journaled as stable field commands. Project opening establishes a new
 baseline and is not recorded as live performance traffic.
 
-Oneiroi is a four-deck live video mixer. Each deck can play a clip or receive a
+VIRTUAL is a four-deck live video mixer. Each deck can play a clip or receive a
 live camera/capture-card feed, run its own effects and modulation, and feed the
 A/B crossfader.
 
 ## Start the application
 
 ```sh
-cargo run -p oneiroi-app
-cargo run -p oneiroi-app -- clip-a.mov clip-b.mp4
-cargo run -p oneiroi-app -- performance.oneiroi
+cargo run -p virtual-app
+cargo run -p virtual-app -- clip-a.mov clip-b.mp4
+cargo run -p virtual-app -- performance.virtual
 ```
 
 For performance testing, use a release build:
 
 ```sh
-cargo run --release -p oneiroi-app
+cargo run --release -p virtual-app
 ```
 
 ## Preflight and Show Mode
@@ -135,7 +135,7 @@ currently playing slot also stops its decoder, clears its uploaded GPU texture
 and empties that deck's live signal. Show Mode blocks clip deletion.
 
 To populate multiple slots, select the desired starting slot and drag a folder
-onto the window. Oneiroi recursively finds supported media, sorts paths
+onto the window. VIRTUAL recursively finds supported media, sorts paths
 lexically, fills from the selected slot, wraps across decks and skips occupied
 slots. At most the 32 available clip addresses are assigned. The status line
 reports scanning, probe progress, truncation caused by available capacity and
@@ -199,7 +199,7 @@ generation changes and 64 FFmpeg reopen cycles. Before a release candidate,
 run the extended 10,000-reopen decoder soak:
 
 ```sh
-cargo test -p oneiroi-media --test hap_mov_demux \
+cargo test -p virtual-media --test hap_mov_demux \
   extended_decoder_reopen_soak -- --ignored --exact
 ```
 
@@ -216,13 +216,13 @@ displays.
    grid.
 3. Set the requested width, height and frame rate.
 4. Click **Video**. The same controls remain available in Show Mode.
-5. Click **Record clip**, then **Stop**. Oneiroi finalizes the movie in the
+5. Click **Record clip**, then **Stop**. VIRTUAL finalizes the movie in the
    workspace `recordings` directory and installs it in the selected slot after
    probing and thumbnail generation complete.
 
 Use **Refresh** after attaching hardware. A manual AVFoundation device ID such
 as `0` can be entered when discovery does not return a label. macOS may require
-camera permission for Oneiroi or Terminal. HDMI capture cards that appear as
+camera permission for VIRTUAL or Terminal. HDMI capture cards that appear as
 AVFoundation video devices use the same path.
 
 Live capture and recording use bounded queues. If rendering or storage stalls,
@@ -234,7 +234,7 @@ compressed recording is a planned upgrade.
 
 ## Effects
 
-Oneiroi currently has two distinct effect paths: three built-in groups that
+VIRTUAL currently has two distinct effect paths: three built-in groups that
 run independently on every deck inside the fused compositor, and
 manifest-driven packages that run only in the two master slots. A planned
 `deck-v1` package stage will sit between those built-in groups and layer
@@ -304,8 +304,8 @@ with target `master` and ABI `master-v1`. Bundled resources are found from the
 development workspace, beside a release binary, or in a macOS bundle without
 depending on its launch directory. An existing `effects` directory in the
 active show workspace is also scanned. User packages can live in
-`~/Library/Application Support/Oneiroi/effects`; additional roots come from
-the platform-separated `ONEIROI_EFFECT_PATH` environment variable.
+`~/Library/Application Support/VIRTUAL/effects`; additional roots come from
+the platform-separated `VIRTUAL_EFFECT_PATH` environment variable.
 Select a package and its manifest controls are created automatically.
 **Refresh registry** performs one synchronous rescan after adding or removing
 a package, then hands registered replacements to the reload worker without
@@ -368,7 +368,7 @@ project.
 
 Choose a blend mode beside each deck's Bus A/Bus B assignment:
 
-The picker exposes 35 modes across Standard, Contrast, Component and Oneiroi
+The picker exposes 35 modes across Standard, Contrast, Component and VIRTUAL
 families. Familiar examples include:
 
 - Normal
@@ -453,7 +453,7 @@ Enter BPM directly or use:
 Tempo changes preserve the current musical position. The toolbar displays beat
 position, beat phase and four-beat bar phase.
 
-Tempo can also come from an external MIDI beat clock, and Oneiroi can clock
+Tempo can also come from an external MIDI beat clock, and VIRTUAL can clock
 other gear itself. Both live in **Setup → MIDI control → Clock sync**; while an
 external clock is locked, the BPM field, **Tap**, **½** and **×2** are disabled
 because the incoming clock owns the tempo. See
@@ -478,9 +478,9 @@ Stage-safety shortcuts:
 
 ## Program output
 
-Oneiroi renders the mixer once into an offscreen program texture. The operator
+VIRTUAL renders the mixer once into an offscreen program texture. The operator
 window previews that texture beneath the controls, while the separate
-**oneiroi · PROGRAM** window presents it without UI.
+**VIRTUAL · PROGRAM** window presents it without UI.
 
 Use the top toolbar to:
 
@@ -538,7 +538,7 @@ messages never take part in learn, so one device can both clock the show and
 drive mapped controls.
 
 The activity line shows received packets, queue drops and parse errors per
-device. If a requested controller disappears, Oneiroi keeps its mappings,
+device. If a requested controller disappears, VIRTUAL keeps its mappings,
 shows it as waiting in MIDI Manager and attempts to reconnect every two
 seconds. Use **Disconnect** or **Forget** to stop that automatic reconnect
 intent. The requested controller set is stored with the project; controllers
@@ -546,7 +546,7 @@ from a previous project do not remain live after another rig is opened.
 
 ## Projects and recovery
 
-The project toolbar can open and save `.oneiroi` files. Version-six projects store all 32
+The project toolbar can open and save `.virtual` files. Version-six projects store all 32
 clip paths, per-slot trim/launch/beat settings, deck state, camera reconnect
 settings, mixer values, transport, effects, per-deck algorithmic packages,
 LFOs, modulation routes, tempo,
@@ -554,7 +554,7 @@ output settings, theme/layout choices, MIDI mapping data and requested MIDI
 devices.
 Version-one projects are upgraded when loaded.
 
-Oneiroi writes a recovery autosave after changes and on close. Use **Recover
+VIRTUAL writes a recovery autosave after changes and on close. Use **Recover
 autosave** when the recovery copy is newer. Missing files remain represented in
 their original slots. Select a missing slot and press **Browse and relink…**,
 or right-click any path-bearing slot and choose **Relink media…**. The native

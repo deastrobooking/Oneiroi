@@ -6,7 +6,7 @@ either master slot with one or two passes and optional fixed history.
 layer blend. Manifest v1 implies master placement; manifest v2 states targets
 and ABI explicitly.
 
-Oneiroi discovers these packages from immediate child directories under every
+VIRTUAL discovers these packages from immediate child directories under every
 resolved effect resource root. Each package directory contains `effect.json`
 and a WGSL file referenced by that manifest.
 
@@ -14,17 +14,17 @@ The shipped root is resolved independently of the process launch directory:
 the source workspace is used during development, `Contents/Resources/effects`
 inside a macOS app bundle, or an `effects` directory beside a release binary.
 An existing `effects` directory in the active show workspace is scanned too.
-`ONEIROI_EFFECT_PATH` adds one or more platform-separated roots for a custom
+`VIRTUAL_EFFECT_PATH` adds one or more platform-separated roots for a custom
 rig. User packages live in
-`~/Library/Application Support/Oneiroi/effects` on macOS, or under
-`$XDG_DATA_HOME/oneiroi/effects` (falling back to
-`~/.local/share/oneiroi/effects`) on other platforms.
+`~/Library/Application Support/VIRTUAL/effects` on macOS, or under
+`$XDG_DATA_HOME/virtual/effects` (falling back to
+`~/.local/share/virtual/effects`) on other platforms.
 
 Roots are evaluated in this order:
 
 1. Trusted bundled/development resources
 2. The active show workspace
-3. `ONEIROI_EFFECT_PATH` entries in platform path-list order
+3. `VIRTUAL_EFFECT_PATH` entries in platform path-list order
 4. The per-user effect directory
 
 The first valid package ID wins. A lower-priority duplicate is excluded and
@@ -73,9 +73,9 @@ A reproducible GPU preview tool renders a synthetic chart through a bundled
 master package (use `none` for the original):
 
 ```sh
-cargo run -p oneiroi-render --example effect_preview -- analog-crt > preview.ppm
+cargo run -p virtual-render --example effect_preview -- analog-crt > preview.ppm
 # Optional second argument selects a named preset:
-cargo run -p oneiroi-render --example effect_preview -- kaleidoscope spiral-bloom > spiral.ppm
+cargo run -p virtual-render --example effect_preview -- kaleidoscope spiral-bloom > spiral.ppm
 ```
 
 ## Manifest
@@ -213,7 +213,7 @@ scratch and ping targets, and no package texture is allocated during a frame.
 ## Modulation and MIDI
 
 Every declared parameter automatically appears as a target in the master
-modulation matrix and receives MIDI Learn/Clear buttons. Oneiroi derives target
+modulation matrix and receives MIDI Learn/Clear buttons. VIRTUAL derives target
 identity from the package ID and parameter ID, so parameter declaration order
 may change without redirecting saved routes or mappings.
 
@@ -250,7 +250,7 @@ When declared, binding 5 contains the physical slot's previous successful
 output. `history_valid` is zero on the first frame and after source, project,
 resize, blackout, disable/bypass, missing-package or identity resets. A shader
 must return a clean current-frame result while validity is zero. After the slot
-renders, Oneiroi copies its output into history for the next frame. Freeze
+renders, VIRTUAL copies its output into history for the next frame. Freeze
 retains history without evolving it.
 
 One full-resolution RGBA8-sRGB history texture is reserved for each master
@@ -330,5 +330,5 @@ acceptance gates.
 The repository recommends the optional
 [`wgsl-analyzer`](https://github.com/wgsl-analyzer/wgsl-analyzer) VS Code
 extension for WGSL completion, navigation and diagnostics. Naga validation in
-Oneiroi remains authoritative for package loading, and the real-GPU tests
+VIRTUAL remains authoritative for package loading, and the real-GPU tests
 remain authoritative for the `wgpu` binding/pipeline contract.
