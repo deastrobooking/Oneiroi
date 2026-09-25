@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 use thiserror::Error;
+use virtual_core::{AUDIO_MOD_SOURCES, SPECTRUM_BANDS};
 use virtual_hap::CompressedPlaneFormat;
 use virtual_media::{RgbaFrame, VideoFramePayload};
 
@@ -453,6 +454,33 @@ impl Default for EffectLfo {
 }
 
 pub const MOD_ROUTES_PER_DECK: usize = 8;
+/// Three LFOs, five audio sources, beat and bar phase, then the eight
+/// spectrum bands. Indices are persisted in routes and must stay stable.
+pub const MODULATION_SOURCES: usize = 10 + SPECTRUM_BANDS;
+pub const SPECTRUM_SOURCE_OFFSET: usize = 10;
+
+/// Assembles the shared source layout from LFO outputs and audio analysis in
+/// `virtual_core::AudioSnapshot::modulation_sources` order.
+pub fn modulation_sources(
+    lfos: [f32; 3],
+    beat_position: f32,
+    audio: [f32; AUDIO_MOD_SOURCES],
+) -> [f32; MODULATION_SOURCES] {
+    let audio = audio.map(|value| {
+        if value.is_finite() {
+            value.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    });
+    let mut sources = [0.0; MODULATION_SOURCES];
+    sources[..3].copy_from_slice(&lfos);
+    sources[3..8].copy_from_slice(&audio[..5]);
+    sources[8] = beat_position.rem_euclid(1.0);
+    sources[9] = (beat_position / 4.0).rem_euclid(1.0);
+    sources[SPECTRUM_SOURCE_OFFSET..].copy_from_slice(&audio[5..]);
+    sources
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModulationRoute {
@@ -485,23 +513,25 @@ impl DeckLfos {
         self,
         time_seconds: f32,
         beat_position: f32,
-        audio_sources: [f32; 5],
-    ) -> [f32; 10] {
-        let mut source_values = [0.0; 10];
-        source_values[3..8].copy_from_slice(&audio_sources.map(|value| value.clamp(0.0, 1.0)));
-        source_values[8] = beat_position.rem_euclid(1.0);
-        source_values[9] = (beat_position / 4.0).rem_euclid(1.0);
-        for (index, lfo) in self.lanes.into_iter().enumerate() {
-            if !lfo.enabled {
-                continue;
+        audio_sources: [f32; AUDIO_MOD_SOURCES],
+    ) -> [f32; MODULATION_SOURCES] {
+        let lfos = self.lanes.map(|lfo| {
+            if lfo.enabled {
+                lfo.output(time_seconds, beat_position)
+            } else {
+                0.0
             }
-            source_values[index] = lfo.output(time_seconds, beat_position);
-        }
-        source_values
+        });
+        modulation_sources(lfos, beat_position, audio_sources)
     }
 
     pub fn apply(self, effects: DeckEffects, time_seconds: f32, beat_position: f32) -> DeckEffects {
-        self.apply_with_audio(effects, time_seconds, beat_position, [0.0; 5])
+        self.apply_with_audio(
+            effects,
+            time_seconds,
+            beat_position,
+            [0.0; AUDIO_MOD_SOURCES],
+        )
     }
 
     pub fn apply_with_audio(
@@ -509,7 +539,7 @@ impl DeckLfos {
         mut effects: DeckEffects,
         time_seconds: f32,
         beat_position: f32,
-        audio_sources: [f32; 5],
+        audio_sources: [f32; AUDIO_MOD_SOURCES],
     ) -> DeckEffects {
         let source_values =
             self.source_values_with_audio(time_seconds, beat_position, audio_sources);
@@ -2183,10 +2213,30 @@ mod tests {
             target: EffectTarget::Hue,
             amount: -0.5,
         };
-        let resolved =
-            lfos.apply_with_audio(DeckEffects::default(), 0.0, 0.0, [0.2, 0.8, 0.0, 0.0, 1.0]);
+        let mut audio = [0.0; AUDIO_MOD_SOURCES];
+        audio[..5].copy_from_slice(&[0.2, 0.8, 0.0, 0.0, 1.0]);
+        let resolved = lfos.apply_with_audio(DeckEffects::default(), 0.0, 0.0, audio);
         assert!((resolved.neon - 0.6).abs() < 0.0001);
         assert!((resolved.hue + 0.25).abs() < 0.0001);
+    }
+
+    #[test]
+    fn spectrum_bands_follow_beat_and_bar_in_the_source_layout() {
+        let mut lfos = DeckLfos::default();
+        lfos.routes[0] = ModulationRoute {
+            enabled: true,
+            source: (SPECTRUM_SOURCE_OFFSET + 7) as u8,
+            target: EffectTarget::Neon,
+            amount: 0.5,
+        };
+        let mut audio = [0.0; AUDIO_MOD_SOURCES];
+        audio[5 + 7] = 0.8;
+        audio[5] = 0.3;
+        let sources = lfos.source_values_with_audio(0.0, 0.0, audio);
+        assert_eq!(sources[SPECTRUM_SOURCE_OFFSET], 0.3);
+        assert_eq!(sources[SPECTRUM_SOURCE_OFFSET + 7], 0.8);
+        let resolved = lfos.apply_with_audio(DeckEffects::default(), 0.0, 0.0, audio);
+        assert!((resolved.neon - 0.4).abs() < 0.0001);
     }
 
     #[test]
@@ -2204,7 +2254,8 @@ mod tests {
             target: EffectTarget::Saturation,
             amount: 1.0,
         };
-        let resolved = lfos.apply_with_audio(DeckEffects::default(), 0.0, 5.25, [0.0; 5]);
+        let resolved =
+            lfos.apply_with_audio(DeckEffects::default(), 0.0, 5.25, [0.0; AUDIO_MOD_SOURCES]);
         assert!((resolved.contrast - 1.5).abs() < 0.0001);
         assert!((resolved.saturation - 1.625).abs() < 0.0001);
     }

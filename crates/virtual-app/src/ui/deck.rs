@@ -14,7 +14,7 @@ pub(super) struct DeckControls<'a> {
     pub(super) effects: &'a mut DeckEffects,
     pub(super) lfos: &'a mut DeckLfos,
     /// Last rendered value of each modulation source, for the meters.
-    pub(super) mod_sources: [f32; 10],
+    pub(super) mod_sources: [f32; MODULATION_SOURCES],
     pub(super) package: &'a mut DeckPackageSlot,
     pub(super) packages: &'a [EffectDescriptor],
 }
@@ -689,20 +689,11 @@ pub(super) fn draw_deck(
                         ui.end_row();
                         for (index, route) in lfos.routes.iter_mut().enumerate() {
                             ui.checkbox(&mut route.enabled, format!("{}", index + 1));
-                            egui::ComboBox::from_id_salt(format!(
-                                "mod-source-{}-{index}",
-                                id.label()
-                            ))
-                            .selected_text(mod_source_label(route.source))
-                            .show_ui(ui, |ui| {
-                                for source in 0..10 {
-                                    ui.selectable_value(
-                                        &mut route.source,
-                                        source,
-                                        mod_source_label(source),
-                                    );
-                                }
-                            });
+                            mod_source_combo(
+                                ui,
+                                format!("mod-source-{}-{index}", id.label()),
+                                &mut route.source,
+                            );
                             egui::ComboBox::from_id_salt(format!(
                                 "mod-target-{}-{index}",
                                 id.label()
@@ -1253,37 +1244,14 @@ fn draw_deck_package_body(
             .id_salt(("deck-package-modulation", id.index()))
             .default_open(false)
             .show(ui, |ui| {
-                const SOURCES: [&str; 10] = [
-                    "LFO 1",
-                    "LFO 2",
-                    "LFO 3",
-                    "Audio RMS",
-                    "Bass",
-                    "Mid",
-                    "High",
-                    "Transient",
-                    "Beat phase",
-                    "Bar phase",
-                ];
                 for (route_index, route) in slot.modulation.iter_mut().enumerate() {
                     ui.horizontal_wrapped(|ui| {
                         ui.checkbox(&mut route.enabled, format!("Route {}", route_index + 1));
-                        egui::ComboBox::from_id_salt((
-                            "deck-package-mod-source",
-                            id.index(),
-                            route_index,
-                        ))
-                        .selected_text(
-                            SOURCES
-                                .get(usize::from(route.source))
-                                .copied()
-                                .unwrap_or("Unknown"),
-                        )
-                        .show_ui(ui, |ui| {
-                            for (source, label) in SOURCES.iter().enumerate() {
-                                ui.selectable_value(&mut route.source, source as u8, *label);
-                            }
-                        });
+                        mod_source_combo(
+                            ui,
+                            ("deck-package-mod-source", id.index(), route_index),
+                            &mut route.source,
+                        );
                         let selected = package
                             .parameters
                             .iter()
@@ -1380,20 +1348,52 @@ pub(super) fn blend_mode_label(mode: LayerBlendMode) -> &'static str {
     mode.label()
 }
 
+/// Labels in `virtual_render::modulation_sources` order; indices are persisted.
+pub(super) const MOD_SOURCE_LABELS: [&str; MODULATION_SOURCES] = [
+    "LFO 1",
+    "LFO 2",
+    "LFO 3",
+    "Audio RMS",
+    "Audio bass",
+    "Audio mid",
+    "Audio high",
+    "Audio transient",
+    "Beat phase",
+    "Bar phase",
+    "Band · Sub",
+    "Band · Bass",
+    "Band · Low mid",
+    "Band · Mid",
+    "Band · Upper mid",
+    "Band · Presence",
+    "Band · Brilliance",
+    "Band · Air",
+];
+
 pub(super) fn mod_source_label(source: u8) -> &'static str {
-    match source {
-        0 => "LFO 1",
-        1 => "LFO 2",
-        2 => "LFO 3",
-        3 => "Audio RMS",
-        4 => "Audio bass",
-        5 => "Audio mid",
-        6 => "Audio high",
-        7 => "Audio transient",
-        8 => "Beat phase",
-        9 => "Bar phase",
-        _ => "Invalid source",
-    }
+    MOD_SOURCE_LABELS
+        .get(usize::from(source))
+        .copied()
+        .unwrap_or("Invalid source")
+}
+
+/// Source picker shared by every modulation matrix.
+pub(super) fn mod_source_combo(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    source: &mut u8,
+) {
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(mod_source_label(*source))
+        .height(420.0)
+        .show_ui(ui, |ui| {
+            for (index, label) in MOD_SOURCE_LABELS.iter().enumerate() {
+                if index == SPECTRUM_SOURCE_OFFSET {
+                    ui.separator();
+                }
+                ui.selectable_value(source, index as u8, *label);
+            }
+        });
 }
 
 pub(super) fn beat_division_label(beats: f32) -> &'static str {

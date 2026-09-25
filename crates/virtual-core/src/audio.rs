@@ -9,6 +9,25 @@ use std::sync::Arc;
 use rustfft::{Fft, FftPlanner, num_complex::Complex};
 
 pub const AUDIO_ANALYSIS_SIZE: usize = 1024;
+/// Window for the 8-band spectrum. Longer than the 1024-sample hop so the
+/// sub and bass bands span several FFT bins (about 11.7 Hz each at 48 kHz).
+pub const SPECTRUM_ANALYSIS_SIZE: usize = 4096;
+pub const SPECTRUM_BANDS: usize = 8;
+pub const SPECTRUM_BAND_EDGES_HZ: [f32; SPECTRUM_BANDS + 1] = [
+    20.0, 60.0, 150.0, 400.0, 1_000.0, 2_500.0, 5_000.0, 10_000.0, 20_000.0,
+];
+pub const SPECTRUM_BAND_LABELS: [&str; SPECTRUM_BANDS] = [
+    "Sub",
+    "Bass",
+    "Low mid",
+    "Mid",
+    "Upper mid",
+    "Presence",
+    "Brilliance",
+    "Air",
+];
+/// RMS, bass, mid, high, transient, then the eight spectrum bands.
+pub const AUDIO_MOD_SOURCES: usize = 5 + SPECTRUM_BANDS;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AudioAnalysisSettings {
@@ -20,6 +39,12 @@ pub struct AudioAnalysisSettings {
     pub normalization: bool,
     pub normalization_target: f32,
     pub normalization_speed_ms: f32,
+    /// Per-band boost or cut applied before the band is published.
+    pub band_gains_db: [f32; SPECTRUM_BANDS],
+    /// Publish bands on a decibel scale, which keeps quiet high bands visible.
+    pub spectrum_decibels: bool,
+    /// Decibels below full scale that map to zero in decibel mode.
+    pub spectrum_range_db: f32,
 }
 
 impl Default for AudioAnalysisSettings {
@@ -33,6 +58,9 @@ impl Default for AudioAnalysisSettings {
             normalization: false,
             normalization_target: 0.5,
             normalization_speed_ms: 1_000.0,
+            band_gains_db: [0.0; SPECTRUM_BANDS],
+            spectrum_decibels: true,
+            spectrum_range_db: 60.0,
         }
     }
 }
@@ -47,6 +75,10 @@ impl AudioAnalysisSettings {
         self.normalization_target = finite_or(self.normalization_target, 0.5).clamp(0.05, 1.0);
         self.normalization_speed_ms =
             finite_or(self.normalization_speed_ms, 1_000.0).clamp(10.0, 10_000.0);
+        self.band_gains_db = self
+            .band_gains_db
+            .map(|gain| finite_or(gain, 0.0).clamp(-24.0, 24.0));
+        self.spectrum_range_db = finite_or(self.spectrum_range_db, 60.0).clamp(12.0, 96.0);
         self
     }
 }
@@ -59,6 +91,18 @@ pub struct AudioSnapshot {
     pub mid: f32,
     pub high: f32,
     pub transient: f32,
+    /// Eight log-spaced bands, see [`SPECTRUM_BAND_EDGES_HZ`].
+    pub bands: [f32; SPECTRUM_BANDS],
+}
+
+impl AudioSnapshot {
+    /// Values in [`AUDIO_MOD_SOURCES`] order.
+    pub fn modulation_sources(&self) -> [f32; AUDIO_MOD_SOURCES] {
+        let mut sources = [0.0; AUDIO_MOD_SOURCES];
+        sources[..5].copy_from_slice(&[self.rms, self.bass, self.mid, self.high, self.transient]);
+        sources[5..].copy_from_slice(&self.bands);
+        sources
+    }
 }
 
 pub struct AudioAnalyzer {
@@ -66,6 +110,10 @@ pub struct AudioAnalyzer {
     fft: Arc<dyn Fft<f32>>,
     window: Vec<f32>,
     spectrum: Vec<Complex<f32>>,
+    band_fft: Arc<dyn Fft<f32>>,
+    band_window: Vec<f32>,
+    band_spectrum: Vec<Complex<f32>>,
+    history: Vec<f32>,
     smoothed: AudioSnapshot,
     previous_input_rms: f32,
     normalization_gain: f32,
@@ -75,17 +123,15 @@ impl AudioAnalyzer {
     pub fn new(sample_rate: u32) -> Self {
         let mut planner = FftPlanner::new();
         let fft = planner.plan_fft_forward(AUDIO_ANALYSIS_SIZE);
-        let window = (0..AUDIO_ANALYSIS_SIZE)
-            .map(|index| {
-                let phase = index as f32 / (AUDIO_ANALYSIS_SIZE - 1) as f32;
-                0.5 - 0.5 * (std::f32::consts::TAU * phase).cos()
-            })
-            .collect();
         Self {
             sample_rate: sample_rate.max(1),
             fft,
-            window,
+            window: hann(AUDIO_ANALYSIS_SIZE),
             spectrum: vec![Complex::ZERO; AUDIO_ANALYSIS_SIZE],
+            band_fft: planner.plan_fft_forward(SPECTRUM_ANALYSIS_SIZE),
+            band_window: hann(SPECTRUM_ANALYSIS_SIZE),
+            band_spectrum: vec![Complex::ZERO; SPECTRUM_ANALYSIS_SIZE],
+            history: vec![0.0; SPECTRUM_ANALYSIS_SIZE],
             smoothed: AudioSnapshot::default(),
             previous_input_rms: 0.0,
             normalization_gain: 1.0,
@@ -132,6 +178,9 @@ impl AudioAnalyzer {
             }
         }
 
+        self.push_history(samples);
+        let band_amplitudes = self.band_amplitudes();
+
         let frame_seconds = AUDIO_ANALYSIS_SIZE as f32 / self.sample_rate as f32;
         let denoised_rms = (rms - settings.noise_floor).max(0.0);
         if settings.normalization && denoised_rms > 0.001 {
@@ -145,6 +194,17 @@ impl AudioAnalyzer {
         let effective_gain = settings.gain * self.normalization_gain;
         let normalize =
             |value: f32| ((value - settings.noise_floor).max(0.0) * effective_gain).clamp(0.0, 1.0);
+        let bands = std::array::from_fn(|band| {
+            let gain = 10.0_f32.powf(settings.band_gains_db[band] / 20.0);
+            let amplitude = band_amplitudes[band] * gain;
+            if settings.spectrum_decibels {
+                let level_db = 20.0 * (amplitude * effective_gain).max(1.0e-9).log10();
+                ((level_db + settings.spectrum_range_db) / settings.spectrum_range_db)
+                    .clamp(0.0, 1.0)
+            } else {
+                normalize(amplitude)
+            }
+        });
         let input = AudioSnapshot {
             rms: normalize(rms),
             peak: normalize(peak),
@@ -154,6 +214,7 @@ impl AudioAnalyzer {
             transient: ((normalize(rms) - self.previous_input_rms).max(0.0)
                 * settings.transient_sensitivity)
                 .clamp(0.0, 1.0),
+            bands,
         };
         self.previous_input_rms = input.rms;
 
@@ -193,8 +254,58 @@ impl AudioAnalyzer {
             settings.release_ms,
         );
         self.smoothed.transient = input.transient;
+        for band in 0..SPECTRUM_BANDS {
+            self.smoothed.bands[band] = smooth(
+                self.smoothed.bands[band],
+                input.bands[band],
+                frame_seconds,
+                settings.attack_ms,
+                settings.release_ms,
+            );
+        }
         self.smoothed
     }
+
+    fn push_history(&mut self, samples: &[f32]) {
+        let samples = &samples[samples.len().saturating_sub(SPECTRUM_ANALYSIS_SIZE)..];
+        self.history.copy_within(samples.len().., 0);
+        let start = SPECTRUM_ANALYSIS_SIZE - samples.len();
+        for (slot, sample) in self.history[start..].iter_mut().zip(samples) {
+            *slot = finite_or(*sample, 0.0).clamp(-1.0, 1.0);
+        }
+    }
+
+    /// RMS amplitude of each spectrum band over the rolling history window.
+    fn band_amplitudes(&mut self) -> [f32; SPECTRUM_BANDS] {
+        for (index, bin) in self.band_spectrum.iter_mut().enumerate() {
+            *bin = Complex::new(self.history[index] * self.band_window[index], 0.0);
+        }
+        self.band_fft.process(&mut self.band_spectrum);
+        let window_sum: f32 = self.band_window.iter().sum();
+        let bin_hz = self.sample_rate as f32 / SPECTRUM_ANALYSIS_SIZE as f32;
+        let mut power = [0.0_f32; SPECTRUM_BANDS];
+        for bin in 1..=SPECTRUM_ANALYSIS_SIZE / 2 {
+            let frequency = bin as f32 * bin_hz;
+            let Some(band) = SPECTRUM_BAND_EDGES_HZ
+                .windows(2)
+                .position(|edges| (edges[0]..edges[1]).contains(&frequency))
+            else {
+                continue;
+            };
+            let amplitude = self.band_spectrum[bin].norm() * 2.0 / window_sum.max(1.0);
+            power[band] += amplitude * amplitude * 0.5;
+        }
+        power.map(f32::sqrt)
+    }
+}
+
+fn hann(size: usize) -> Vec<f32> {
+    (0..size)
+        .map(|index| {
+            let phase = index as f32 / (size - 1) as f32;
+            0.5 - 0.5 * (std::f32::consts::TAU * phase).cos()
+        })
+        .collect()
 }
 
 fn smooth(current: f32, target: f32, frame_seconds: f32, attack_ms: f32, release_ms: f32) -> f32 {
@@ -257,6 +368,66 @@ mod tests {
                 "{frequency} Hz leaked across bands: {bands:?}"
             );
         }
+    }
+
+    fn continuous_sine(frequency: f32, sample_rate: u32, amplitude: f32) -> Vec<f32> {
+        (0..SPECTRUM_ANALYSIS_SIZE)
+            .map(|index| {
+                (std::f32::consts::TAU * frequency * index as f32 / sample_rate as f32).sin()
+                    * amplitude
+            })
+            .collect()
+    }
+
+    #[test]
+    fn each_band_centre_lands_in_its_own_spectrum_band() {
+        let settings = AudioAnalysisSettings {
+            spectrum_decibels: false,
+            ..immediate()
+        };
+        for band in 0..SPECTRUM_BANDS {
+            let centre = (SPECTRUM_BAND_EDGES_HZ[band] * SPECTRUM_BAND_EDGES_HZ[band + 1]).sqrt();
+            let mut analyzer = AudioAnalyzer::new(48_000);
+            let signal = continuous_sine(centre, 48_000, 0.8);
+            let mut snapshot = AudioSnapshot::default();
+            for chunk in signal.chunks(AUDIO_ANALYSIS_SIZE) {
+                snapshot = analyzer.analyze(chunk, settings);
+            }
+            let loudest = (0..SPECTRUM_BANDS)
+                .max_by(|a, b| snapshot.bands[*a].total_cmp(&snapshot.bands[*b]))
+                .unwrap();
+            assert_eq!(loudest, band, "{centre:.0} Hz gave {:?}", snapshot.bands);
+            assert!(
+                snapshot.bands[band] > 0.4,
+                "{centre:.0} Hz: {:?}",
+                snapshot.bands
+            );
+        }
+    }
+
+    #[test]
+    fn decibel_bands_and_band_gain_scale_quiet_signals() {
+        let signal = continuous_sine(3_500.0, 48_000, 0.01);
+        let run = |settings: AudioAnalysisSettings| {
+            let mut analyzer = AudioAnalyzer::new(48_000);
+            let mut snapshot = AudioSnapshot::default();
+            for chunk in signal.chunks(AUDIO_ANALYSIS_SIZE) {
+                snapshot = analyzer.analyze(chunk, settings);
+            }
+            snapshot.bands[5]
+        };
+        let decibels = run(immediate());
+        // 0.01 peak is about -43 dBFS RMS, so roughly 0.28 of a 60 dB range.
+        assert!((0.2..0.4).contains(&decibels), "decibel band {decibels}");
+        let mut boosted = immediate();
+        boosted.band_gains_db[5] = 12.0;
+        assert!((run(boosted) - decibels - 0.2).abs() < 0.02);
+        let mut cut = immediate();
+        cut.band_gains_db[4] = -24.0;
+        assert!(
+            (run(cut) - decibels).abs() < 1.0e-6,
+            "gain only touches its band"
+        );
     }
 
     #[test]

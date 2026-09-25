@@ -2,7 +2,10 @@
 
 use std::time::{Duration, Instant, SystemTime};
 
-use virtual_core::{ClockSource, ControlTarget, ControlUpdate, MidiRealtime, effect_parameter_key};
+use virtual_core::{
+    AudioBinding, AudioMapMode, ClockSource, ControlTarget, ControlUpdate, MAX_AUDIO_BINDINGS,
+    MidiRealtime, audio_map_source_label, effect_parameter_key,
+};
 use virtual_io::{
     AudioInput, AudioInputSnapshot, MidiClockSender, MidiInputConnection, MidiInputMessage,
     discover_audio_inputs, discover_midi_inputs, discover_midi_outputs,
@@ -43,21 +46,91 @@ impl State {
     pub(crate) fn connect_audio_input(&mut self, device_id: String) {
         self.audio_input = None;
         self.audio_snapshot = AudioInputSnapshot::default();
-        match AudioInput::connect(&device_id, self.ui.audio_analysis) {
+        self.ui.audio_map.reset();
+        match AudioInput::connect(&device_id, self.ui.audio_channel, self.ui.audio_analysis) {
             Ok(input) => {
                 self.ui.audio_device_id = device_id;
                 self.audio_snapshot = input.snapshot();
+                self.audio_status = match self.audio_snapshot.input_channel {
+                    Some(channel) => format!("Audio input connected · channel {}", channel + 1),
+                    None => "Audio input connected".to_owned(),
+                };
                 self.audio_input = Some(input);
-                self.audio_status = "Audio input connected".to_owned();
+                self.audio_wanted = true;
             }
             Err(error) => self.audio_status = format!("Audio connection failed: {error}"),
         }
     }
 
+    /// Reconnect the project's audio input if it is present right now.
+    pub(crate) fn restore_audio_input(&mut self, device_id: &str) {
+        if device_id.is_empty() {
+            if self.audio_wanted {
+                self.disconnect_audio_input();
+            }
+            return;
+        }
+        self.refresh_audio_inputs();
+        if self
+            .audio_inputs
+            .iter()
+            .any(|device| device.id == device_id)
+        {
+            self.connect_audio_input(device_id.to_owned());
+        } else {
+            self.ui.audio_device_id = device_id.to_owned();
+            self.audio_status = format!("Saved audio input {device_id} is not connected");
+        }
+    }
+
     pub(crate) fn disconnect_audio_input(&mut self) {
         self.audio_input = None;
+        self.audio_wanted = false;
         self.audio_snapshot = AudioInputSnapshot::default();
+        self.ui.audio_map.reset();
         self.audio_status = "Audio input disconnected".to_owned();
+    }
+
+    /// Bind the spectrum source armed in the audio panel to `target`.
+    pub(crate) fn map_audio_target(&mut self, target: ControlTarget) {
+        let Some(learn) = self.ui.audio_learn.take() else {
+            return;
+        };
+        if learn.restore_map_mode_off {
+            self.ui.midi_map_mode = false;
+        }
+        let bindings = &mut self.ui.audio_map.bindings;
+        bindings.retain(|binding| binding.source != learn.source || binding.target != target);
+        if bindings.len() >= MAX_AUDIO_BINDINGS {
+            self.audio_status = format!("Audio mapping limit of {MAX_AUDIO_BINDINGS} reached");
+            return;
+        }
+        bindings.push(AudioBinding::new(learn.source, target));
+        self.audio_status = format!(
+            "{} now drives {}",
+            audio_map_source_label(learn.source),
+            crate::ui::control_target_label(&self.ui, target)
+        );
+    }
+
+    /// Drive mapped controls from the latest spectrum.
+    ///
+    /// Continuous bindings stream at the analysis rate, so they bypass the
+    /// show journal the way a held fader would; triggers and gates are
+    /// discrete performance events and are journaled like MIDI.
+    pub(crate) fn apply_audio_mappings(&mut self, now: Instant) {
+        let analysis = self.audio_snapshot.analysis;
+        for (update, mode) in self.ui.audio_map.update(&analysis) {
+            if mode == AudioMapMode::Continuous && update.target != ControlTarget::TapTempo {
+                self.apply_control_update_unrecorded(update, now);
+            } else {
+                self.dispatch_control_update(
+                    update,
+                    CommandOrigin::Automation("audio".to_owned()),
+                    now,
+                );
+            }
+        }
     }
 
     pub(crate) fn refresh_midi_inputs(&mut self) {

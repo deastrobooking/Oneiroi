@@ -19,6 +19,8 @@ pub struct AudioInputDevice {
     pub id: String,
     pub label: String,
     pub is_default: bool,
+    /// Channels in the device's default input format; 0 when unknown.
+    pub channels: u16,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -26,6 +28,8 @@ pub struct AudioInputSnapshot {
     pub analysis: AudioSnapshot,
     pub sample_rate: u32,
     pub channels: u16,
+    /// Zero-based channel being analysed, or `None` for a mono mix of all.
+    pub input_channel: Option<u16>,
     pub queue_overruns: u64,
     pub callback_errors: u64,
 }
@@ -76,12 +80,16 @@ pub struct AudioInput {
     callback_errors: Arc<AtomicU64>,
     sample_rate: u32,
     channels: u16,
+    input_channel: Option<u16>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl AudioInput {
+    /// `input_channel` picks one zero-based channel of a multi-channel
+    /// interface; `None`, or a channel the device lacks, mixes all channels.
     pub fn connect(
         device_id: &str,
+        input_channel: Option<u16>,
         settings: AudioAnalysisSettings,
     ) -> Result<Self, AudioInputError> {
         let (_, device) = input_devices()?
@@ -95,6 +103,7 @@ impl AudioInput {
         let config = supported.config();
         let sample_rate = config.sample_rate.0;
         let channels = config.channels;
+        let input_channel = input_channel.filter(|channel| *channel < channels);
         let (sender, receiver) = sync_channel(AUDIO_QUEUE_CAPACITY);
         let queue_overruns = Arc::new(AtomicU64::new(0));
         let callback_errors = Arc::new(AtomicU64::new(0));
@@ -102,6 +111,7 @@ impl AudioInput {
             SampleFormat::F32 => build_stream::<f32>(
                 &device,
                 &config,
+                input_channel,
                 sender,
                 queue_overruns.clone(),
                 callback_errors.clone(),
@@ -109,6 +119,7 @@ impl AudioInput {
             SampleFormat::I16 => build_stream::<i16>(
                 &device,
                 &config,
+                input_channel,
                 sender,
                 queue_overruns.clone(),
                 callback_errors.clone(),
@@ -116,6 +127,7 @@ impl AudioInput {
             SampleFormat::U16 => build_stream::<u16>(
                 &device,
                 &config,
+                input_channel,
                 sender,
                 queue_overruns.clone(),
                 callback_errors.clone(),
@@ -137,6 +149,7 @@ impl AudioInput {
             callback_errors,
             sample_rate,
             channels,
+            input_channel,
             worker: Some(worker),
         })
     }
@@ -155,6 +168,7 @@ impl AudioInput {
             },
             sample_rate: self.sample_rate,
             channels: self.channels,
+            input_channel: self.input_channel,
             queue_overruns: self.queue_overruns.load(Ordering::Relaxed),
             callback_errors,
         }
@@ -184,6 +198,9 @@ fn input_devices() -> Result<Vec<(AudioInputDevice, cpal::Device)>, AudioInputEr
         let label = device
             .name()
             .unwrap_or_else(|_| "Unnamed audio input".to_owned());
+        let channels = device
+            .default_input_config()
+            .map_or(0, |config| config.channels());
         let occurrence = named_counts.entry(label.clone()).or_default();
         let id = format!("{label}#{occurrence}");
         *occurrence += 1;
@@ -192,6 +209,7 @@ fn input_devices() -> Result<Vec<(AudioInputDevice, cpal::Device)>, AudioInputEr
                 id,
                 is_default: default_name.as_deref() == Some(label.as_str()),
                 label,
+                channels,
             },
             device,
         ));
@@ -202,6 +220,7 @@ fn input_devices() -> Result<Vec<(AudioInputDevice, cpal::Device)>, AudioInputEr
 fn build_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
+    input_channel: Option<u16>,
     sender: SyncSender<AudioChunk>,
     queue_overruns: Arc<AtomicU64>,
     callback_errors: Arc<AtomicU64>,
@@ -217,11 +236,17 @@ where
             config,
             move |data: &[T], _| {
                 for frame in data.chunks(channels) {
-                    let mono = frame
-                        .iter()
-                        .map(|sample| sample.to_sample::<f32>())
-                        .sum::<f32>()
-                        / frame.len().max(1) as f32;
+                    let mono =
+                        match input_channel.and_then(|channel| frame.get(usize::from(channel))) {
+                            Some(sample) => sample.to_sample::<f32>(),
+                            None => {
+                                frame
+                                    .iter()
+                                    .map(|sample| sample.to_sample::<f32>())
+                                    .sum::<f32>()
+                                    / frame.len().max(1) as f32
+                            }
+                        };
                     chunk.samples[chunk.len] = mono;
                     chunk.len += 1;
                     if chunk.len == AUDIO_ANALYSIS_SIZE {

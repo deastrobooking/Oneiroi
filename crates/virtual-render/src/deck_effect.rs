@@ -14,7 +14,7 @@ use virtual_core::effect_parameter_key;
 
 use crate::{
     EffectPackageAbi, EffectPackageTarget, EffectParameterSchema, EffectParameterValue,
-    ValidatedEffectPackage, load_effect_package,
+    MODULATION_SOURCES, ValidatedEffectPackage, load_effect_package,
 };
 
 pub const DECK_EFFECT_PARAMETER_CAPACITY: usize = 32;
@@ -78,7 +78,7 @@ impl DeckPackageSlot {
         });
         self.parameters.truncate(DECK_EFFECT_PARAMETER_CAPACITY);
         for route in &mut self.modulation {
-            if route.source >= 10 || route.parameter_key == 0 {
+            if usize::from(route.source) >= MODULATION_SOURCES || route.parameter_key == 0 {
                 route.enabled = false;
             }
             route.amount = if route.amount.is_finite() {
@@ -89,7 +89,11 @@ impl DeckPackageSlot {
         }
     }
 
-    pub fn modulated(&self, sources: [f32; 10], schema: &[EffectParameterSchema]) -> Self {
+    pub fn modulated(
+        &self,
+        sources: [f32; MODULATION_SOURCES],
+        schema: &[EffectParameterSchema],
+    ) -> Self {
         let mut slot = self.clone();
         for parameter in schema {
             let key = effect_parameter_key(&slot.package_id, &parameter.id);
@@ -701,7 +705,7 @@ mod tests {
             parameter_key: effect_parameter_key("test-package", "amount"),
             amount: 0.5,
         };
-        let mut sources = [0.0; 10];
+        let mut sources = [0.0; MODULATION_SOURCES];
         sources[3] = 1.0;
 
         let modulated = slot.modulated(sources, &[schema]);

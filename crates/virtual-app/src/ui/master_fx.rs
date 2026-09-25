@@ -1,6 +1,6 @@
 //! Custom master effect controls and master modulation routing.
 
-use super::deck::{LfoFields, algorithm_tiles, draw_lfo_shape, modulation_meter};
+use super::deck::{LfoFields, algorithm_tiles, draw_lfo_shape, mod_source_combo, modulation_meter};
 use super::*;
 
 pub(super) fn draw_custom_effect(
@@ -246,17 +246,7 @@ pub(super) fn draw_master_modulation(
         for (index, route) in modulation.routes.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 ui.checkbox(&mut route.enabled, format!("{}", index + 1));
-                egui::ComboBox::from_id_salt(("master-mod-source", index))
-                    .selected_text(master_mod_source_label(route.source))
-                    .show_ui(ui, |ui| {
-                        for source in 0..10 {
-                            ui.selectable_value(
-                                &mut route.source,
-                                source,
-                                master_mod_source_label(source),
-                            );
-                        }
-                    });
+                mod_source_combo(ui, ("master-mod-source", index), &mut route.source);
                 egui::ComboBox::from_id_salt(("master-mod-target", index))
                     .selected_text(master_mod_target_label(route, effects, packages))
                     .show_ui(ui, |ui| {
@@ -311,26 +301,8 @@ pub(super) fn draw_master_modulation(
                 );
             });
         }
-        ui.weak("Sources: three master LFOs, audio analysis, beat and bar phase.");
+        ui.weak("Sources: three master LFOs, audio analysis, beat and bar phase, and the eight spectrum bands.");
     });
-}
-
-pub(super) fn master_mod_source_label(source: u8) -> &'static str {
-    [
-        "LFO 1",
-        "LFO 2",
-        "LFO 3",
-        "Audio RMS",
-        "Audio bass",
-        "Audio mid",
-        "Audio high",
-        "Audio transient",
-        "Beat phase",
-        "Bar phase",
-    ]
-    .get(usize::from(source))
-    .copied()
-    .unwrap_or("Unknown")
 }
 
 pub(super) fn master_mod_target_label(

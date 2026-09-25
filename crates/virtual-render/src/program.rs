@@ -9,19 +9,19 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use bytemuck::{Pod, Zeroable};
-use virtual_core::effect_parameter_key;
+use virtual_core::{AUDIO_MOD_SOURCES, effect_parameter_key};
 
 use crate::{
     EffectHistoryResource, EffectManifest, EffectPackageAbi, EffectPackageRole,
     EffectPackageTarget, EffectParameterSchema, ValidatedEffectPackage, load_effect_package,
-    mixer::{LfoShaping, LfoWaveform, lfo_cycle},
+    mixer::{LfoShaping, LfoWaveform, MODULATION_SOURCES, lfo_cycle, modulation_sources},
 };
 
 pub const PROGRAM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 pub const MASTER_EFFECT_SLOTS: usize = 2;
 pub const EFFECT_PARAMETER_CAPACITY: usize = 32;
 pub const MASTER_MODULATION_ROUTES: usize = 8;
-pub const MASTER_MODULATION_SOURCES: usize = 10;
+pub const MASTER_MODULATION_SOURCES: usize = MODULATION_SOURCES;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -313,19 +313,16 @@ impl MasterModulation {
         self,
         time_seconds: f32,
         beat_position: f32,
-        audio: [f32; 5],
+        audio: [f32; AUDIO_MOD_SOURCES],
     ) -> [f32; MASTER_MODULATION_SOURCES] {
-        let mut sources = [0.0; MASTER_MODULATION_SOURCES];
-        for (index, lfo) in self.lfos.into_iter().enumerate() {
-            if !lfo.enabled {
-                continue;
+        let lfos = self.lfos.map(|lfo| {
+            if lfo.enabled {
+                lfo.output(time_seconds, beat_position)
+            } else {
+                0.0
             }
-            sources[index] = lfo.output(time_seconds, beat_position);
-        }
-        sources[3..8].copy_from_slice(&audio.map(|value| value.clamp(0.0, 1.0)));
-        sources[8] = beat_position.rem_euclid(1.0);
-        sources[9] = (beat_position / 4.0).rem_euclid(1.0);
-        sources
+        });
+        modulation_sources(lfos, beat_position, audio)
     }
 }
 
@@ -837,7 +834,7 @@ impl MasterEffectProcessor {
             &MasterModulation::default(),
             time_seconds,
             0.0,
-            [0.0; 5],
+            [0.0; AUDIO_MOD_SOURCES],
         );
     }
 
@@ -851,7 +848,7 @@ impl MasterEffectProcessor {
         modulation: &MasterModulation,
         time_seconds: f32,
         beat_position: f32,
-        audio: [f32; 5],
+        audio: [f32; AUDIO_MOD_SOURCES],
     ) {
         let modulation_sources = modulation.source_values(time_seconds, beat_position, audio);
         let feedback_active = chain
@@ -1696,7 +1693,11 @@ mod tests {
         let mut modulation = MasterModulation::default();
         modulation.lfos[0].enabled = true;
         modulation.lfos[0].waveform = LfoWaveform::Square;
-        let sources = modulation.source_values(0.0, 5.5, [0.1, 0.2, 0.3, 0.4, 0.5]);
+        let mut audio = [0.0; AUDIO_MOD_SOURCES];
+        audio[..5].copy_from_slice(&[0.1, 0.2, 0.3, 0.4, 0.5]);
+        audio[AUDIO_MOD_SOURCES - 1] = 0.9;
+        let sources = modulation.source_values(0.0, 5.5, audio);
+        assert_eq!(sources[MASTER_MODULATION_SOURCES - 1], 0.9);
         assert_eq!(sources[0], 0.5);
         assert_eq!(&sources[3..8], &[0.1, 0.2, 0.3, 0.4, 0.5]);
         assert_eq!(sources[8], 0.5);

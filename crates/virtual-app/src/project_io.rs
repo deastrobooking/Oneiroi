@@ -43,6 +43,9 @@ impl State {
             },
         );
         snapshot.settings.midi_devices = self.midi_wanted.iter().cloned().collect();
+        if self.audio_wanted {
+            snapshot.settings.audio_input.device = self.ui.audio_device_id.clone();
+        }
         snapshot
     }
 
@@ -206,6 +209,7 @@ impl State {
         // the rest reconnects automatically when it appears.
         self.refresh_midi_inputs();
         self.restore_midi_clock_output();
+        self.restore_audio_input(&project_file.settings.audio_input.device);
 
         for deck in DeckId::ALL {
             let index = deck.index();

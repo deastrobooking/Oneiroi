@@ -214,6 +214,7 @@ impl State {
                 ui::UiAction::MidiClockContinue => self.continue_midi_clock(),
                 ui::UiAction::MidiLearn(target) => self.midi.learn(target),
                 ui::UiAction::MidiCancelLearn => self.midi.cancel_learn(),
+                ui::UiAction::AudioMapTarget(target) => self.map_audio_target(target),
                 ui::UiAction::MidiClearTarget(target) => self.midi.clear_target(target),
                 ui::UiAction::MidiRemoveBinding(index) => {
                     if index < self.midi.bindings.len() {

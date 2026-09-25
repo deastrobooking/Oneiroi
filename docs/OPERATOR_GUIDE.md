@@ -402,16 +402,18 @@ active and unsoloed.
 Open **LFOs + Mod Matrix** on a deck.
 
 Each deck has three LFO sources. An LFO can run in Hz or synchronize to the
-internal beat clock at 1/16, 1/8, 1/4, 1/2, 1, 2, 4 or 8 beats per cycle.
-Waveforms are sine, triangle, saw up, saw down and square.
+internal beat clock at 1/16 to 8 beats per cycle, including triplet and dotted
+divisions. Waveforms are sine, triangle, saw up, saw down, square, sample & hold
+and smooth random. **Unipolar** keeps the output between 0 and 1, **Invert**
+flips it, and **Offset** shifts the whole wave.
 
 Enable **Direct** for a simple one-source/one-destination assignment. Disable
 Direct to use the LFO only as a matrix source.
 
 The matrix has eight routes per deck:
 
-- Choose LFO 1–3, Audio RMS, bass, mid, high, transient, beat phase or bar
-  phase as the source.
+- Choose LFO 1–3, Audio RMS, bass, mid, high, transient, beat phase, bar
+  phase or any of the eight spectrum bands as the source.
 - Choose any continuous effect parameter as the destination.
 - Set an amount from `-1.0` to `+1.0`.
 - Negative amounts invert the modulation.
@@ -419,12 +421,47 @@ The matrix has eight routes per deck:
 
 ## Audio-reactive modulation
 
-Choose an input in the **Audio** toolbar and click **Connect**. On macOS, grant
-microphone/audio-input permission if prompted. The analysis panel displays RMS,
-bass, mid, high and transient meters plus sample rate, channel count, bounded
-queue overruns and callback errors.
+Open the **AUDIO SPECTRUM** strip below the clip grid. Choose an input (the
+built-in microphone or any audio interface) and click **Connect**. On macOS,
+grant microphone/audio-input permission if prompted. For a multi-channel
+interface, pick one channel or **All channels (mono mix)**; changing the
+channel while connected reconnects immediately. The strip's header shows a live
+mini-spectrum even when collapsed.
 
-Analysis controls are:
+### 8-band spectrum EQ
+
+The spectrum splits the input into eight bands: Sub 20–60 Hz, Bass 60–150 Hz,
+Low mid 150–400 Hz, Mid 400 Hz–1 kHz, Upper mid 1–2.5 kHz, Presence 2.5–5 kHz,
+Brilliance 5–10 kHz and Air 10–20 kHz. Each band has a live bar with a falling
+peak marker and a gain slider from −24 to +24 dB (double-click resets it).
+**Flat EQ** clears the gains; **Music tilt** lifts the quieter upper bands so
+every band moves on typical music. **dB** scale maps the chosen range below
+full scale onto 0–1 and keeps quiet bands visible; **Linear** follows raw
+amplitude with the gain and noise-floor controls.
+
+### Mapping bands to controls
+
+Press **Map** under a band (or under Level or Transient), then click any
+highlighted control: map mode switches on while you choose and switches back
+off afterwards. The mapping table lists every binding with:
+
+- **Mode**: *Continuous* follows the band across the output range; *Trigger*
+  fires once each time the band crosses the threshold (clip and scene launches,
+  restart, tap tempo); *Gate* holds the control on while the band is above the
+  threshold (blackout, freeze, play). Launch-style controls default to Trigger
+  or Gate.
+- **Threshold** for Trigger and Gate, drawn as a marker on the band's bar.
+- **Band in**: the part of the band's 0–1 range that spans the whole output.
+- **Output**: the value range sent to the control.
+- **Inv** to invert, a live meter, and ✕ to remove.
+
+The control picker also lists the parameters of the algorithms loaded on each
+deck and master slot. Continuous mappings drive their control directly and are
+not written to the show journal; triggers and gates are journaled like MIDI.
+Mappings, band gains, the scale and the input device and channel are saved
+with the project, and the input reconnects on load when it is present.
+
+Analysis controls, under **Input response**, are:
 
 - **Gain**: scales all normalized signals.
 - **Noise floor**: suppresses low-level room/device noise.

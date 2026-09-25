@@ -4,6 +4,7 @@
 //! plain values that get read into a per-frame snapshot, which is the same
 //! path the parameter/modulation system takes later.
 
+mod audio;
 mod clips;
 mod deck;
 mod diagnostics;
@@ -28,8 +29,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use virtual_core::{
-    AudioAnalysisSettings, ClockSource, ControlTarget, FIXED_DECK_EFFECT_PARAMETER_COUNT,
-    FrameTime, MappingMode, MidiMapper, Quantization, TempoClock, effect_parameter_key,
+    AUDIO_MAP_SOURCES, AudioAnalysisSettings, AudioBinding, AudioMapMode, AudioMapper, ClockSource,
+    ControlTarget, FIXED_DECK_EFFECT_PARAMETER_COUNT, FrameTime, MappingMode, MidiMapper,
+    Quantization, SPECTRUM_BAND_EDGES_HZ, SPECTRUM_BAND_LABELS, SPECTRUM_BANDS, TempoClock,
+    audio_map_source_label, audio_map_sources, effect_parameter_key,
 };
 use virtual_io::{
     AudioInputDevice, AudioInputSnapshot, MidiInputDevice, MidiInputStats, MidiOutputDevice,
@@ -43,8 +46,9 @@ use virtual_render::{
     BlendModeGroup, DeckEffects, DeckLfos, DeckPackageModulationRoute, DeckPackageSlot,
     DeckTransform, EffectDescriptor, EffectHistoryResource, EffectLfo, EffectParameterControl,
     EffectParameterValue, EffectPreset, EffectTarget, LayerBlendMode, LfoShaping, LfoWaveform,
-    MASTER_MODULATION_SOURCES, MOD_ROUTES_PER_DECK, MasterEffectChain, MasterEffectKind,
-    MasterEffectSlot, MasterLfo, MasterModulation, ModulationRoute, SourceMode,
+    MASTER_MODULATION_SOURCES, MOD_ROUTES_PER_DECK, MODULATION_SOURCES, MasterEffectChain,
+    MasterEffectKind, MasterEffectSlot, MasterLfo, MasterModulation, ModulationRoute,
+    SPECTRUM_SOURCE_OFFSET, SourceMode,
 };
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.
@@ -79,7 +83,7 @@ pub struct UiState {
     pub bypassed: [bool; 4],
     pub lfos: [DeckLfos; 4],
     /// Last rendered modulation source values per deck, for UI meters.
-    pub mod_sources: [[f32; 10]; 4],
+    pub mod_sources: [[f32; MODULATION_SOURCES]; 4],
     pub master_mod_sources: [f32; MASTER_MODULATION_SOURCES],
     pub bpm: f64,
     pub quantization: Quantization,
@@ -92,6 +96,13 @@ pub struct UiState {
     pub capture_pixel_format: virtual_media::CapturePixelFormat,
     pub audio_device_id: String,
     pub audio_analysis: AudioAnalysisSettings,
+    /// Zero-based interface channel to analyse, or `None` to mix all.
+    pub audio_channel: Option<u16>,
+    pub audio_map: AudioMapper,
+    /// Spectrum source waiting for a control click in map mode.
+    pub audio_learn: Option<AudioLearn>,
+    /// Decaying per-band peaks for the spectrum display.
+    pub spectrum_peaks: [f32; SPECTRUM_BANDS],
     pub midi_device_id: String,
     pub midi_target: ControlTarget,
     /// Where the transport takes its tempo from.
@@ -154,7 +165,7 @@ impl Default for UiState {
             solo: [false; 4],
             bypassed: [false; 4],
             lfos: [DeckLfos::default(); 4],
-            mod_sources: [[0.0; 10]; 4],
+            mod_sources: [[0.0; MODULATION_SOURCES]; 4],
             master_mod_sources: [0.0; MASTER_MODULATION_SOURCES],
             bpm: 120.0,
             quantization: Quantization::Immediate,
@@ -167,6 +178,10 @@ impl Default for UiState {
             capture_pixel_format: virtual_media::CapturePixelFormat::Auto,
             audio_device_id: String::new(),
             audio_analysis: AudioAnalysisSettings::default(),
+            audio_channel: None,
+            audio_map: AudioMapper::default(),
+            audio_learn: None,
+            spectrum_peaks: [0.0; SPECTRUM_BANDS],
             midi_device_id: String::new(),
             midi_target: ControlTarget::Crossfader,
             midi_clock_source: ClockSource::Internal,
@@ -320,6 +335,19 @@ impl FpsMeter {
     }
 }
 
+/// Human-readable name of a control, including loaded package parameters.
+pub fn control_target_label(state: &UiState, target: ControlTarget) -> String {
+    midi::midi_target_label_for_state(target, state)
+}
+
+/// A spectrum source armed for click-to-map.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AudioLearn {
+    pub source: u8,
+    /// Map mode was off when learning started, so turn it off again after.
+    pub restore_map_mode_off: bool,
+}
+
 #[derive(Clone, Debug)]
 pub enum UiAction {
     Restart(DeckId),
@@ -380,6 +408,8 @@ pub enum UiAction {
     MidiClockContinue,
     MidiLearn(ControlTarget),
     MidiCancelLearn,
+    /// Bind the armed spectrum source to this control.
+    AudioMapTarget(ControlTarget),
     MidiClearTarget(ControlTarget),
     MidiRemoveBinding(usize),
     ConnectCamera {
@@ -525,6 +555,10 @@ pub(super) struct MidiMapUi {
     pub learning: Option<ControlTarget>,
     /// (target, device) pairs for every existing binding.
     pub mapped: Vec<(ControlTarget, String)>,
+    /// Spectrum source armed for click-to-map, if any.
+    pub audio_learning: Option<u8>,
+    /// (target, source) pairs for every audio binding.
+    pub audio_mapped: Vec<(ControlTarget, u8)>,
     pub palette: ThemePalette,
 }
 
@@ -534,6 +568,12 @@ impl MidiMapUi {
             .iter()
             .filter(|(mapped, _)| *mapped == target)
             .map(|(_, device)| device.as_str())
+            .chain(
+                self.audio_mapped
+                    .iter()
+                    .filter(|(mapped, _)| *mapped == target)
+                    .map(|(_, source)| audio_map_source_label(*source)),
+            )
             .collect()
     }
 }
@@ -554,6 +594,30 @@ pub(super) fn mappable(
         return add(ui);
     }
     let response = ui.add_enabled_ui(false, add).inner;
+    if let Some(source) = map.audio_learning {
+        let rect = response.rect.expand(2.0);
+        ui.painter().rect(
+            rect,
+            4.0,
+            map.palette.control_tint(map.palette.success, 0.22),
+            egui::Stroke::new(1.5, map.palette.success),
+            egui::StrokeKind::Outside,
+        );
+        let hit = ui
+            .interact(
+                rect,
+                response.id.with("audio-map-overlay"),
+                egui::Sense::click(),
+            )
+            .on_hover_text(format!(
+                "Click to drive this from the {} band",
+                audio_map_source_label(source)
+            ));
+        if hit.clicked() {
+            actions.push(UiAction::AudioMapTarget(target));
+        }
+        return response;
+    }
     let armed = map.learning == Some(target);
     let devices = map.devices_for(target);
     let (tint, stroke) = if armed {
@@ -626,6 +690,13 @@ pub fn draw(
             .iter()
             .map(|binding| (binding.target, binding.device.clone()))
             .collect(),
+        audio_learning: state.audio_learn.map(|learn| learn.source),
+        audio_mapped: state
+            .audio_map
+            .bindings
+            .iter()
+            .map(|binding| (binding.target, binding.source))
+            .collect(),
         palette,
     };
 
@@ -655,6 +726,20 @@ pub fn draw(
                     cameras: metrics.cameras,
                     camera_status: metrics.camera_status,
                     camera_recordings: metrics.camera_recordings,
+                },
+                &mut actions,
+            );
+
+            ui.separator();
+            audio::draw_audio_panel(
+                ui,
+                state,
+                audio::AudioPanelContext {
+                    inputs: metrics.audio_inputs,
+                    status: metrics.audio_status,
+                    connected: metrics.audio_connected,
+                    snapshot: metrics.audio_snapshot,
+                    palette,
                 },
                 &mut actions,
             );

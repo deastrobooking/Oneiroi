@@ -6,11 +6,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use virtual_core::FIXED_DECK_EFFECT_PARAMETER_COUNT;
+use virtual_core::{
+    AUDIO_MAP_SOURCES, FIXED_DECK_EFFECT_PARAMETER_COUNT, MAX_AUDIO_BINDINGS, SPECTRUM_BANDS,
+};
 use virtual_graph::ProjectGraph;
 
 pub const PROJECT_FORMAT: &str = "oneiroi-project";
 pub const PROJECT_VERSION: u32 = 6;
+/// Three LFOs, five audio sources, beat, bar, then eight spectrum bands.
+pub const MODULATION_SOURCES: usize = 10 + SPECTRUM_BANDS;
 /// Enabled, rate, depth, phase and offset.
 pub const LFO_CONTROL_PARAMETERS: u8 = 5;
 const MINIMUM_PROJECT_VERSION: u32 = 1;
@@ -33,6 +37,8 @@ pub struct ProjectFile {
     pub decks: Vec<DeckProject>,
     #[serde(default)]
     pub midi_mappings: Vec<MidiMappingProject>,
+    #[serde(default)]
+    pub audio_mappings: Vec<AudioMappingProject>,
 }
 
 impl Default for ProjectFile {
@@ -56,6 +62,7 @@ impl Default for ProjectFile {
                 })
                 .collect(),
             midi_mappings: Vec::new(),
+            audio_mappings: Vec::new(),
         }
     }
 }
@@ -191,10 +198,10 @@ impl ProjectFile {
                         || !effect_value(lfo.offset, -1.0, 1.0)
                 })
                 || deck.mod_routes.len() > 8
-                || deck
-                    .mod_routes
-                    .iter()
-                    .any(|route| route.source >= 10 || !effect_value(route.amount, -1.0, 1.0))
+                || deck.mod_routes.iter().any(|route| {
+                    usize::from(route.source) >= MODULATION_SOURCES
+                        || !effect_value(route.amount, -1.0, 1.0)
+                })
                 || deck.camera.as_ref().is_some_and(|camera| {
                     camera.device_id.is_empty()
                         || camera.fps_denominator == 0
@@ -250,6 +257,40 @@ impl ProjectFile {
             {
                 return Err(ProjectError::InvalidValue(
                     "MIDI mapping contains an unsupported value".to_owned(),
+                ));
+            }
+        }
+        if self.audio_mappings.len() > MAX_AUDIO_BINDINGS
+            || !valid_device_id(&self.settings.audio_input.device)
+            || self
+                .settings
+                .audio_input
+                .channel
+                .is_some_and(|channel| channel >= 256)
+            || !self
+                .settings
+                .audio_analysis
+                .band_gains_db
+                .iter()
+                .all(|gain| effect_value(*gain, -24.0, 24.0))
+            || !effect_value(self.settings.audio_analysis.spectrum_range_db, 12.0, 96.0)
+        {
+            return Err(ProjectError::InvalidValue(
+                "audio input settings contain an unsupported value".to_owned(),
+            ));
+        }
+        for mapping in &self.audio_mappings {
+            if usize::from(mapping.source) >= AUDIO_MAP_SOURCES
+                || !valid_control_target(mapping.target)
+                || !unit(mapping.threshold)
+                || mapping
+                    .input_range
+                    .iter()
+                    .chain(mapping.output_range.iter())
+                    .any(|value| !value.is_finite())
+            {
+                return Err(ProjectError::InvalidValue(
+                    "audio mapping contains an unsupported value".to_owned(),
                 ));
             }
         }
@@ -318,7 +359,7 @@ fn valid_deck_package(package: &DeckPackageProject) -> bool {
                 .all(|parameter| ids.insert(parameter.id.as_str()))
         }
         && package.modulation.iter().all(|route| {
-            route.source < 10
+            usize::from(route.source) < MODULATION_SOURCES
                 && (!route.enabled || route.parameter_key != 0)
                 && route.amount.is_finite()
                 && (-1.0..=1.0).contains(&route.amount)
@@ -358,7 +399,7 @@ fn valid_master_modulation(modulation: &MasterModulationProject) -> bool {
                 && effect_value(lfo.offset, -1.0, 1.0)
         })
         && modulation.routes.iter().all(|route| {
-            route.source < 10
+            usize::from(route.source) < MODULATION_SOURCES
                 && route.target_slot < 2
                 && effect_value(route.amount, -1.0, 1.0)
                 && (!route.enabled || route.parameter_key != 0)
@@ -426,6 +467,8 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub audio_analysis: AudioAnalysisProject,
     #[serde(default)]
+    pub audio_input: AudioInputProject,
+    #[serde(default)]
     pub master_effects: MasterEffectsProject,
     #[serde(default)]
     pub master_modulation: MasterModulationProject,
@@ -449,6 +492,7 @@ impl Default for ProjectSettings {
             master_opacity: 1.0,
             output: OutputProject::default(),
             audio_analysis: AudioAnalysisProject::default(),
+            audio_input: AudioInputProject::default(),
             master_effects: MasterEffectsProject::default(),
             master_modulation: MasterModulationProject::default(),
             theme: ThemeProject::default(),
@@ -744,6 +788,12 @@ pub struct AudioAnalysisProject {
     pub normalization_target: f32,
     #[serde(default = "default_normalization_speed")]
     pub normalization_speed_ms: f32,
+    #[serde(default)]
+    pub band_gains_db: [f32; SPECTRUM_BANDS],
+    #[serde(default = "yes")]
+    pub spectrum_decibels: bool,
+    #[serde(default = "default_spectrum_range")]
+    pub spectrum_range_db: f32,
 }
 
 impl Default for AudioAnalysisProject {
@@ -757,8 +807,61 @@ impl Default for AudioAnalysisProject {
             normalization: false,
             normalization_target: default_normalization_target(),
             normalization_speed_ms: default_normalization_speed(),
+            band_gains_db: [0.0; SPECTRUM_BANDS],
+            spectrum_decibels: true,
+            spectrum_range_db: default_spectrum_range(),
         }
     }
+}
+
+fn default_spectrum_range() -> f32 {
+    60.0
+}
+
+/// The audio input an audio-reactive rig listens to; reconnected on load.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AudioInputProject {
+    #[serde(default)]
+    pub device: String,
+    /// Zero-based interface channel, or `None` for a mono mix of all.
+    #[serde(default)]
+    pub channel: Option<u16>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioMapModeProject {
+    #[default]
+    Continuous,
+    Trigger,
+    Gate,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AudioMappingProject {
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// Bands 0-7, then 8 for level and 9 for transient.
+    pub source: u8,
+    pub target: ControlTargetProject,
+    #[serde(default = "unit_range")]
+    pub input_range: [f32; 2],
+    #[serde(default = "unit_range")]
+    pub output_range: [f32; 2],
+    #[serde(default)]
+    pub invert: bool,
+    #[serde(default)]
+    pub mode: AudioMapModeProject,
+    #[serde(default = "default_audio_threshold")]
+    pub threshold: f32,
+}
+
+fn unit_range() -> [f32; 2] {
+    [0.0, 1.0]
+}
+
+fn default_audio_threshold() -> f32 {
+    0.6
 }
 
 fn default_normalization_target() -> f32 {
@@ -1573,7 +1676,24 @@ mod tests {
             normalization: true,
             normalization_target: 0.6,
             normalization_speed_ms: 750.0,
+            band_gains_db: [-6.0, -3.0, 0.0, 1.5, 3.0, 6.0, 9.0, 12.0],
+            spectrum_decibels: false,
+            spectrum_range_db: 48.0,
         };
+        project.settings.audio_input = AudioInputProject {
+            device: "Scarlett 18i20 USB#0".to_owned(),
+            channel: Some(3),
+        };
+        project.audio_mappings.push(AudioMappingProject {
+            enabled: true,
+            source: 1,
+            target: ControlTargetProject::SceneLaunch { slot: 2 },
+            input_range: [0.1, 0.9],
+            output_range: [0.0, 1.0],
+            invert: false,
+            mode: AudioMapModeProject::Trigger,
+            threshold: 0.7,
+        });
         project.settings.master_effects.slots[0] = MasterEffectSlotProject {
             kind: MasterEffectKindProject::Blur,
             bypassed: false,

@@ -1,10 +1,11 @@
 use virtual_core::{
-    AudioAnalysisSettings, ClockSource, ControlTarget, MappingMode, MidiBinding, MidiMapper,
-    MidiMessage, MidiMessageKind, Quantization,
+    AudioAnalysisSettings, AudioBinding, AudioMapMode, AudioMapper, ClockSource, ControlTarget,
+    MappingMode, MidiBinding, MidiMapper, MidiMessage, MidiMessageKind, Quantization,
 };
 use virtual_io::{
-    AudioAnalysisProject, BlendModeProject, CameraProject, ClipLaunchModeProject,
-    ClipPlaybackProject, ClockSourceProject, ControlTargetProject, CrossfadeBusProject,
+    AudioAnalysisProject, AudioInputProject, AudioMapModeProject, AudioMappingProject,
+    BlendModeProject, CameraProject, ClipLaunchModeProject, ClipPlaybackProject,
+    ClockSourceProject, ControlTargetProject, CrossfadeBusProject,
     DeckPackageModulationRouteProject, DeckPackageProject, DeckProject, EffectGroupProject,
     EffectParameterValueProject, EffectProject, EffectSlotProject, EffectTargetProject,
     EndModeProject, LfoProject, LfoWaveformProject, MappingModeProject, MasterEffectKindProject,
@@ -62,6 +63,12 @@ pub fn snapshot(
                 composition_extent: ui.composition_extent,
             },
             audio_analysis: audio_analysis_to_project(ui.audio_analysis),
+            // The device is filled in by the caller, which knows whether the
+            // operator wants it connected.
+            audio_input: AudioInputProject {
+                device: String::new(),
+                channel: ui.audio_channel,
+            },
             master_effects: master_effects_to_project(&ui.master_effects),
             master_modulation: master_modulation_to_project(ui.master_modulation),
             theme: theme_to_project(&ui.theme),
@@ -144,6 +151,7 @@ pub fn snapshot(
             })
             .collect(),
         midi_mappings: midi.bindings.iter().map(midi_to_project).collect(),
+        audio_mappings: ui.audio_map.bindings.iter().map(audio_to_project).collect(),
         ..ProjectFile::default()
     }
 }
@@ -237,6 +245,15 @@ pub fn apply_master(project: &ProjectFile, ui: &mut UiState) {
     ui.composition_extent = project.settings.output.composition_extent;
     ui.custom_composition_extent = project.settings.output.composition_extent;
     ui.audio_analysis = audio_analysis_from_project(project.settings.audio_analysis);
+    ui.audio_channel = project.settings.audio_input.channel;
+    ui.audio_learn = None;
+    ui.audio_map = AudioMapper {
+        bindings: project
+            .audio_mappings
+            .iter()
+            .map(audio_from_project)
+            .collect(),
+    };
     ui.master_effects = master_effects_from_project(&project.settings.master_effects);
     ui.master_modulation = master_modulation_from_project(&project.settings.master_modulation);
     ui.midi_clock_source = clock_source_from_project(project.settings.midi_clock.source);
@@ -497,6 +514,9 @@ fn audio_analysis_to_project(settings: AudioAnalysisSettings) -> AudioAnalysisPr
         normalization: settings.normalization,
         normalization_target: settings.normalization_target,
         normalization_speed_ms: settings.normalization_speed_ms,
+        band_gains_db: settings.band_gains_db,
+        spectrum_decibels: settings.spectrum_decibels,
+        spectrum_range_db: settings.spectrum_range_db,
     }
 }
 
@@ -510,8 +530,43 @@ fn audio_analysis_from_project(settings: AudioAnalysisProject) -> AudioAnalysisS
         normalization: settings.normalization,
         normalization_target: settings.normalization_target,
         normalization_speed_ms: settings.normalization_speed_ms,
+        band_gains_db: settings.band_gains_db,
+        spectrum_decibels: settings.spectrum_decibels,
+        spectrum_range_db: settings.spectrum_range_db,
     }
     .sanitized()
+}
+
+fn audio_to_project(binding: &AudioBinding) -> AudioMappingProject {
+    AudioMappingProject {
+        enabled: binding.enabled,
+        source: binding.source,
+        target: target_to_project(binding.target),
+        input_range: binding.input_range,
+        output_range: binding.output_range,
+        invert: binding.invert,
+        mode: match binding.mode {
+            AudioMapMode::Continuous => AudioMapModeProject::Continuous,
+            AudioMapMode::Trigger => AudioMapModeProject::Trigger,
+            AudioMapMode::Gate => AudioMapModeProject::Gate,
+        },
+        threshold: binding.threshold,
+    }
+}
+
+fn audio_from_project(mapping: &AudioMappingProject) -> AudioBinding {
+    let mut binding = AudioBinding::new(mapping.source, target_from_project(mapping.target));
+    binding.enabled = mapping.enabled;
+    binding.input_range = mapping.input_range;
+    binding.output_range = mapping.output_range;
+    binding.invert = mapping.invert;
+    binding.mode = match mapping.mode {
+        AudioMapModeProject::Continuous => AudioMapMode::Continuous,
+        AudioMapModeProject::Trigger => AudioMapMode::Trigger,
+        AudioMapModeProject::Gate => AudioMapMode::Gate,
+    };
+    binding.threshold = mapping.threshold;
+    binding
 }
 
 fn blend_mode_to_project(mode: LayerBlendMode) -> BlendModeProject {
@@ -1045,6 +1100,49 @@ mod tests {
         binding.output_range = [-1.0, 1.0];
         binding.soft_takeover = true;
         assert_eq!(midi_from_project(&midi_to_project(&binding)), binding);
+    }
+
+    #[test]
+    fn audio_mapping_round_trips_every_setting() {
+        let mut binding = AudioBinding::new(
+            6,
+            ControlTarget::DeckEffectParameter {
+                deck: 2,
+                parameter_key: virtual_core::effect_parameter_key("kaleidoscope", "segments"),
+            },
+        );
+        binding.enabled = false;
+        binding.input_range = [0.15, 0.85];
+        binding.output_range = [0.2, 0.9];
+        binding.invert = true;
+        binding.mode = AudioMapMode::Gate;
+        binding.threshold = 0.42;
+        assert_eq!(audio_from_project(&audio_to_project(&binding)), binding);
+
+        let mut ui = UiState::default();
+        ui.audio_channel = Some(5);
+        ui.audio_analysis.band_gains_db[7] = 9.5;
+        ui.audio_map.bindings.push(binding);
+        let project = snapshot(
+            &ui,
+            &FourDeckMixer::default(),
+            &ClipBank::default(),
+            &[DeckTransport::default(); 4],
+            &MidiMapper::default(),
+            &std::array::from_fn(|_| None),
+            ProjectSessionMetadata {
+                project_id: "0123456789abcdef0123456789abcdef",
+                takes: Vec::new(),
+                graph: Default::default(),
+                random_seeds: Default::default(),
+            },
+        );
+        project.validate().expect("audio settings validate");
+        let mut restored = UiState::default();
+        apply_master(&project, &mut restored);
+        assert_eq!(restored.audio_channel, Some(5));
+        assert_eq!(restored.audio_analysis.band_gains_db[7], 9.5);
+        assert_eq!(restored.audio_map, ui.audio_map);
     }
 
     #[test]

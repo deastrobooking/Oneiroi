@@ -167,6 +167,9 @@ struct State {
     live_configs: [Option<CameraConfig>; 4],
     audio_inputs: Vec<AudioInputDevice>,
     audio_input: Option<AudioInput>,
+    /// Whether the operator wants the audio input connected; saved with the
+    /// project so an audio-reactive rig reconnects on load.
+    audio_wanted: bool,
     audio_snapshot: AudioInputSnapshot,
     audio_status: String,
     session_recoveries: Vec<recovery::RecoveryEntry>,
@@ -709,6 +712,7 @@ impl State {
             live_configs: std::array::from_fn(|_| None),
             audio_inputs,
             audio_input: None,
+            audio_wanted: false,
             audio_snapshot: AudioInputSnapshot::default(),
             audio_status,
             session_recoveries: Vec::new(),
@@ -753,6 +757,7 @@ impl State {
                     self.audio_snapshot.callback_errors
                 );
             }
+            self.apply_audio_mappings(now);
         }
         let time = self.clock.tick(now);
         let show_time = ShowTime {
@@ -969,14 +974,7 @@ impl State {
             .as_secs_f32();
         let beat_position = self.tempo.beat_at(f64::from(effect_time)) as f32;
         {
-            let audio = self.audio_snapshot.analysis;
-            let audio_sources = [
-                audio.rms,
-                audio.bass,
-                audio.mid,
-                audio.high,
-                audio.transient,
-            ];
+            let audio_sources = self.audio_snapshot.analysis.modulation_sources();
             self.ui.mod_sources = std::array::from_fn(|index| {
                 self.ui.lfos[index].source_values_with_audio(
                     effect_time,
@@ -1011,14 +1009,7 @@ impl State {
                         } else {
                             &self.program.view
                         };
-                        let audio = self.audio_snapshot.analysis;
-                        let audio_sources = [
-                            audio.rms,
-                            audio.bass,
-                            audio.mid,
-                            audio.high,
-                            audio.transient,
-                        ];
+                        let audio_sources = self.audio_snapshot.analysis.modulation_sources();
                         let deck_packages = std::array::from_fn(|index| {
                             let slot = &self.ui.deck_packages[index];
                             let schema = self
@@ -1085,7 +1076,6 @@ impl State {
                         );
                     }
                     BuiltInRenderStage::MasterEffects { .. } if master_effects_active => {
-                        let audio = self.audio_snapshot.analysis;
                         self.master_effect_processor.draw_modulated_at(
                             &self.gpu.queue,
                             &mut encoder,
@@ -1094,13 +1084,7 @@ impl State {
                             &self.ui.master_modulation,
                             effect_time,
                             beat_position,
-                            [
-                                audio.rms,
-                                audio.bass,
-                                audio.mid,
-                                audio.high,
-                                audio.transient,
-                            ],
+                            self.audio_snapshot.analysis.modulation_sources(),
                         );
                     }
                     BuiltInRenderStage::MasterEffects { .. }
