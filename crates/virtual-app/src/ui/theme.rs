@@ -7,11 +7,20 @@
 //! changed, because rebuilding the style each frame invalidates egui's style
 //! cache for no benefit.
 
+use virtual_io::{ThemeAppearanceProject, ThemeProject};
 use virtual_media::DeckId;
+
+mod presets;
+mod text_outline;
+pub use text_outline::outline_text;
 
 /// A complete operator colour scheme.
 #[derive(Clone, Copy, PartialEq)]
 pub struct ThemePalette {
+    pub text: egui::Color32,
+    pub muted_text: egui::Color32,
+    pub text_outline: egui::Color32,
+    pub outline_width: f32,
     pub background: egui::Color32,
     pub surface: egui::Color32,
     pub control: egui::Color32,
@@ -116,6 +125,10 @@ impl ThemePreset {
         let rgb = egui::Color32::from_rgb;
         match self {
             Self::Nocturne => ThemePalette {
+                text: rgb(236, 240, 248),
+                muted_text: rgb(165, 174, 192),
+                text_outline: rgb(0, 0, 0),
+                outline_width: 1.25,
                 background: rgb(12, 13, 20),
                 surface: rgb(22, 24, 35),
                 control: rgb(33, 36, 51),
@@ -138,6 +151,10 @@ impl ThemePreset {
                 dark: true,
             },
             Self::Ultraviolet => ThemePalette {
+                text: rgb(236, 240, 248),
+                muted_text: rgb(165, 174, 192),
+                text_outline: rgb(0, 0, 0),
+                outline_width: 1.25,
                 background: rgb(14, 10, 22),
                 surface: rgb(24, 18, 38),
                 control: rgb(36, 27, 56),
@@ -160,6 +177,10 @@ impl ThemePreset {
                 dark: true,
             },
             Self::Ember => ThemePalette {
+                text: rgb(236, 240, 248),
+                muted_text: rgb(165, 174, 192),
+                text_outline: rgb(0, 0, 0),
+                outline_width: 1.25,
                 background: rgb(18, 12, 10),
                 surface: rgb(30, 20, 17),
                 control: rgb(46, 30, 25),
@@ -182,6 +203,10 @@ impl ThemePreset {
                 dark: true,
             },
             Self::Cathode => ThemePalette {
+                text: rgb(236, 240, 248),
+                muted_text: rgb(165, 174, 192),
+                text_outline: rgb(0, 0, 0),
+                outline_width: 1.25,
                 background: rgb(8, 14, 10),
                 surface: rgb(14, 24, 17),
                 control: rgb(21, 36, 26),
@@ -204,6 +229,10 @@ impl ThemePreset {
                 dark: true,
             },
             Self::Daylight => ThemePalette {
+                text: rgb(25, 31, 43),
+                muted_text: rgb(85, 93, 111),
+                text_outline: rgb(255, 255, 255),
+                outline_width: 1.25,
                 background: rgb(236, 238, 244),
                 surface: rgb(248, 249, 252),
                 control: rgb(222, 226, 236),
@@ -363,102 +392,300 @@ impl DeckLayout {
     }
 }
 
-/// The operator's theme choices plus the bookkeeping to apply them lazily.
+/// Theme choices are saved in projects; the preset library is shared across shows.
 #[derive(Default)]
 pub struct ThemeState {
     pub preset: ThemePreset,
     pub accent_override: Option<egui::Color32>,
     pub density: Density,
     pub deck_layout: DeckLayout,
-    applied: Option<(ThemePreset, Option<egui::Color32>, Density)>,
+    pub appearance: ThemeAppearanceProject,
+    pub editor_open: bool,
+    library: presets::PresetLibrary,
+    preset_name: String,
+    selected_preset: String,
+    applied: Option<ThemeProject>,
 }
 
 impl ThemeState {
-    /// The preset palette with the operator's accent override folded in.
-    pub fn palette(&self) -> ThemePalette {
-        let mut palette = self.preset.palette();
-        if let Some(accent) = self.accent_override {
-            palette.accent = accent;
+    pub fn snapshot(&self) -> ThemeProject {
+        ThemeProject {
+            preset: self.preset.name().to_owned(),
+            accent: self.accent_override.map(|c| [c.r(), c.g(), c.b()]),
+            density: self.density.name().to_owned(),
+            deck_layout: self.deck_layout.name().to_owned(),
+            appearance: self.appearance.sanitized(),
         }
-        palette
     }
 
-    /// Re-style the context if the theme changed since the last frame.
+    pub fn restore(&mut self, project: &ThemeProject) {
+        if let Some(preset) = ThemePreset::from_name(&project.preset) {
+            self.preset = preset;
+        }
+        self.accent_override = project
+            .accent
+            .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b));
+        if let Some(density) = Density::from_name(&project.density) {
+            self.density = density;
+        }
+        if let Some(layout) = DeckLayout::from_name(&project.deck_layout) {
+            self.deck_layout = layout;
+        }
+        self.appearance = project.appearance.sanitized();
+    }
+
+    pub fn load_library(&mut self) {
+        self.library = presets::PresetLibrary::load_default();
+        if let Some(theme) = self.library.active().cloned() {
+            self.restore(&theme);
+        }
+    }
+
+    pub fn palette(&self) -> ThemePalette {
+        let mut p = self.preset.palette();
+        p.stroke = blend(p.stroke, p.text, 0.22);
+        p.outline_width = self.appearance.element_outline;
+        if let Some(accent) = self.accent_override {
+            p.accent = accent;
+        }
+        for (key, field) in palette_fields(&mut p) {
+            if let Some([r, g, b]) = self.appearance.colors.get(key) {
+                *field = egui::Color32::from_rgb(*r, *g, *b);
+            }
+        }
+        p
+    }
+
     pub fn ensure_applied(&mut self, ctx: &egui::Context) {
-        let key = (self.preset, self.accent_override, self.density);
-        if self.applied == Some(key) {
+        self.library.poll();
+        let key = self.snapshot();
+        if self.applied.as_ref() == Some(&key) {
             return;
         }
+        apply(ctx, &self.palette(), self.density, &self.appearance);
         self.applied = Some(key);
-        apply(ctx, &self.palette(), self.density);
     }
 
-    /// Body of the header's theme menu.
+    pub fn editor_ui(&mut self, ctx: &egui::Context) {
+        let mut open = self.editor_open;
+        egui::Window::new("Appearance")
+            .open(&mut open)
+            .default_width(440.0)
+            .default_height(620.0)
+            .resizable(true)
+            .vscroll(true)
+            .show(ctx, |ui| self.picker_ui(ui));
+        self.editor_open = open;
+    }
+
     pub fn picker_ui(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Preset").weak().small());
-        for preset in ThemePreset::ALL {
-            let palette = preset.palette();
-            ui.horizontal(|ui| {
-                for color in [palette.accent, palette.secondary, palette.deck[2]] {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-                    ui.painter().circle_filled(rect.center(), 4.0, color);
-                }
+        ui.heading("Make it yours");
+        ui.weak("Changes preview live. Save a named preset to reuse it across shows.");
+        ui.label("Built-in starting points");
+        ui.horizontal_wrapped(|ui| {
+            for preset in ThemePreset::ALL {
                 if ui
                     .selectable_label(self.preset == preset, preset.label())
                     .clicked()
                 {
                     self.preset = preset;
+                    self.accent_override = None;
+                    self.appearance.colors.clear();
                 }
+            }
+        });
+        ui.separator();
+        ui.strong("Definition & sizing");
+        ui.add(
+            egui::Slider::new(&mut self.appearance.element_outline, 0.0..=3.0)
+                .text("Element outlines"),
+        );
+        ui.add(
+            egui::Slider::new(&mut self.appearance.text_outline, 0.0..=1.5).text("Text outlines"),
+        );
+        ui.add(egui::Slider::new(&mut self.appearance.text_scale, 0.8..=1.5).text("Text size"));
+        ui.add(
+            egui::Slider::new(&mut self.appearance.corner_radius, 0..=16).text("Corner rounding"),
+        );
+        ui.weak("Set an outline width to zero to turn it off.");
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Spacing");
+            for density in Density::ALL {
+                ui.selectable_value(&mut self.density, density, density.label());
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Deck layout");
+            for layout in DeckLayout::ALL {
+                ui.selectable_value(&mut self.deck_layout, layout, layout.label());
+            }
+        });
+        ui.separator();
+        egui::CollapsingHeader::new("Custom colors")
+            .default_open(true)
+            .show(ui, |ui| {
+                let mut palette = self.palette();
+                egui::Grid::new("theme-colors")
+                    .num_columns(3)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        for (key, color) in palette_fields(&mut palette) {
+                            ui.label(color_label(key));
+                            let mut rgb = [color.r(), color.g(), color.b()];
+                            if ui.color_edit_button_srgb(&mut rgb).changed() {
+                                if key == "accent" {
+                                    self.accent_override = None;
+                                }
+                                self.appearance.colors.insert(key.to_owned(), rgb);
+                            }
+                            let custom = self.appearance.colors.contains_key(key)
+                                || (key == "accent" && self.accent_override.is_some());
+                            if ui.add_enabled(custom, egui::Button::new("Reset")).clicked() {
+                                self.appearance.colors.remove(key);
+                                if key == "accent" {
+                                    self.accent_override = None;
+                                }
+                            }
+                            ui.end_row();
+                        }
+                    });
             });
+        if ui.button("Reset appearance to built-in").clicked() {
+            self.appearance = ThemeAppearanceProject::default();
+            self.accent_override = None;
         }
         ui.separator();
-
-        ui.label(egui::RichText::new("Accent").weak().small());
-        ui.horizontal(|ui| {
-            let mut accent = self
-                .accent_override
-                .unwrap_or_else(|| self.preset.palette().accent);
-            if ui.color_edit_button_srgba(&mut accent).changed() {
-                self.accent_override = Some(accent);
-            }
-            if self.accent_override.is_some() && ui.button("Reset").clicked() {
-                self.accent_override = None;
-            }
-        });
-        ui.separator();
-
-        ui.label(egui::RichText::new("Density").weak().small());
-        ui.horizontal(|ui| {
-            for density in Density::ALL {
+        ui.strong("My presets");
+        let entries = self.library.entries().to_vec();
+        let busy = self.library.busy();
+        ui.add_enabled_ui(!busy, |ui| {
+            egui::ComboBox::from_id_salt("saved-theme")
+                .selected_text(if self.selected_preset.is_empty() {
+                    "Choose a saved preset"
+                } else {
+                    &self.selected_preset
+                })
+                .show_ui(ui, |ui| {
+                    for entry in &entries {
+                        ui.selectable_value(
+                            &mut self.selected_preset,
+                            entry.name.clone(),
+                            &entry.name,
+                        );
+                    }
+                });
+            ui.horizontal_wrapped(|ui| {
+                let selected = entries.iter().find(|e| e.name == self.selected_preset);
                 if ui
-                    .selectable_label(self.density == density, density.label())
+                    .add_enabled(selected.is_some(), egui::Button::new("Load"))
+                    .clicked()
+                    && let Some(entry) = selected
+                {
+                    self.restore(&entry.theme);
+                    self.preset_name.clone_from(&entry.name);
+                    self.library.select(entry.theme.clone());
+                }
+                if ui
+                    .add_enabled(selected.is_some(), egui::Button::new("Update selected"))
                     .clicked()
                 {
-                    self.density = density;
+                    self.library
+                        .save(&self.selected_preset, self.snapshot(), true);
                 }
-            }
-        });
-        ui.separator();
-
-        ui.label(egui::RichText::new("Deck layout").weak().small());
-        ui.horizontal(|ui| {
-            for layout in DeckLayout::ALL {
                 if ui
-                    .selectable_label(self.deck_layout == layout, layout.label())
+                    .add_enabled(selected.is_some(), egui::Button::new("Delete"))
                     .clicked()
                 {
-                    self.deck_layout = layout;
+                    self.library.delete(&self.selected_preset);
                 }
-            }
+            });
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.preset_name)
+                        .hint_text("New preset name")
+                        .char_limit(64)
+                        .desired_width(230.0),
+                );
+                if ui.button("Save new").clicked()
+                    && self.library.save(&self.preset_name, self.snapshot(), false)
+                {
+                    self.selected_preset = self.preset_name.trim().to_owned();
+                }
+            });
         });
+        if busy {
+            ui.spinner();
+        }
+        ui.label(self.library.status());
     }
 }
 
-fn apply(ctx: &egui::Context, palette: &ThemePalette, density: Density) {
+fn palette_fields(p: &mut ThemePalette) -> [(&'static str, &mut egui::Color32); 20] {
+    let [a, b, c, d] = &mut p.deck;
+    [
+        ("background", &mut p.background),
+        ("surface", &mut p.surface),
+        ("control", &mut p.control),
+        ("faint", &mut p.faint),
+        ("extreme", &mut p.extreme),
+        ("code", &mut p.code),
+        ("text", &mut p.text),
+        ("muted_text", &mut p.muted_text),
+        ("stroke", &mut p.stroke),
+        ("text_outline", &mut p.text_outline),
+        ("accent", &mut p.accent),
+        ("secondary", &mut p.secondary),
+        ("danger", &mut p.danger),
+        ("success", &mut p.success),
+        ("warning", &mut p.warning),
+        ("idle", &mut p.idle),
+        ("deck_a", a),
+        ("deck_b", b),
+        ("deck_c", c),
+        ("deck_d", d),
+    ]
+}
+
+fn color_label(key: &str) -> &str {
+    match key {
+        "background" => "Background",
+        "surface" => "Panels",
+        "control" => "Controls",
+        "faint" => "Inset panels",
+        "extreme" => "Input fields",
+        "code" => "Code fields",
+        "text" => "Text",
+        "muted_text" => "Secondary text",
+        "stroke" => "Element outlines",
+        "text_outline" => "Text outlines",
+        "accent" => "Accent",
+        "secondary" => "Secondary accent",
+        "danger" => "Alerts / blackout",
+        "success" => "Active / healthy",
+        "warning" => "Warnings",
+        "idle" => "Idle indicators",
+        "deck_a" => "Deck A",
+        "deck_b" => "Deck B",
+        "deck_c" => "Deck C",
+        "deck_d" => "Deck D",
+        _ => key,
+    }
+}
+
+fn apply(
+    ctx: &egui::Context,
+    palette: &ThemePalette,
+    density: Density,
+    appearance: &ThemeAppearanceProject,
+) {
     let theme = ctx.theme();
     let mut style = (*ctx.style_of(theme)).clone();
 
+    // Start from base font sizes so repeated edits never compound the scale.
+    style.text_styles = egui::Style::default().text_styles;
+    for font in style.text_styles.values_mut() {
+        font.size *= appearance.text_scale;
+    }
     style.spacing.item_spacing = density.item_spacing();
     style.spacing.button_padding = density.button_padding();
     style.spacing.interact_size.y = density.interact_height();
@@ -469,6 +696,12 @@ fn apply(ctx: &egui::Context, palette: &ThemePalette, density: Density) {
     } else {
         egui::Visuals::light()
     };
+    style.visuals.override_text_color = Some(palette.text);
+    style.visuals.weak_text_color = Some(palette.muted_text);
+    style.visuals.widgets.noninteractive.bg_stroke =
+        egui::Stroke::new(palette.outline_width, palette.stroke);
+    style.visuals.widgets.inactive.bg_stroke =
+        egui::Stroke::new(palette.outline_width, palette.stroke);
     style.visuals.panel_fill = palette.background;
     style.visuals.window_fill = palette.surface;
     style.visuals.extreme_bg_color = palette.extreme;
@@ -491,10 +724,13 @@ fn apply(ctx: &egui::Context, palette: &ThemePalette, density: Density) {
     let hovered = blend(palette.control, palette.accent, 0.18);
     style.visuals.widgets.hovered.weak_bg_fill = hovered;
     style.visuals.widgets.hovered.bg_fill = hovered;
-    style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, palette.accent_hover());
+    style.visuals.widgets.hovered.bg_stroke =
+        egui::Stroke::new(palette.outline_width, palette.accent_hover());
     style.visuals.widgets.active.bg_fill = blend(palette.control, palette.accent, 0.35);
-    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, palette.accent);
-    style.visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, palette.secondary);
+    style.visuals.widgets.active.bg_stroke =
+        egui::Stroke::new(palette.outline_width, palette.accent);
+    style.visuals.widgets.open.bg_stroke =
+        egui::Stroke::new(palette.outline_width, palette.secondary);
     for widget in [
         &mut style.visuals.widgets.noninteractive,
         &mut style.visuals.widgets.inactive,
@@ -502,11 +738,13 @@ fn apply(ctx: &egui::Context, palette: &ThemePalette, density: Density) {
         &mut style.visuals.widgets.active,
         &mut style.visuals.widgets.open,
     ] {
-        widget.corner_radius = egui::CornerRadius::same(6);
+        widget.corner_radius = egui::CornerRadius::same(appearance.corner_radius);
     }
-    style.visuals.window_stroke = egui::Stroke::new(1.0, palette.stroke);
-    style.visuals.window_corner_radius = egui::CornerRadius::same(10);
-    style.visuals.menu_corner_radius = egui::CornerRadius::same(8);
+    style.visuals.window_stroke = egui::Stroke::new(palette.outline_width, palette.stroke);
+    style.visuals.window_corner_radius =
+        egui::CornerRadius::same(appearance.corner_radius.saturating_add(4));
+    style.visuals.menu_corner_radius =
+        egui::CornerRadius::same(appearance.corner_radius.saturating_add(2));
     style.visuals.collapsing_header_frame = true;
 
     ctx.set_style_of(theme, style);

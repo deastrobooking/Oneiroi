@@ -307,32 +307,11 @@ fn master_effects_from_project(effects: &MasterEffectsProject) -> MasterEffectCh
 }
 
 fn theme_to_project(theme: &crate::ui::theme::ThemeState) -> ThemeProject {
-    ThemeProject {
-        preset: theme.preset.name().to_owned(),
-        accent: theme
-            .accent_override
-            .map(|color| [color.r(), color.g(), color.b()]),
-        density: theme.density.name().to_owned(),
-        deck_layout: theme.deck_layout.name().to_owned(),
-    }
+    theme.snapshot()
 }
 
-/// Unknown names (from a newer build's presets) keep the current value
-/// rather than failing the load.
 fn theme_from_project(project: &ThemeProject, theme: &mut crate::ui::theme::ThemeState) {
-    use crate::ui::theme::{DeckLayout, Density, ThemePreset};
-    if let Some(preset) = ThemePreset::from_name(&project.preset) {
-        theme.preset = preset;
-    }
-    theme.accent_override = project
-        .accent
-        .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b));
-    if let Some(density) = Density::from_name(&project.density) {
-        theme.density = density;
-    }
-    if let Some(layout) = DeckLayout::from_name(&project.deck_layout) {
-        theme.deck_layout = layout;
-    }
+    theme.restore(project);
 }
 
 fn master_modulation_to_project(modulation: MasterModulation) -> MasterModulationProject {
@@ -1114,6 +1093,7 @@ mod tests {
             accent: None,
             density: "sparse".to_owned(),
             deck_layout: "orbital".to_owned(),
+            ..Default::default()
         };
         theme_from_project(&stranger, &mut restored);
         assert_eq!(restored.preset, ThemePreset::Ember);

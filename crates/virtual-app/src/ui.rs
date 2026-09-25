@@ -928,6 +928,9 @@ pub fn draw(
                     });
             }
         });
+    if !state.show_mode {
+        state.theme.editor_ui(ctx);
+    }
     draw_midi_manager(ctx, state, &mut metrics.midi, &palette, &mut actions);
     actions
 }

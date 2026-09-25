@@ -492,6 +492,55 @@ pub struct ThemeProject {
     pub accent: Option<[u8; 3]>,
     pub density: String,
     pub deck_layout: String,
+    #[serde(default)]
+    pub appearance: ThemeAppearanceProject,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeAppearanceProject {
+    pub colors: std::collections::BTreeMap<String, [u8; 3]>,
+    pub element_outline: f32,
+    pub text_outline: f32,
+    pub text_scale: f32,
+    pub corner_radius: u8,
+}
+
+impl Default for ThemeAppearanceProject {
+    fn default() -> Self {
+        Self {
+            colors: Default::default(),
+            element_outline: 1.25,
+            text_outline: 0.5,
+            text_scale: 1.0,
+            corner_radius: 6,
+        }
+    }
+}
+
+impl ThemeAppearanceProject {
+    pub fn sanitized(&self) -> Self {
+        let defaults = Self::default();
+        let bounded = |value: f32, min: f32, max: f32, fallback: f32| {
+            if value.is_finite() {
+                value.clamp(min, max)
+            } else {
+                fallback
+            }
+        };
+        Self {
+            colors: self
+                .colors
+                .iter()
+                .take(32)
+                .map(|(k, v)| (k.clone(), *v))
+                .collect(),
+            element_outline: bounded(self.element_outline, 0.0, 3.0, defaults.element_outline),
+            text_outline: bounded(self.text_outline, 0.0, 1.5, defaults.text_outline),
+            text_scale: bounded(self.text_scale, 0.8, 1.5, defaults.text_scale),
+            corner_radius: self.corner_radius.min(16),
+        }
+    }
 }
 
 impl Default for ThemeProject {
@@ -501,6 +550,7 @@ impl Default for ThemeProject {
             accent: None,
             density: "cozy".to_owned(),
             deck_layout: "auto".to_owned(),
+            appearance: ThemeAppearanceProject::default(),
         }
     }
 }

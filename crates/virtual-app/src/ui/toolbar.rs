@@ -131,9 +131,12 @@ pub(super) fn draw_toolbar(
                 }
             }
             if !state.show_mode {
-                ui.menu_button("Theme", |ui| {
-                    state.theme.picker_ui(ui);
-                });
+                if ui
+                    .selectable_label(state.theme.editor_open, "Appearance")
+                    .clicked()
+                {
+                    state.theme.editor_open = !state.theme.editor_open;
+                }
                 if ui
                     .selectable_label(state.midi_manager_open, "MIDI")
                     .on_hover_text("Open the MIDI Manager window")

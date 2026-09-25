@@ -442,6 +442,7 @@ impl State {
         let (output_monitors, output_displays) = describe_monitors(monitor_handles);
         let workspace = paths::workspace_directory().context("open application workspace")?;
         let mut ui = ui::UiState::default();
+        ui.theme.load_library();
         let effect_roots = effects::effect_resource_roots(&workspace);
         ui.effect_manifest_path = effects::bundled_processor_manifest(&effect_roots)
             .or_else(|| {
@@ -941,7 +942,13 @@ impl State {
         self.egui_state
             .handle_platform_output(&self.window, output.platform_output);
         let pixels_per_point = ctx.pixels_per_point();
-        let paint_jobs = ctx.tessellate(output.shapes, pixels_per_point);
+        let mut shapes = output.shapes;
+        ui::theme::outline_text(
+            &mut shapes,
+            self.ui.theme.appearance.text_outline,
+            self.ui.theme.palette().text_outline,
+        );
+        let paint_jobs = ctx.tessellate(shapes, pixels_per_point);
 
         // Texture deltas are applied before the surface is acquired, and
         // therefore before anything can make us bail out of this frame. egui

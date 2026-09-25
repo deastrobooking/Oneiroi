@@ -47,7 +47,11 @@ pub(super) fn draw_deck(
             ui.visuals().faint_bg_color
         })
         .stroke(egui::Stroke::new(
-            if selected { 2.0 } else { 1.0 },
+            if selected {
+                palette.outline_width + 1.0
+            } else {
+                palette.outline_width
+            },
             if selected {
                 accent
             } else {

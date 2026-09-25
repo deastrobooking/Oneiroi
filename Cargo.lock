@@ -3674,6 +3674,8 @@ dependencies = [
  "pollster",
  "rfd",
  "rusty_link",
+ "serde",
+ "serde_json",
  "virtual-core",
  "virtual-graph",
  "virtual-io",

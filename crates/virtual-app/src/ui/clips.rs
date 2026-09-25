@@ -133,7 +133,11 @@ pub(super) fn draw_clip_grid(
                             palette.control
                         })
                         .stroke(egui::Stroke::new(
-                            if active || queued { 2.0 } else { 1.0 },
+                            if active || queued {
+                                palette.outline_width + 1.0
+                            } else {
+                                palette.outline_width
+                            },
                             if active {
                                 palette.success
                             } else if queued {
