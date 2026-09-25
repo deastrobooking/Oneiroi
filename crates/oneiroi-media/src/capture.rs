@@ -27,15 +27,36 @@ pub enum CapturePixelFormat {
 }
 
 impl CapturePixelFormat {
-    pub const ALL: [Self; 5] = [Self::Auto, Self::Nv12, Self::Uyvy422, Self::Yuyv422, Self::Bgra];
+    pub const ALL: [Self; 5] = [
+        Self::Auto,
+        Self::Nv12,
+        Self::Uyvy422,
+        Self::Yuyv422,
+        Self::Bgra,
+    ];
     pub fn id(self) -> &'static str {
-        match self { Self::Auto => "auto", Self::Nv12 => "nv12", Self::Uyvy422 => "uyvy422", Self::Yuyv422 => "yuyv422", Self::Bgra => "bgra" }
+        match self {
+            Self::Auto => "auto",
+            Self::Nv12 => "nv12",
+            Self::Uyvy422 => "uyvy422",
+            Self::Yuyv422 => "yuyv422",
+            Self::Bgra => "bgra",
+        }
     }
     pub fn from_id(id: &str) -> Self {
-        Self::ALL.into_iter().find(|format| format.id() == id).unwrap_or_default()
+        Self::ALL
+            .into_iter()
+            .find(|format| format.id() == id)
+            .unwrap_or_default()
     }
     pub fn label(self) -> &'static str {
-        match self { Self::Auto => "Automatic", Self::Nv12 => "NV12", Self::Uyvy422 => "UYVY 4:2:2", Self::Yuyv422 => "YUYV 4:2:2", Self::Bgra => "BGRA" }
+        match self {
+            Self::Auto => "Automatic",
+            Self::Nv12 => "NV12",
+            Self::Uyvy422 => "UYVY 4:2:2",
+            Self::Yuyv422 => "YUYV 4:2:2",
+            Self::Bgra => "BGRA",
+        }
     }
 }
 
@@ -74,11 +95,14 @@ impl CameraConfig {
     }
 
     pub fn frame_rate_option(&self) -> Option<String> {
-        self.requested_fps.map(|fps| format!("{fps}/{}", self.fps_denominator.max(1)))
+        self.requested_fps
+            .map(|fps| format!("{fps}/{}", self.fps_denominator.max(1)))
     }
 
     pub(crate) fn resolved_input_name(&self) -> Result<String, String> {
-        if self.device.backend != "avfoundation" || !self.device.id.starts_with(NATIVE_DEVICE_PREFIX) {
+        if self.device.backend != "avfoundation"
+            || !self.device.id.starts_with(NATIVE_DEVICE_PREFIX)
+        {
             return Ok(self.input_name());
         }
         let devices = discover_cameras().map_err(|error| error.to_string())?;
@@ -196,12 +220,25 @@ unsafe fn c_string(pointer: *const std::ffi::c_char) -> Option<String> {
 // Persist the unique ID and resolve its current name on the decoder worker.
 // Fail explicitly if FFmpeg's prefix matching could select another device.
 fn resolve_native_device(id: &str, devices: &[CameraDevice]) -> Result<String, String> {
-    let device = devices.iter().find(|device| device.id == id)
-        .ok_or_else(|| "Saved video input is disconnected. Reconnect it or select another input.".to_owned())?;
-    if device.label.is_empty() || device.label.contains(':')
-        || device.label.starts_with(|c: char| c.is_ascii_digit())
-        || device.label.starts_with("default") || device.label.starts_with("none")
-        || devices.iter().filter(|other| other.label.starts_with(&device.label)).count() != 1
+    let device = devices
+        .iter()
+        .find(|device| device.id == id)
+        .ok_or_else(|| {
+            "Saved video input is disconnected. Reconnect it or select another input.".to_owned()
+        })?;
+    if device.label.is_empty()
+        || device.label.contains(':')
+        || device
+            .label
+            .trim_start()
+            .starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '+')
+        || device.label.starts_with("default")
+        || device.label.starts_with("none")
+        || devices
+            .iter()
+            .filter(|other| other.label.starts_with(&device.label))
+            .count()
+            != 1
     {
         return Err("Video input name is ambiguous. Use its current AVFoundation device index in the manual input field.".to_owned());
     }
@@ -211,21 +248,38 @@ fn resolve_native_device(id: &str, devices: &[CameraDevice]) -> Result<String, S
 #[cfg(target_os = "macos")]
 pub fn discover_cameras() -> Result<Vec<CameraDevice>, CameraDiscoveryError> {
     unsafe extern "C" {
-        fn oneiroi_video_inputs(context: *mut std::ffi::c_void,
-            visit: unsafe extern "C" fn(*mut std::ffi::c_void, *const std::ffi::c_char, *const std::ffi::c_char)) -> i32;
+        fn oneiroi_video_inputs(
+            context: *mut std::ffi::c_void,
+            visit: unsafe extern "C" fn(
+                *mut std::ffi::c_void,
+                *const std::ffi::c_char,
+                *const std::ffi::c_char,
+            ),
+        ) -> i32;
     }
-    unsafe extern "C" fn visit(context: *mut std::ffi::c_void, id: *const std::ffi::c_char, name: *const std::ffi::c_char) {
+    unsafe extern "C" fn visit(
+        context: *mut std::ffi::c_void,
+        id: *const std::ffi::c_char,
+        name: *const std::ffi::c_char,
+    ) {
         // SAFETY: The native enumerator calls synchronously with temporary UTF-8
         // strings. Copy them before returning; context is our exclusive Vec.
         let devices = unsafe { &mut *context.cast::<Vec<CameraDevice>>() };
         if let (Some(id), Some(label)) = (unsafe { c_string(id) }, unsafe { c_string(name) }) {
-            devices.push(CameraDevice { id: format!("{NATIVE_DEVICE_PREFIX}{id}"), label, backend: "avfoundation".to_owned() });
+            devices.push(CameraDevice {
+                id: format!("{NATIVE_DEVICE_PREFIX}{id}"),
+                label,
+                backend: "avfoundation".to_owned(),
+            });
         }
     }
     let mut devices = Vec::new();
     // SAFETY: The callback and Vec remain alive throughout this synchronous call.
-    let status = unsafe { oneiroi_video_inputs((&mut devices as *mut Vec<CameraDevice>).cast(), visit) };
-    if status != 0 { return Err(CameraDiscoveryError::NativeDiscovery); }
+    let status =
+        unsafe { oneiroi_video_inputs((&mut devices as *mut Vec<CameraDevice>).cast(), visit) };
+    if status != 0 {
+        return Err(CameraDiscoveryError::NativeDiscovery);
+    }
     Ok(devices)
 }
 
@@ -280,5 +334,46 @@ mod tests {
     #[test]
     fn synthesizes_monotonic_camera_time_when_backend_has_no_pts() {
         assert_eq!(camera_pts(60, 30), MediaTime::new(2, 1).unwrap());
+    }
+
+    #[test]
+    fn capture_cards_use_exact_fractional_rates_and_explicit_pixel_formats() {
+        let config = CameraConfig {
+            device: CameraDevice {
+                id: "USB Capture HDMI".to_owned(),
+                label: "USB Capture HDMI".to_owned(),
+                backend: "avfoundation".to_owned(),
+            },
+            requested_extent: Some([1920, 1080]),
+            requested_fps: Some(60000),
+            fps_denominator: 1001,
+            pixel_format: CapturePixelFormat::Uyvy422,
+        };
+        assert_eq!(config.frame_rate_option().as_deref(), Some("60000/1001"));
+        assert_eq!(config.requested_pixel_format(), Some("uyvy422"));
+        assert_eq!(config.input_name(), "USB Capture HDMI:none");
+        assert_eq!(config.metadata().frame_rate.unwrap().denominator, 1001);
+    }
+
+    #[test]
+    fn native_ids_survive_order_changes_and_reject_ambiguous_or_missing_devices() {
+        let device = |id: &str, label: &str| CameraDevice {
+            id: format!("avf-id/{id}"),
+            label: label.to_owned(),
+            backend: "avfoundation".to_owned(),
+        };
+        let mut devices = vec![device("camera", "Camera"), device("hdmi", "USB HDMI")];
+        assert_eq!(
+            resolve_native_device("avf-id/hdmi", &devices).unwrap(),
+            "USB HDMI:none"
+        );
+        devices.reverse();
+        assert_eq!(
+            resolve_native_device("avf-id/hdmi", &devices).unwrap(),
+            "USB HDMI:none"
+        );
+        assert!(resolve_native_device("avf-id/missing", &devices).is_err());
+        devices.push(device("other", "USB HDMI Pro"));
+        assert!(resolve_native_device("avf-id/hdmi", &devices).is_err());
     }
 }

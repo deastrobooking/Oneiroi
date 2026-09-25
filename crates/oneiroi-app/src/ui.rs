@@ -13,6 +13,7 @@ mod midi_manager;
 mod setup;
 pub mod theme;
 mod toolbar;
+mod video_input;
 
 use clips::{ClipGridContext, draw_clip_grid};
 use deck::{DeckControls, draw_deck};
@@ -83,6 +84,8 @@ pub struct UiState {
     pub camera_width: u32,
     pub camera_height: u32,
     pub camera_fps: u32,
+    pub camera_fps_denominator: u32,
+    pub capture_pixel_format: oneiroi_media::CapturePixelFormat,
     pub audio_device_id: String,
     pub audio_analysis: AudioAnalysisSettings,
     pub midi_device_id: String,
@@ -153,6 +156,8 @@ impl Default for UiState {
             camera_width: 1280,
             camera_height: 720,
             camera_fps: 30,
+            camera_fps_denominator: 1,
+            capture_pixel_format: oneiroi_media::CapturePixelFormat::Auto,
             audio_device_id: String::new(),
             audio_analysis: AudioAnalysisSettings::default(),
             midi_device_id: String::new(),
@@ -371,10 +376,7 @@ pub enum UiAction {
     MidiRemoveBinding(usize),
     ConnectCamera {
         deck: DeckId,
-        device_id: String,
-        label: String,
-        extent: [u32; 2],
-        fps: u32,
+        config: oneiroi_media::CameraConfig,
     },
     StartCameraRecording(ClipAddress),
     StopCameraRecording(DeckId),

@@ -86,7 +86,7 @@ impl State {
                     DecoderEvent::Loaded {
                         generation: loaded_generation,
                     } if loaded_generation == generation && self.live_configs[index].is_some() => {
-                        self.camera_status = format!("Deck {} camera is live", deck.label());
+                        self.camera_status = format!("Deck {} video input is live", deck.label());
                     }
                     DecoderEvent::Error {
                         generation: failed_generation,
@@ -102,7 +102,7 @@ impl State {
                         };
                         if self.live_configs[index].is_some() {
                             self.camera_status =
-                                format!("Deck {} camera error: {message}", deck.label());
+                                format!("Deck {} video input error: {message}", deck.label());
                         }
                         self.mixer.deck_mut(deck).state = DeckState::Error { path, message };
                         self.compositor.clear_deck(index);
@@ -110,7 +110,8 @@ impl State {
                     DecoderEvent::Ended {
                         generation: ended_generation,
                     } if ended_generation == generation && self.live_configs[index].is_some() => {
-                        self.camera_status = format!("Deck {} camera disconnected", deck.label());
+                        self.camera_status =
+                            format!("Deck {} video input disconnected", deck.label());
                     }
                     DecoderEvent::Loaded { .. }
                     | DecoderEvent::Ended { .. }

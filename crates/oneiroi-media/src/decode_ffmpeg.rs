@@ -222,7 +222,9 @@ impl FfmpegVideoDecoder {
         if let Some(rate) = config.frame_rate_option() {
             options.set("framerate", &rate);
         }
-        let resolved_name = config.resolved_input_name().map_err(FfmpegDecodeError::CaptureConfiguration)?;
+        let resolved_name = config
+            .resolved_input_name()
+            .map_err(FfmpegDecodeError::CaptureConfiguration)?;
         let input_name = std::ffi::CString::new(resolved_name).map_err(|_| {
             FfmpegDecodeError::CameraBackendUnavailable("invalid camera ID".to_owned())
         })?;
@@ -466,8 +468,11 @@ impl FfmpegVideoDecoder {
                 self.time_base.denominator(),
             )?
         } else if self.allow_missing_timestamp {
-            let ticks = self.sequence.checked_mul(u64::from(self.fallback_fps_denominator))
-                .and_then(|ticks| i64::try_from(ticks).ok()).ok_or(MediaTimeError::Overflow)?;
+            let ticks = self
+                .sequence
+                .checked_mul(u64::from(self.fallback_fps_denominator))
+                .and_then(|ticks| i64::try_from(ticks).ok())
+                .ok_or(MediaTimeError::Overflow)?;
             MediaTime::new(ticks, i64::from(self.fallback_fps.max(1)))?
         } else {
             return Err(FfmpegDecodeError::MissingTimestamp);

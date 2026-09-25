@@ -301,73 +301,7 @@ pub(super) fn draw_setup(
                         "Load the matching project first so recovered clip launches resolve against the same media slots.",
                     );
                 });
-            ui.horizontal(|ui| {
-                ui.label("Camera");
-                egui::ComboBox::from_id_salt("camera-device")
-                    .selected_text(
-                        metrics
-                            .cameras
-                            .iter()
-                            .find(|camera| camera.id == state.camera_device_id)
-                            .map_or(state.camera_device_id.as_str(), |camera| {
-                                camera.label.as_str()
-                            }),
-                    )
-                    .show_ui(ui, |ui| {
-                        for camera in metrics.cameras {
-                            ui.selectable_value(
-                                &mut state.camera_device_id,
-                                camera.id.clone(),
-                                &camera.label,
-                            );
-                        }
-                    });
-                ui.add_sized(
-                    [90.0, 22.0],
-                    egui::TextEdit::singleline(&mut state.camera_device_id).hint_text("device ID"),
-                );
-                ui.add(
-                    egui::DragValue::new(&mut state.camera_width)
-                        .range(160..=7680)
-                        .suffix("w"),
-                );
-                ui.add(
-                    egui::DragValue::new(&mut state.camera_height)
-                        .range(120..=4320)
-                        .suffix("h"),
-                );
-                ui.add(
-                    egui::DragValue::new(&mut state.camera_fps)
-                        .range(1..=240)
-                        .suffix(" fps"),
-                );
-                if ui.button("Refresh").clicked() {
-                    actions.push(UiAction::RefreshCameras);
-                }
-                if ui
-                    .button(format!("Connect to Deck {}", mixer.selected().label()))
-                    .clicked()
-                {
-                    let label = metrics
-                        .cameras
-                        .iter()
-                        .find(|camera| camera.id == state.camera_device_id)
-                        .map_or_else(
-                            || format!("Camera {}", state.camera_device_id),
-                            |camera| camera.label.clone(),
-                        );
-                    actions.push(UiAction::ConnectCamera {
-                        deck: mixer.selected(),
-                        device_id: state.camera_device_id.clone(),
-                        label,
-                        extent: [state.camera_width, state.camera_height],
-                        fps: state.camera_fps,
-                    });
-                }
-                if !metrics.camera_status.is_empty() {
-                    ui.weak(metrics.camera_status);
-                }
-            });
+            super::video_input::draw_video_input(ui, state, mixer.selected(), metrics.cameras, metrics.camera_status, actions);
             ui.horizontal(|ui| {
                 ui.label("Audio");
                 let selected = metrics

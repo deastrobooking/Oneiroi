@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Capture inputs and effects (2026-09-25)
+
+- Added native macOS discovery of cameras and external video/muxed capture
+  devices. Saved native identities resolve by current device name on open;
+  disconnected or ambiguous devices fail explicitly instead of substituting
+  another input. Manual FFmpeg device names/indices remain available.
+- Added shared Video input controls with 720p/1080p/2160p presets, exact
+  23.976/29.97/59.94 rates and Automatic/NV12/UYVY/YUYV/BGRA pixel selection.
+  Fractional rates and pixel choices persist with each deck's capture settings;
+  old saved camera settings load with compatible defaults.
+- Added Analog CRT, Thermal Contours and Gravitational Lens for deck/master
+  slots, plus two-pass Anamorphic Flare for master slots. Each has three presets.
+- Bounded escaped coordinates in Recursive 2D, Hyper Recursion and Fractal
+  Volume to keep extreme polynomial settings from generating infinite sample
+  coordinates. New GPU tests cover presets, bypass, dry identity and alpha.
+- Added a GPU test-chart preview example for visually reviewing effect packages.
+
 ### Reliability follow-up (2026-09-24)
 
 - Moved manual project saves and five-second recovery autosaves to a bounded,

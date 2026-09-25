@@ -61,6 +61,10 @@ stuck deck selection or stale frame after seek/source replacement.
 
 ## Device and failure rehearsal
 
+- With the actual capture card connected, verify native discovery, a supported
+  59.94/29.97 mode, pixel-format selection, signal loss and device reconnect.
+  Reload a saved project and confirm the same physical source is selected.
+
 - Change parameters while project storage is slow or unavailable. Manual saves
   and autosaves must not stall program output; queue-full and I/O errors must be
   visible. Save As, switch projects while a save is pending, and close with
@@ -83,6 +87,12 @@ stuck deck selection or stale frame after seek/source replacement.
 - Restore a prior take, scrub to a marker and continue as a named branch.
 
 ## Shader and effect-package rehearsal
+
+- Exercise Analog CRT, Thermal Contours and Gravitational Lens on each deck and
+  in a master slot, including all looks, dry/wet, bypass and transparent sources.
+- Exercise Anamorphic Flare in a master slot; verify its highlight streaks and
+  record its additional GPU cost with the intended full show chain.
+- Test Recursive 2D / Hyper Recursion polynomial modes at maximum depth/scale.
 
 - Launch the release binary from an unrelated working directory and verify the
   bundled processor plus Chromatic Split, Spectral Echo, Temporal Melt,

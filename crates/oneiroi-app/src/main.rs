@@ -556,13 +556,13 @@ impl State {
         let (cameras, camera_status) = match discover_cameras() {
             Ok(cameras) if cameras.is_empty() => (
                 cameras,
-                "No cameras discovered; enter an AVFoundation device ID.".to_owned(),
+                "No video inputs found. Connect a capture card or camera, then Refresh.".to_owned(),
             ),
             Ok(cameras) => {
                 let count = cameras.len();
-                (cameras, format!("{count} camera(s) available"))
+                (cameras, format!("{count} video input(s) available"))
             }
-            Err(error) => (Vec::new(), format!("Camera discovery: {error}")),
+            Err(error) => (Vec::new(), format!("Video input discovery: {error}")),
         };
         let (audio_inputs, audio_status) = match discover_audio_inputs() {
             Ok(inputs) if inputs.is_empty() => {

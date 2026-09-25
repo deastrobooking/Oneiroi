@@ -5,8 +5,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use oneiroi_core::MediaTime;
 use oneiroi_media::{
-    CLIPS_PER_DECK, CameraConfig, CameraDevice, CameraRecorder, ClipAddress, ClipRestoreRequest,
-    DeckId, DeckState, FolderScanRequest, SubmitError, ThumbnailRequest, VideoFramePayload,
+    CLIPS_PER_DECK, CameraConfig, CameraRecorder, ClipAddress, ClipRestoreRequest, DeckId,
+    DeckState, FolderScanRequest, SubmitError, ThumbnailRequest, VideoFramePayload,
     discover_cameras,
 };
 use oneiroi_session::{CommandOperation, CommandOrigin};
@@ -456,37 +456,21 @@ impl State {
                 let count = cameras.len();
                 self.cameras = cameras;
                 self.camera_status = if count == 0 {
-                    "No cameras discovered; check macOS camera permission or enter a device ID."
+                    "No video inputs found. Connect a capture card or camera, then Refresh."
                         .to_owned()
                 } else {
-                    format!("{count} camera(s) available")
+                    format!("{count} video input(s) available")
                 };
             }
-            Err(error) => self.camera_status = format!("Camera discovery failed: {error}"),
+            Err(error) => self.camera_status = format!("Video input discovery failed: {error}"),
         }
     }
 
-    pub(crate) fn connect_camera(
-        &mut self,
-        deck: DeckId,
-        device_id: String,
-        label: String,
-        extent: [u32; 2],
-        fps: u32,
-    ) {
+    pub(crate) fn connect_camera(&mut self, deck: DeckId, config: CameraConfig) {
         self.stop_camera_recording(deck);
         self.master_effect_processor.reset_history();
         self.clips
             .remember_position(deck, self.transports[deck.index()].position);
-        let config = CameraConfig {
-            device: CameraDevice {
-                id: device_id,
-                label,
-                backend: "avfoundation".to_owned(),
-            },
-            requested_extent: Some(extent),
-            requested_fps: Some(fps),
-        };
         self.launches.cancel(deck);
         self.clips.deactivate(deck);
         let generation = self.mixer.connect_camera(deck, config.clone());
@@ -504,8 +488,10 @@ impl State {
             return;
         }
         if !matches!(self.mixer.deck(deck).state, DeckState::Live(_)) {
-            self.camera_status =
-                format!("Connect Deck {} to a camera before recording", deck.label());
+            self.camera_status = format!(
+                "Connect Deck {} to a video input before recording",
+                deck.label()
+            );
             return;
         }
         let occupied = self.clips.slot(address).is_some_and(|slot| {
@@ -526,7 +512,11 @@ impl State {
         ));
         let fps = self.live_configs[deck.index()]
             .as_ref()
-            .and_then(|config| config.requested_fps)
+            .and_then(|config| {
+                config.requested_fps.map(|fps| {
+                    (f64::from(fps) / f64::from(config.fps_denominator.max(1))).round() as u32
+                })
+            })
             .unwrap_or(30);
         match CameraRecorder::start(path.clone(), fps) {
             Ok(recorder) => {

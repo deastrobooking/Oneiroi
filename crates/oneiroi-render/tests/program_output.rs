@@ -722,6 +722,42 @@ fn bundled_algorithmic_effects_compile_and_render_through_the_master_slot() {
         );
         assert_ne!(effected, [0, 255, 0, 255], "{id} rendered as identity");
         assert_eq!(effected[3], 255, "{id} damaged output alpha");
+        // Exercise the escaping polynomial modes at maximum depth/scale. A
+        // uniform opaque input must remain opaque even at extreme settings.
+        let extreme = MasterEffectSlot {
+            kind: MasterEffectKind::Custom,
+            package_id: (*id).to_owned(),
+            parameters: package
+                .manifest
+                .parameters
+                .iter()
+                .map(|p| EffectParameterValue {
+                    id: p.id.clone(),
+                    value: match p.id.as_str() {
+                        "function" => 1.0,
+                        "source-mix" => 0.0,
+                        _ => p.maximum,
+                    },
+                })
+                .collect(),
+            ..MasterEffectSlot::default()
+        };
+        let extreme = MasterEffectChain {
+            slots: [extreme, MasterEffectSlot::default()],
+        };
+        assert_eq!(
+            render_master_color(
+                &device,
+                &queue,
+                &program,
+                &mut processor,
+                &presenter,
+                wgpu::Color::GREEN,
+                &extreme
+            )[3],
+            255,
+            "{id} extreme settings lost opaque coverage"
+        );
     }
 }
 
@@ -959,4 +995,128 @@ fn render_master_color(
         .unwrap();
     let bytes = readback.slice(..).get_mapped_range();
     [bytes[0], bytes[1], bytes[2], bytes[3]]
+}
+
+#[test]
+fn new_master_packages_render_and_preserve_dry_identity() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let ids = [
+        "analog-crt",
+        "thermal-contours",
+        "gravitational-lens",
+        "anamorphic-flare",
+    ];
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects");
+    let program = ProgramTarget::new(&device, [SIZE, SIZE]);
+    let presenter = ProgramPresenter::new(&device, &program, PROGRAM_FORMAT);
+    let mut processor = MasterEffectProcessor::new(&device, &program);
+    processor.watch_effect_manifests(
+        ids.iter()
+            .map(|id| root.join(id).join("effect.json"))
+            .collect(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while ids.iter().any(|id| !processor.custom_effect_loaded(id)) && Instant::now() < deadline {
+        processor.poll_effect_reload();
+        thread::sleep(Duration::from_millis(10));
+    }
+    let color = wgpu::Color {
+        r: 0.5,
+        g: 0.4,
+        b: 0.3,
+        a: 1.0,
+    };
+    let baseline = render_master_color(
+        &device,
+        &queue,
+        &program,
+        &mut processor,
+        &presenter,
+        color,
+        &MasterEffectChain::default(),
+    );
+    for id in ids {
+        assert!(
+            processor.custom_effect_loaded(id),
+            "{id}: {}",
+            processor.reload_status()
+        );
+        assert_eq!(
+            processor.custom_effect_pass_count(id),
+            Some(if id == "anamorphic-flare" { 2 } else { 1 })
+        );
+        let package = load_effect_package(root.join(id).join("effect.json")).unwrap();
+        let slot = MasterEffectSlot {
+            kind: MasterEffectKind::Custom,
+            package_id: id.to_owned(),
+            parameters: package
+                .manifest
+                .parameters
+                .iter()
+                .map(|p| EffectParameterValue {
+                    id: p.id.clone(),
+                    value: p.default,
+                })
+                .collect(),
+            ..MasterEffectSlot::default()
+        };
+        let mut chain = MasterEffectChain {
+            slots: [slot, MasterEffectSlot::default()],
+        };
+        chain.slots[0].mix = 0.0;
+        assert_eq!(
+            render_master_color(
+                &device,
+                &queue,
+                &program,
+                &mut processor,
+                &presenter,
+                color,
+                &chain
+            ),
+            baseline,
+            "{id} dry path"
+        );
+        chain.slots[0].mix = 1.0;
+        let effected = render_master_color(
+            &device,
+            &queue,
+            &program,
+            &mut processor,
+            &presenter,
+            color,
+            &chain,
+        );
+        // A lens cannot change a constant field. CRT's corner is intentionally
+        // transparent; deck coverage and pattern behavior are checked separately.
+        if id != "gravitational-lens" {
+            assert_ne!(effected, baseline, "{id} rendered identity");
+        }
+        if id == "anamorphic-flare" || id == "thermal-contours" {
+            assert_eq!(effected[3], 255, "{id} alpha");
+        }
+        for preset in &package.manifest.presets {
+            chain.slots[0].parameters = package
+                .manifest
+                .parameters
+                .iter()
+                .map(|p| EffectParameterValue {
+                    id: p.id.clone(),
+                    value: preset.values.get(&p.id).copied().unwrap_or(p.default),
+                })
+                .collect();
+            let _ = render_master_color(
+                &device,
+                &queue,
+                &program,
+                &mut processor,
+                &presenter,
+                color,
+                &chain,
+            );
+        }
+    }
 }

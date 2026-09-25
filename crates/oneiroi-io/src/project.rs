@@ -194,7 +194,13 @@ impl ProjectFile {
                     .any(|route| route.source >= 10 || !effect_value(route.amount, -1.0, 1.0))
                 || deck.camera.as_ref().is_some_and(|camera| {
                     camera.device_id.is_empty()
-                        || camera.requested_fps == Some(0)
+                        || camera.fps_denominator == 0
+                        || camera.fps_denominator > 1001
+                        || camera
+                            .requested_fps
+                            .is_some_and(|fps| fps == 0 || fps > 240 * camera.fps_denominator)
+                        || !["auto", "nv12", "uyvy422", "yuyv422", "bgra"]
+                            .contains(&camera.pixel_format.as_str())
                         || camera
                             .requested_extent
                             .is_some_and(|[width, height]| width == 0 || height == 0)
@@ -1164,6 +1170,17 @@ pub struct CameraProject {
     pub label: String,
     pub requested_extent: Option<[u32; 2]>,
     pub requested_fps: Option<u32>,
+    #[serde(default = "default_capture_denominator")]
+    pub fps_denominator: u32,
+    #[serde(default = "default_capture_pixel_format")]
+    pub pixel_format: String,
+}
+
+fn default_capture_denominator() -> u32 {
+    1
+}
+fn default_capture_pixel_format() -> String {
+    "auto".to_owned()
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1416,6 +1433,8 @@ mod tests {
             label: "Camera".to_owned(),
             requested_extent: Some([1280, 720]),
             requested_fps: Some(30),
+            fps_denominator: 1,
+            pixel_format: "auto".to_owned(),
         });
         project.decks[1].lfos[0] = LfoProject {
             enabled: true,
@@ -2025,6 +2044,26 @@ mod tests {
 
         let mut project = ProjectFile::default();
         project.settings.midi_devices = (0..33).map(|index| format!("device-{index}")).collect();
+        assert!(project.validate().is_err());
+    }
+
+    #[test]
+    fn capture_card_settings_round_trip_and_old_camera_settings_keep_defaults() {
+        let old = serde_json::json!({ "backend": "avfoundation", "device_id": "0", "label": "Legacy", "requested_extent": [1280,720], "requested_fps": 30 });
+        let mut camera: CameraProject = serde_json::from_value(old).unwrap();
+        assert_eq!(camera.fps_denominator, 1);
+        assert_eq!(camera.pixel_format, "auto");
+        camera.device_id = "avf-id/usb-card".to_owned();
+        camera.requested_fps = Some(60000);
+        camera.fps_denominator = 1001;
+        camera.pixel_format = "uyvy422".to_owned();
+        let mut project = ProjectFile::default();
+        project.decks[0].camera = Some(camera.clone());
+        let path = test_path("capture-card.oneiroi");
+        save_project_atomic(&path, &project).unwrap();
+        assert_eq!(load_project(&path).unwrap().decks[0].camera, Some(camera));
+        std::fs::remove_file(path).unwrap();
+        project.decks[0].camera.as_mut().unwrap().fps_denominator = 0;
         assert!(project.validate().is_err());
     }
 }

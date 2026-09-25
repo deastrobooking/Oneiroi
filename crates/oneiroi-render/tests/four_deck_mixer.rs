@@ -1113,3 +1113,116 @@ fn bloom_spreads_light_from_bright_regions_and_falls_off_with_distance() {
         "chromatic bloom should push red past blue: {fringe:?}"
     );
 }
+
+#[test]
+fn new_deck_packages_render_presets_and_preserve_bypass_and_transparency() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let ids = ["analog-crt", "thermal-contours", "gravitational-lens"];
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects");
+    let mut mixer = FourDeckCompositor::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    mixer.set_output_extent(&device, [SIZE, SIZE]);
+    mixer.watch_deck_effect_manifests(
+        ids.iter()
+            .map(|id| root.join(id).join("effect.json"))
+            .collect(),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while ids.iter().any(|id| !mixer.deck_effect_loaded(id)) && std::time::Instant::now() < deadline
+    {
+        mixer.poll_deck_effect_reload();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    for id in ids {
+        assert!(
+            mixer.deck_effect_loaded(id),
+            "{id}: {}",
+            mixer.deck_effect_reload_status()
+        );
+        let package =
+            oneiroi_render::load_effect_package(root.join(id).join("effect.json")).unwrap();
+        mixer.upload(&device, &queue, 0, &pattern()).unwrap();
+        let baseline = render(&device, &queue, &mut mixer, MixerParams::default());
+        let mut packages = std::array::from_fn(|_| DeckPackageSlot::default());
+        packages[0].package_id = id.to_owned();
+        packages[0].parameters = package
+            .manifest
+            .parameters
+            .iter()
+            .map(|p| EffectParameterValue {
+                id: p.id.clone(),
+                value: p.default,
+            })
+            .collect();
+        let effected = render_with_packages(
+            &device,
+            &queue,
+            &mut mixer,
+            MixerParams::default(),
+            &packages,
+        );
+        assert_ne!(effected, baseline, "{id} did not affect patterned input");
+        for preset in &package.manifest.presets {
+            packages[0].parameters = package
+                .manifest
+                .parameters
+                .iter()
+                .map(|p| EffectParameterValue {
+                    id: p.id.clone(),
+                    value: preset.values.get(&p.id).copied().unwrap_or(p.default),
+                })
+                .collect();
+            let result = render_with_packages(
+                &device,
+                &queue,
+                &mut mixer,
+                MixerParams::default(),
+                &packages,
+            );
+            assert_ne!(result, baseline, "{id}/{} did not affect input", preset.id);
+        }
+        packages[0].mix = 0.0;
+        assert_eq!(
+            render_with_packages(
+                &device,
+                &queue,
+                &mut mixer,
+                MixerParams::default(),
+                &packages
+            ),
+            baseline,
+            "{id} dry path"
+        );
+        packages[0].mix = 1.0;
+        packages[0].bypassed = true;
+        assert_eq!(
+            render_with_packages(
+                &device,
+                &queue,
+                &mut mixer,
+                MixerParams::default(),
+                &packages
+            ),
+            baseline,
+            "{id} bypass"
+        );
+        packages[0].bypassed = false;
+        mixer
+            .upload(&device, &queue, 0, &solid([255, 128, 64, 0]))
+            .unwrap();
+        let transparent = render(&device, &queue, &mut mixer, MixerParams::default());
+        assert_eq!(
+            render_with_packages(
+                &device,
+                &queue,
+                &mut mixer,
+                MixerParams::default(),
+                &packages
+            ),
+            transparent,
+            "{id} leaks transparent color"
+        );
+    }
+}

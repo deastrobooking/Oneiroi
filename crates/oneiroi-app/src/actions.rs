@@ -220,25 +220,23 @@ impl State {
                         self.midi.bindings.remove(index);
                     }
                 }
-                ui::UiAction::ConnectCamera {
-                    deck,
-                    device_id,
-                    label,
-                    extent,
-                    fps,
-                } => {
+                ui::UiAction::ConnectCamera { deck, config } => {
                     self.record_show_operation(
                         CommandOrigin::Operator,
                         now,
                         CommandOperation::SetParameter {
                             path: format!("deck.{}.camera", deck.index()),
                             value: oneiroi_graph::ParameterValue::Text(format!(
-                                "{device_id}|{}x{}@{fps}",
-                                extent[0], extent[1]
+                                "{}|{}x{}@{}|{}",
+                                config.device.id,
+                                config.requested_extent.unwrap_or([0, 0])[0],
+                                config.requested_extent.unwrap_or([0, 0])[1],
+                                config.frame_rate_option().unwrap_or_default(),
+                                config.pixel_format.id(),
                             )),
                         },
                     );
-                    self.connect_camera(deck, device_id, label, extent, fps);
+                    self.connect_camera(deck, config);
                 }
                 ui::UiAction::StartCameraRecording(address) => {
                     self.start_camera_recording(address, now);

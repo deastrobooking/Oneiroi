@@ -1,0 +1,139 @@
+{
+  "format": "oneiroi-effect",
+  "version": 2,
+  "id": "thermal-contours",
+  "name": "Thermal Contours",
+  "description": "False-color luminance palettes with animated isobars and edge detail.",
+  "role": "effect",
+  "targets": [
+    "master",
+    "deck"
+  ],
+  "abi": "deck-v1",
+  "shader": "thermal_contours.wgsl",
+  "parameters": [
+    {
+      "id": "palette",
+      "label": "Palette",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0,
+      "group": "Palette",
+      "control": "choice",
+      "options": [
+        {
+          "label": "Iron",
+          "value": 0
+        },
+        {
+          "label": "Aurora",
+          "value": 1
+        },
+        {
+          "label": "Monochrome",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "id": "contrast",
+      "label": "Heat contrast",
+      "minimum": 0.25,
+      "maximum": 4,
+      "default": 1.4,
+      "group": "Palette"
+    },
+    {
+      "id": "offset",
+      "label": "Heat offset",
+      "minimum": -0.75,
+      "maximum": 0.75,
+      "default": 0,
+      "group": "Palette"
+    },
+    {
+      "id": "contours",
+      "label": "Contour strength",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.35,
+      "group": "Contours"
+    },
+    {
+      "id": "bands",
+      "label": "Contour count",
+      "minimum": 2,
+      "maximum": 32,
+      "default": 10,
+      "group": "Contours"
+    },
+    {
+      "id": "edges",
+      "label": "Edge detail",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0.45,
+      "group": "Contours"
+    },
+    {
+      "id": "speed",
+      "label": "Contour drift",
+      "minimum": -1,
+      "maximum": 1,
+      "default": 0.08,
+      "group": "Motion"
+    },
+    {
+      "id": "source",
+      "label": "Source preservation",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.1,
+      "group": "Finish"
+    }
+  ],
+  "presets": [
+    {
+      "id": "iron",
+      "label": "Iron heat",
+      "values": {
+        "palette": 0,
+        "contrast": 1.4,
+        "offset": 0,
+        "contours": 0.35,
+        "bands": 10,
+        "edges": 0.45,
+        "speed": 0.08,
+        "source": 0.1
+      }
+    },
+    {
+      "id": "aurora",
+      "label": "Aurora map",
+      "values": {
+        "palette": 1,
+        "contrast": 1.1,
+        "offset": 0.1,
+        "contours": 0.5,
+        "bands": 16,
+        "edges": 0.7,
+        "speed": 0.15,
+        "source": 0.05
+      }
+    },
+    {
+      "id": "topography",
+      "label": "Topography",
+      "values": {
+        "palette": 2,
+        "contrast": 1.8,
+        "offset": 0,
+        "contours": 0.85,
+        "bands": 20,
+        "edges": 1.2,
+        "speed": 0,
+        "source": 0
+      }
+    }
+  ]
+}

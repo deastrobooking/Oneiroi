@@ -669,7 +669,7 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../effects");
         let registry = discover_effect_packages(root);
         assert!(registry.errors.is_empty(), "{:?}", registry.errors);
-        assert_eq!(registry.effects.len(), 6);
+        assert_eq!(registry.effects.len(), 10);
         assert!(
             registry
                 .effects

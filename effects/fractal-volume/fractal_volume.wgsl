@@ -20,7 +20,7 @@ fn field(p0:vec3<f32>,kind:u32,iters:u32,scale:f32,fold:f32,twist:f32,t:f32)->ve
   if(kind==0u){p=abs(p)-vec3(fold,fold*0.83,fold*1.14);let xy=rot2(p.xy,twist*p.z+t*0.05);p=vec3(xy,p.z);}
   else if(kind==1u){let xy=abs(rot2(p.xy,0.785398+twist*p.z))-vec2(fold);let z=p.z-floor((p.z+1.0)*0.5)*2.0;p=vec3(xy,z);}
   else{let r=max(length(p),0.08);let a=atan2(p.y,p.x)*2.0+twist;let b=acos(clamp(p.z/r,-1.0,1.0))*2.0;p=pow(r,1.35)*vec3(sin(b)*cos(a),sin(b)*sin(a),cos(b))-vec3(fold,0.15,0.0);}
-  p=p*scale;derivative=derivative*scale;orbit=min(orbit,length(p));
+  p=clamp(p*scale,vec3(-4096.0),vec3(4096.0));derivative=derivative*scale;orbit=min(orbit,length(p));
  }}
  return vec2(abs(length(p)-fold)/max(derivative,0.001),orbit);
 }

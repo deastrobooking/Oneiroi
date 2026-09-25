@@ -1,0 +1,124 @@
+{
+  "format": "oneiroi-effect",
+  "version": 2,
+  "id": "analog-crt",
+  "name": "Analog CRT",
+  "description": "Curved phosphor display with scanlines, RGB mask, tape jitter and chromatic bleed.",
+  "role": "effect",
+  "targets": [
+    "master",
+    "deck"
+  ],
+  "abi": "deck-v1",
+  "shader": "analog_crt.wgsl",
+  "parameters": [
+    {
+      "id": "curvature",
+      "label": "Screen curvature",
+      "minimum": 0,
+      "maximum": 0.4,
+      "default": 0.12,
+      "group": "Screen"
+    },
+    {
+      "id": "scanlines",
+      "label": "Scanline depth",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.32,
+      "group": "Screen"
+    },
+    {
+      "id": "lines",
+      "label": "Scanline count",
+      "minimum": 32,
+      "maximum": 1080,
+      "default": 240,
+      "group": "Screen"
+    },
+    {
+      "id": "mask",
+      "label": "Phosphor mask",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.25,
+      "group": "Screen"
+    },
+    {
+      "id": "bleed",
+      "label": "Color bleed",
+      "minimum": 0,
+      "maximum": 0.025,
+      "default": 0.004,
+      "group": "Signal"
+    },
+    {
+      "id": "jitter",
+      "label": "Tape jitter",
+      "minimum": 0,
+      "maximum": 0.02,
+      "default": 0.002,
+      "group": "Signal"
+    },
+    {
+      "id": "grain",
+      "label": "Signal grain",
+      "minimum": 0,
+      "maximum": 0.25,
+      "default": 0.025,
+      "group": "Signal"
+    },
+    {
+      "id": "vignette",
+      "label": "Corner falloff",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.25,
+      "group": "Finish"
+    }
+  ],
+  "presets": [
+    {
+      "id": "broadcast",
+      "label": "Broadcast",
+      "values": {
+        "curvature": 0.06,
+        "scanlines": 0.2,
+        "lines": 480,
+        "mask": 0.15,
+        "bleed": 0.001,
+        "jitter": 0,
+        "grain": 0.01,
+        "vignette": 0.12
+      }
+    },
+    {
+      "id": "arcade",
+      "label": "Arcade",
+      "values": {
+        "curvature": 0.18,
+        "scanlines": 0.5,
+        "lines": 240,
+        "mask": 0.65,
+        "bleed": 0.002,
+        "jitter": 0,
+        "grain": 0,
+        "vignette": 0.35
+      }
+    },
+    {
+      "id": "worn-tape",
+      "label": "Worn tape",
+      "values": {
+        "curvature": 0.1,
+        "scanlines": 0.25,
+        "lines": 180,
+        "mask": 0.1,
+        "bleed": 0.014,
+        "jitter": 0.012,
+        "grain": 0.1,
+        "vignette": 0.3
+      }
+    }
+  ]
+}

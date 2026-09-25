@@ -1,0 +1,110 @@
+{
+  "format": "oneiroi-effect",
+  "version": 2,
+  "id": "anamorphic-flare",
+  "name": "Anamorphic Flare",
+  "description": "Two-pass horizontal highlight streaks with warm/cool tint and soft thresholding.",
+  "role": "effect",
+  "targets": [
+    "master"
+  ],
+  "abi": "master-v1",
+  "shader": "anamorphic_flare.wgsl",
+  "parameters": [
+    {
+      "id": "threshold",
+      "label": "Highlight threshold",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.35,
+      "group": "Highlights"
+    },
+    {
+      "id": "knee",
+      "label": "Threshold softness",
+      "minimum": 0.01,
+      "maximum": 0.5,
+      "default": 0.15,
+      "group": "Highlights"
+    },
+    {
+      "id": "length",
+      "label": "Streak length",
+      "minimum": 0,
+      "maximum": 0.35,
+      "default": 0.12,
+      "group": "Streak"
+    },
+    {
+      "id": "intensity",
+      "label": "Intensity",
+      "minimum": 0,
+      "maximum": 3,
+      "default": 0.8,
+      "group": "Streak"
+    },
+    {
+      "id": "tint",
+      "label": "Warm / cool tint",
+      "minimum": -1,
+      "maximum": 1,
+      "default": 0.55,
+      "group": "Color"
+    },
+    {
+      "id": "dispersion",
+      "label": "Color dispersion",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.3,
+      "group": "Color"
+    }
+  ],
+  "presets": [
+    {
+      "id": "cinema-blue",
+      "label": "Cinema blue",
+      "values": {
+        "threshold": 0.35,
+        "knee": 0.15,
+        "length": 0.12,
+        "intensity": 0.8,
+        "tint": 0.55,
+        "dispersion": 0.3
+      }
+    },
+    {
+      "id": "golden-hour",
+      "label": "Golden hour",
+      "values": {
+        "threshold": 0.25,
+        "knee": 0.2,
+        "length": 0.2,
+        "intensity": 1.2,
+        "tint": -0.65,
+        "dispersion": 0.15
+      }
+    },
+    {
+      "id": "laser",
+      "label": "Laser streaks",
+      "values": {
+        "threshold": 0.6,
+        "knee": 0.05,
+        "length": 0.3,
+        "intensity": 2,
+        "tint": 1,
+        "dispersion": 0.7
+      }
+    }
+  ],
+  "fragment_entry": "fs_combine",
+  "passes": [
+    {
+      "fragment_entry": "fs_extract"
+    },
+    {
+      "fragment_entry": "fs_combine"
+    }
+  ]
+}

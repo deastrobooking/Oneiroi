@@ -17,6 +17,8 @@ fn hue(c:vec3<f32>,a:f32)->vec3<f32>{let k=normalize(vec3(1.0));return c*cos(a)+
   if(fn_kind==0u){q=abs(q)*scale-key;}
   else if(fn_kind==1u){let v=q.yzw;q=vec4(q.x*q.x-dot(v,v),2.0*q.x*v)+key*0.18;q=q*scale;}
   else{q=sin(q.zwxy*scale+key)+cos(q.wxyz-key*0.7);q=q*0.78;}
+  // Keep quaternion squaring finite before projection and texture sampling.
+  q=clamp(q,vec4(-4096.0),vec4(4096.0));
   orbit=min(orbit,length(q));
  }}
  let projected=q.xy/(1.0+projection*abs(q.w));let sample_uv=fract(projected*0.5+vec2(0.5));var recursive=textureSample(original_texture,effect_sampler,sample_uv);

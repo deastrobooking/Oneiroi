@@ -137,6 +137,8 @@ pub fn snapshot(
                             label: config.device.label.clone(),
                             requested_extent: config.requested_extent,
                             requested_fps: config.requested_fps,
+                            fps_denominator: config.fps_denominator,
+                            pixel_format: config.pixel_format.id().to_owned(),
                         }),
                 }
             })
@@ -179,6 +181,8 @@ pub fn camera_from_project(camera: &CameraProject) -> CameraConfig {
         },
         requested_extent: camera.requested_extent,
         requested_fps: camera.requested_fps,
+        fps_denominator: camera.fps_denominator,
+        pixel_format: oneiroi_media::CapturePixelFormat::from_id(&camera.pixel_format),
     }
 }
 

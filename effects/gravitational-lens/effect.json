@@ -1,0 +1,124 @@
+{
+  "format": "oneiroi-effect",
+  "version": 2,
+  "id": "gravitational-lens",
+  "name": "Gravitational Lens",
+  "description": "Aspect-correct radial lensing and vortex distortion around a movable center.",
+  "role": "effect",
+  "targets": [
+    "master",
+    "deck"
+  ],
+  "abi": "deck-v1",
+  "shader": "gravitational_lens.wgsl",
+  "parameters": [
+    {
+      "id": "mass",
+      "label": "Lens mass",
+      "minimum": -1,
+      "maximum": 1,
+      "default": 0.65,
+      "group": "Lens"
+    },
+    {
+      "id": "radius",
+      "label": "Influence radius",
+      "minimum": 0.05,
+      "maximum": 1.5,
+      "default": 0.65,
+      "group": "Lens"
+    },
+    {
+      "id": "vortex",
+      "label": "Vortex rotation",
+      "minimum": -6.28,
+      "maximum": 6.28,
+      "default": 1.8,
+      "group": "Lens"
+    },
+    {
+      "id": "falloff",
+      "label": "Falloff",
+      "minimum": 0.5,
+      "maximum": 4,
+      "default": 1.5,
+      "group": "Lens"
+    },
+    {
+      "id": "center-x",
+      "label": "Center X",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "group": "Position"
+    },
+    {
+      "id": "center-y",
+      "label": "Center Y",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "group": "Position"
+    },
+    {
+      "id": "pulse",
+      "label": "Mass pulse",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.15,
+      "group": "Motion"
+    },
+    {
+      "id": "speed",
+      "label": "Pulse speed",
+      "minimum": 0,
+      "maximum": 4,
+      "default": 0.6,
+      "group": "Motion"
+    }
+  ],
+  "presets": [
+    {
+      "id": "singularity",
+      "label": "Singularity",
+      "values": {
+        "mass": 0.85,
+        "radius": 0.5,
+        "vortex": 2.5,
+        "falloff": 2,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "pulse": 0.1,
+        "speed": 0.6
+      }
+    },
+    {
+      "id": "liquid-orbit",
+      "label": "Liquid orbit",
+      "values": {
+        "mass": 0.35,
+        "radius": 1.1,
+        "vortex": -1.2,
+        "falloff": 1,
+        "center-x": 0.45,
+        "center-y": 0.55,
+        "pulse": 0.4,
+        "speed": 0.8
+      }
+    },
+    {
+      "id": "repulsor",
+      "label": "Repulsor",
+      "values": {
+        "mass": -0.75,
+        "radius": 0.75,
+        "vortex": 0.3,
+        "falloff": 1.5,
+        "center-x": 0.5,
+        "center-y": 0.5,
+        "pulse": 0.2,
+        "speed": 1.2
+      }
+    }
+  ]
+}

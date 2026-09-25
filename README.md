@@ -103,6 +103,9 @@ The current source tree includes:
 - Registry-discovered custom master effects with schema-generated sliders,
   named parameter persistence and neutral pass-through when a saved package is
   unavailable. The bundled Chromatic Split package is the reference example.
+- Analog CRT, Thermal Contours and Gravitational Lens packages for deck or
+  master placement, plus a two-pass Anamorphic Flare master effect, each with
+  three named looks.
 - Bundled dual-placement algorithmic effects for recursive 2D transforms, volumetric
   3D fractal fields and projected 4D–6D recursion, with grouped controls and
   three one-click looks per package. They execute in a master slot or in the
@@ -175,7 +178,7 @@ The current source tree includes:
   diagnostic text-tile fallback when preview decoding fails.
 - PNG and JPEG still-image import through FFmpeg, decoded once and held without
   continuous decoder load.
-- AVFoundation camera discovery and manual device-ID entry, with any camera
+- Native macOS camera/capture-card discovery and manual device-ID entry, with any supported video input
   connectable to any of the four decks at a requested resolution/frame rate.
 - Bounded low-latency live decoding that drops stale capture frames under
   render backpressure instead of accumulating camera delay.
@@ -276,13 +279,19 @@ the output to windowed mode.
 In the app, click deck A, B, C or D and drag a movie onto the window. Imports
 are probed on a background worker and the next deck is selected automatically.
 
-For a live input, select a deck, choose a camera in the top toolbar, set the
-requested size and frame rate, then click **Connect to Deck**. Use **Refresh**
-after attaching a USB camera or capture card. On first use, macOS may ask for
-camera access; grant it to the app (or Terminal while running with `cargo run`)
-and refresh the list. If discovery is unavailable, an AVFoundation device ID
-such as `0` can be entered manually. Camera feeds are live and non-seekable;
-freeze holds the most recent rendered frame.
+For a live input, select a deck and use **Video input · camera / capture card**.
+Connect the device, click **Refresh**, select its name, choose the capture
+resolution/frame rate, then click **Connect to Deck**. Fractional rates such as
+59.94 fps are supported. Start with **Automatic** pixel format; UYVY/YUYV 4:2:2
+and NV12 are available when the device requires a specific format.
+
+This path supports capture hardware exposed to macOS as AVFoundation video
+inputs. Cards requiring a vendor-only SDK are not integrated. Match the incoming
+HDMI/SDI signal and the card's supported mode; there is no universal connector
+switch. Audio is selected separately. Grant macOS camera access to Oneiroi (or
+Terminal during development). Use **Manual input / custom size** for a device
+name/index or a non-preset resolution. See [video inputs](docs/VIDEO_INPUTS.md)
+for setup and troubleshooting.
 
 ## Documentation
 
@@ -294,6 +303,7 @@ freeze holds the most recent rendered frame.
 - [Architecture](docs/ARCHITECTURE.md)
 - [Shader system and upgrade plan](docs/SHADER_SYSTEM.md)
 - [Effect package authoring](docs/EFFECT_PACKAGES.md)
+- [Effects review and new looks](docs/EFFECTS_REVIEW.md)
 - [Graph and session runtime](docs/GRAPH_RUNTIME.md)
 - [Prioritized roadmap](docs/ROADMAP.md)
 

@@ -50,6 +50,8 @@ fn hue_rotate(c: vec3<f32>, a: f32) -> vec3<f32> {
                 p=rotate2(p,rotation+fi*0.31+t*spin*0.09);
             }
             p=p*(1.0+pulse*sin(t*1.7+fi));
+            // Polynomial modes can escape quickly at high depth/scale.
+            p=clamp(p,vec2(-4096.0),vec2(4096.0));
             orbit=min(orbit,length(p));
         }
     }

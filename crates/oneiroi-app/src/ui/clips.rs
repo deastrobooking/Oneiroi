@@ -301,50 +301,8 @@ pub(super) fn draw_clip_grid(
     });
 
     let recording = camera_recordings[deck.index()];
+    super::video_input::draw_video_input(ui, state, deck, cameras, camera_status, actions);
     ui.horizontal_wrapped(|ui| {
-        ui.strong("Deck input");
-        egui::ComboBox::from_id_salt(("clip-camera-device", deck.index()))
-            .selected_text(
-                cameras
-                    .iter()
-                    .find(|camera| camera.id == state.camera_device_id)
-                    .map_or(state.camera_device_id.as_str(), |camera| {
-                        camera.label.as_str()
-                    }),
-            )
-            .show_ui(ui, |ui| {
-                for camera in cameras {
-                    ui.selectable_value(
-                        &mut state.camera_device_id,
-                        camera.id.clone(),
-                        &camera.label,
-                    );
-                }
-            });
-        if ui.button("Refresh").clicked() {
-            actions.push(UiAction::RefreshCameras);
-        }
-        let can_switch = !state.camera_device_id.trim().is_empty();
-        if ui
-            .add_enabled(can_switch, egui::Button::new("Video"))
-            .on_hover_text("Use the selected camera as this deck's live input")
-            .clicked()
-        {
-            let label = cameras
-                .iter()
-                .find(|camera| camera.id == state.camera_device_id)
-                .map_or_else(
-                    || format!("Camera {}", state.camera_device_id),
-                    |camera| camera.label.clone(),
-                );
-            actions.push(UiAction::ConnectCamera {
-                deck,
-                device_id: state.camera_device_id.clone(),
-                label,
-                extent: [state.camera_width, state.camera_height],
-                fps: state.camera_fps,
-            });
-        }
         if recording.address.is_some() {
             let label = if recording.finalizing {
                 "Finalizing…".to_owned()
@@ -373,24 +331,21 @@ pub(super) fn draw_clip_grid(
                         .fill(palette.control_tint(palette.danger, 0.28)),
                 )
                 .on_hover_text(if !live {
-                    "Connect this deck to a camera first"
+                    "Connect this deck to a video input first"
                 } else if selected_occupied {
                     "Select an empty clip slot to record into"
                 } else {
-                    "Record the live camera into the selected clip slot"
+                    "Record this video input into the selected clip slot"
                 })
                 .clicked()
             {
                 actions.push(UiAction::StartCameraRecording(address));
             }
         }
-        if !camera_status.is_empty() {
-            ui.weak(camera_status);
-        }
         if let DeckState::Live(config) = &mixer.deck(deck).state
             && let (Some([width, height]), Some(fps)) = (config.requested_extent, config.requested_fps)
         {
-            let megabytes = f64::from(width) * f64::from(height) * 4.0 * f64::from(fps) / 1_000_000.0;
+            let megabytes = f64::from(width) * f64::from(height) * 4.0 * f64::from(fps) / f64::from(config.fps_denominator.max(1)) / 1_000_000.0;
             ui.weak(format!("Raw recording ≈ {megabytes:.0} MB/s · {:.1} GB/min", megabytes * 60.0 / 1000.0))
                 .on_hover_text("Storage estimate from the requested camera format. Actual capture rate may differ.");
         }

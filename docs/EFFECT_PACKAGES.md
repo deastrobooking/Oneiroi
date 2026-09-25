@@ -33,6 +33,34 @@ package. Invalid edits to a previously loaded manifest retain that manifest's
 last-known-good descriptor and GPU pipeline until the exact file becomes valid
 again, changes identity, or is removed.
 
+## Added performance looks (September 2026)
+
+| Package | Placement | Passes | Controls and looks |
+|---|---|---|---|
+| Analog CRT | Deck or master | 1 | Curvature, scanlines, RGB mask, bleed, jitter, grain; Broadcast, Arcade, Worn tape |
+| Thermal Contours | Deck or master | 1 | Iron/Aurora/Monochrome palettes, heat contrast, contours, edge detail; Iron heat, Aurora map, Topography |
+| Gravitational Lens | Deck or master | 1 | Mass, radius, vortex, falloff, movable center, pulse; Singularity, Liquid orbit, Repulsor |
+| Anamorphic Flare | Master | 2 | Soft highlight extraction, horizontal streaks, tint and dispersion; Cinema blue, Golden hour, Laser streaks |
+
+Choose a package in the selected deck's package slot or either master slot,
+then choose a named look. The generated parameter controls support the existing
+MIDI/modulation workflow. Anamorphic Flare appears only in the master list;
+its intermediate highlight pass is not supported by the one-pass deck runtime.
+
+New effects apply slot wet mixing only to the final result and do not require
+history. CRT and Lens can move transparent coverage; Thermal and Flare preserve
+the input alpha. Flare samples 5 times in extraction and 51 times in its fixed
+gather, so measure its cost on the intended show machine. All kernels have fixed
+work bounds. Coordinates in the existing polynomial recursion packages are now
+bounded before the next iteration to prevent overflow at extreme settings.
+
+A reproducible GPU preview tool renders a synthetic chart through a bundled
+master package (use `none` for the original):
+
+```sh
+cargo run -p oneiroi-render --example effect_preview -- analog-crt > preview.ppm
+```
+
 ## Manifest
 
 ```json
