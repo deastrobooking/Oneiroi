@@ -1,5 +1,6 @@
 //! Always-visible show controls and release preflight summary.
 
+use virtual_core::ClockSource;
 use virtual_media::{CLIPS_PER_DECK, ClipAddress, ClipBank, DeckId};
 
 use super::theme::ThemePalette;
@@ -61,7 +62,13 @@ pub(super) fn draw_toolbar(
             state.output_enabled,
             state.output_enabled && metrics.output_health.status != "Healthy",
         );
-        status_dot(ui, &palette, "AUDIO", metrics.audio_connected, false);
+        status_dot(
+            ui,
+            &palette,
+            "AUDIO",
+            metrics.audio_connected,
+            metrics.audio_snapshot.callback_errors > 0,
+        );
         status_dot(ui, &palette, "MIDI", metrics.midi.any_connected(), false);
         status_dot(ui, &palette, "OSC", metrics.osc.connected, false);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -150,6 +157,46 @@ pub(super) fn draw_toolbar(
             }
             ui.weak(format!("{:.0} fps", state.fps.fps()));
         });
+    });
+    ui.horizontal_wrapped(|ui| {
+        let external =
+            state.midi_clock_source == ClockSource::MidiInput && metrics.midi.clock.locked;
+        ui.add_enabled(
+            !external,
+            egui::DragValue::new(&mut state.bpm)
+                .range(20.0..=400.0)
+                .speed(0.25)
+                .suffix(" BPM"),
+        );
+        if ui
+            .add_enabled(!external, egui::Button::new("Tap tempo"))
+            .on_hover_text("Tap with the DJ's beat; available in Show Mode")
+            .clicked()
+        {
+            actions.push(UiAction::TapTempo);
+        }
+        ui.weak(match state.midi_clock_source {
+            ClockSource::Internal => "Internal",
+            ClockSource::MidiInput => "MIDI clock",
+            ClockSource::AbletonLink => "Ableton Link",
+        });
+        if metrics.audio_connected {
+            ui.separator();
+            let audio = metrics.audio_snapshot.analysis;
+            for (label, value) in [
+                ("Level", audio.rms),
+                ("Bass", audio.bass),
+                ("Mid", audio.mid),
+                ("High", audio.high),
+                ("Hit", audio.transient),
+            ] {
+                ui.add(
+                    egui::ProgressBar::new(value)
+                        .text(label)
+                        .desired_width(72.0),
+                );
+            }
+        }
     });
     ui.horizontal_wrapped(|ui| {
         ui.weak(metrics.gpu_info);

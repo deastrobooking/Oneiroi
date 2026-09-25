@@ -436,13 +436,19 @@ Analysis controls are:
 The native callback only downmixes into fixed-size chunks and attempts a
 non-blocking bounded-queue write. FFT and smoothing run on a worker. If the
 queue is full, the chunk is dropped and the overrun counter increases. A
-callback error resolves all audio matrix sources to zero.
+callback error resolves all audio matrix sources to zero. If samples stop
+arriving without an error, the analysis worker clears the last reading after
+250 ms and resumes when samples return. Audio meters remain visible in the
+toolbar during Show Mode. Select capture-card audio separately from its video;
+video-file soundtracks are not analyzed by the video decoder.
 
 Beat phase ramps from 0 to 1 every beat. Bar phase ramps from 0 to 1 across
 four beats. Both follow the internal tempo clock and retain phase when BPM
 changes.
 
 ## Tempo
+
+The always-visible toolbar provides BPM and **Tap tempo**, including Show Mode.
 
 Enter BPM directly or use:
 

@@ -79,8 +79,13 @@ impl super::State {
             self.publish_osc_value("/vjx/tempo", bpm as f32);
         }
         self.tempo.set_bpm(bpm, elapsed);
-        self.tempo.anchor_beat(beat, elapsed);
-        self.midi_clock_status = "Link tempo and phase synchronized".to_owned();
+        self.launches.anchor_clock(&mut self.tempo, beat, elapsed);
+        self.midi_clock_status = if self.ui.link_peers == 0 {
+            "Link enabled · waiting for peers"
+        } else {
+            "Link tempo and phase synchronized"
+        }
+        .to_owned();
     }
 }
 
@@ -97,18 +102,36 @@ mod tests {
         b.enable(true, 120.0);
         let deadline = Instant::now() + std::time::Duration::from_secs(10);
         while a.link.num_peers() == 0 || b.link.num_peers() == 0 {
-            assert!(Instant::now() < deadline, "Link peers did not discover each other");
+            assert!(
+                Instant::now() < deadline,
+                "Link peers did not discover each other"
+            );
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        a.set_tempo(133.0);
-        loop {
-            b.link.capture_app_session_state(&mut b.state);
-            if (b.state.tempo() - 133.0).abs() < 1e-6 { break; }
-            assert!(Instant::now() < deadline, "Peer tempo did not synchronize");
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
+        assert_peer_tempo(&mut a, &mut b, 133.0);
+        assert_peer_tempo(&mut b, &mut a, 127.0);
         a.enable(false, 133.0);
         b.enable(false, 133.0);
+    }
+
+    fn assert_peer_tempo(sender: &mut LinkClock, receiver: &mut LinkClock, bpm: f64) {
+        sender.set_tempo(bpm);
+        // Link serializes tempo as an integer number of microseconds per beat.
+        // Compare the wire value rather than expecting the original decimal BPM.
+        let expected = 60_000_000.0 / (60_000_000.0 / bpm).round();
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            receiver.link.capture_app_session_state(&mut receiver.state);
+            if (receiver.state.tempo() - expected).abs() < 1e-6 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Peer tempo did not synchronize: expected {expected}, received {}",
+                receiver.state.tempo()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
 
     #[test]

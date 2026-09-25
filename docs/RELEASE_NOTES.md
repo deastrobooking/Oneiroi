@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Event preparation (2026-09-25)
+
+- Added always-visible BPM/tap tempo and connected-input audio meters, including
+  Show Mode; callback errors now flag the audio status indicator.
+- Audio analysis clears stale readings after 250 ms without new samples and
+  resumes when input returns. A failed input replacement clears old meters.
+- Large Link/MIDI beat jumps re-quantize queued clips on the new timeline,
+  preventing long waits or immediate off-grid launches. Small phase corrections
+  preserve pending targets.
+- Link status distinguishes waiting for peers from synchronization and no
+  longer displays the MIDI-only "Not following" label. The peer test accounts
+  for Link's wire-format rounding and checks tempo changes in both directions.
+- Added `sh scripts/build-macos.sh` for a local app bundle with effects, privacy
+  usage descriptions, ad-hoc signing, a binary hash and dependency inventory.
+  Finder launches use a writable Application Support workspace for recovery.
+  The bundle still requires this Mac's Homebrew FFmpeg libraries and is not
+  notarized or certified on other machines.
+- Added [event setup](EVENT_SETUP.md). Physical projector/capture/audio/Link
+  rehearsal with the intended show project remains necessary.
+
 ### Kaleidoscope and mirrors (2026-09-25)
 
 - Added Kaleidoscope, Mirror Symmetry and Mirror Mosaic to deck and master

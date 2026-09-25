@@ -1098,7 +1098,14 @@ fn new_master_packages_render_and_preserve_dry_identity() {
         );
         // Geometric effects cannot change a constant field. CRT's corner is
         // intentionally transparent; patterned coverage is tested on decks.
-        let mirrored = matches!(id, "kaleidoscope" | "mirror-symmetry" | "mirror-mosaic" | "turbulent-displace" | "mobius-warp");
+        let mirrored = matches!(
+            id,
+            "kaleidoscope"
+                | "mirror-symmetry"
+                | "mirror-mosaic"
+                | "turbulent-displace"
+                | "mobius-warp"
+        );
         if mirrored {
             assert_eq!(effected, baseline, "{id} changed a constant field");
         } else if id != "gravitational-lens" && id != "god-rays" {

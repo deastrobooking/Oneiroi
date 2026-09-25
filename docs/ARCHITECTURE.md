@@ -414,8 +414,8 @@ Operator-window resizing does not change composition resolution.
 
 ## Persistence
 
-`.virtual` files are versioned JSON. The current schema is version 5 and
-version-one through version-four files are migrated on load. Version 3 adds
+`.virtual` files are versioned JSON. The current schema is version 6 and
+version-one through version-five files are migrated on load. Version 3 adds
 stable custom-effect package IDs and named parameter values. Saves write a
 temporary sibling and rename it atomically. Newly introduced fields use
 explicit Serde defaults so existing projects remain readable. Autosave/recovery

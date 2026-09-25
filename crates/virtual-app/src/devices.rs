@@ -42,6 +42,7 @@ impl State {
 
     pub(crate) fn connect_audio_input(&mut self, device_id: String) {
         self.audio_input = None;
+        self.audio_snapshot = AudioInputSnapshot::default();
         match AudioInput::connect(&device_id, self.ui.audio_analysis) {
             Ok(input) => {
                 self.ui.audio_device_id = device_id;
@@ -259,7 +260,7 @@ impl State {
         if let Some(beat) = update.beat {
             // Phase, not tempo: a follower that only matched BPM would slide
             // a whole bar away from its master over a long set.
-            self.tempo.anchor_beat(beat, elapsed);
+            self.launches.anchor_clock(&mut self.tempo, beat, elapsed);
         }
     }
 

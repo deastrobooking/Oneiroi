@@ -1,6 +1,9 @@
 # Application review
 
-Review date: 2026-09-24
+Review date: 2026-09-25
+
+Event follow-up: see [the recorded review](EVENT_REVIEW_2026-09-25.md) for the
+local build, fixes, automated checks and remaining physical rehearsal gates.
 
 September follow-up: project writes now run on a bounded background worker;
 active camera reads support cancellation/deadlines; camera recordings retain
@@ -81,9 +84,9 @@ Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for every candidate.
 
 ### 2. Packaging and distribution
 
-The repository does not yet produce a signed/notarized macOS application bundle.
-Camera and microphone usage strings, FFmpeg distribution strategy and license
-notices must be settled before calling a build stage-ready.
+The repository now produces a locally ad-hoc-signed macOS application bundle
+with privacy usage strings and bundled effects. Portable FFmpeg distribution,
+notarization and distribution notices remain open before public release.
 
 ### 3. Diagnostics depth
 

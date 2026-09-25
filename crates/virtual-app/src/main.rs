@@ -440,7 +440,7 @@ impl State {
         let preferred_display_id = preferred_monitor.map(monitor_id);
         let preferred_position = preferred_monitor.map(MonitorHandle::position);
         let (output_monitors, output_displays) = describe_monitors(monitor_handles);
-        let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let workspace = paths::workspace_directory().context("open application workspace")?;
         let mut ui = ui::UiState::default();
         let effect_roots = effects::effect_resource_roots(&workspace);
         ui.effect_manifest_path = effects::bundled_processor_manifest(&effect_roots)

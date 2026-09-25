@@ -20,6 +20,10 @@ range the status reports the limitation and the local clock retains its last
 supported timing. Optional MIDI output follows tempo, but its pulse phase is
 not locked to Link.
 
+Large beat-position jumps from joining or changing an external timeline move
+queued launches to the next beat/bar boundary on that timeline. Small phase
+corrections retain their targets. A zero peer count reports waiting for peers.
+
 This is tempo/phase integration, not transport integration: Link start/stop
 sync is not enabled and peer transport changes do not start or stop decks.
 Application-thread state capture is not a hard-realtime operation. No Link

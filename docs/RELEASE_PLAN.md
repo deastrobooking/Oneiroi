@@ -57,12 +57,13 @@ artifact hash and clean-machine installation checks below remain required.
 
 ## 2. Produce a self-contained macOS application bundle
 
-- [ ] Add a repeatable `.app` packaging command or script.
+- [x] Add a repeatable local `.app` packaging command: `sh scripts/build-macos.sh`.
 - [ ] Add bundle identity, version and icon metadata.
-- [ ] Add camera and microphone usage descriptions to `Info.plist`.
-- [ ] Install the executable under `Contents/MacOS` and bundled effects under
+- [x] Add camera, microphone and local-network usage descriptions to `Info.plist`.
+- [x] Install the executable under `Contents/MacOS` and bundled effects under
   `Contents/Resources/effects`.
-- [ ] Verify effect discovery when launched from an unrelated directory.
+- [x] Verify effect discovery when launched from an unrelated directory
+  (local bundle smoke check; clean-machine validation remains open).
 
 ## 3. Resolve FFmpeg distribution
 
@@ -103,7 +104,7 @@ artifact hash and clean-machine installation checks below remain required.
 ## 7. Finalize and publish
 
 - [ ] Replace `Unreleased` in `RELEASE_NOTES.md` with the version and date.
-- [ ] Reconcile stale project-v5/project-v6 wording across the documentation.
+- [x] Reconcile current-schema project-v5/project-v6 wording across the documentation.
 - [ ] Record known issues and supported macOS/hardware expectations.
 - [ ] Assign the release version only after packaging and certification pass.
 - [ ] Tag the certified commit and archive the exact signed bundle hash,

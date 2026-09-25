@@ -487,6 +487,7 @@ impl Drop for ClipRestorer {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PendingLaunch {
     address: ClipAddress,
+    quantization: Quantization,
     launch_beat: f64,
 }
 
@@ -505,8 +506,26 @@ impl LaunchQueue {
     ) {
         self.pending[address.deck.index()] = Some(PendingLaunch {
             address,
+            quantization,
             launch_beat: clock.launch_beat(quantization, now_seconds),
         });
+    }
+
+    /// Follow external phase corrections without stranding launches on an old
+    /// beat timeline after joining Link or receiving MIDI Start/song position.
+    /// Small corrections keep the existing target so jitter cannot keep moving
+    /// a launch to the next boundary indefinitely.
+    pub fn anchor_clock(&mut self, clock: &mut TempoClock, beat: f64, now_seconds: f64) {
+        if !beat.is_finite() || !now_seconds.is_finite() {
+            return;
+        }
+        let jumped = (beat - clock.beat_at(now_seconds)).abs() >= 1.0;
+        clock.anchor_beat(beat, now_seconds);
+        if jumped {
+            for launch in self.pending.iter_mut().flatten() {
+                launch.launch_beat = clock.launch_beat(launch.quantization, now_seconds);
+            }
+        }
     }
 
     pub fn cancel(&mut self, deck: DeckId) {
@@ -608,6 +627,47 @@ mod tests {
         }
         assert_eq!(queue.take_due(clock, 0.49).len(), 0);
         assert_eq!(queue.take_due(clock, 0.5).len(), 4);
+    }
+
+    #[test]
+    fn external_clock_jumps_requantize_pending_launches_in_both_directions() {
+        for new_beat in [0.25, 10_000.25] {
+            let mut clock = TempoClock::new(120.0, 4);
+            let mut queue = LaunchQueue::default();
+            let beat_clip = ClipAddress {
+                deck: DeckId::A,
+                slot: 1,
+            };
+            let bar_clip = ClipAddress {
+                deck: DeckId::B,
+                slot: 2,
+            };
+            let immediate_clip = ClipAddress {
+                deck: DeckId::C,
+                slot: 3,
+            };
+            queue.queue(beat_clip, Quantization::Beat, clock, 100.0);
+            queue.queue(bar_clip, Quantization::Bar, clock, 100.0);
+            queue.queue(immediate_clip, Quantization::Immediate, clock, 100.0);
+            queue.anchor_clock(&mut clock, new_beat, 100.0);
+            assert_eq!(queue.take_due(clock, 100.0), vec![immediate_clip]);
+            assert!(queue.take_due(clock, 100.3).is_empty());
+            assert_eq!(queue.take_due(clock, 100.375), vec![beat_clip]);
+            assert_eq!(queue.take_due(clock, 101.875), vec![bar_clip]);
+        }
+    }
+
+    #[test]
+    fn small_external_phase_corrections_do_not_postpone_a_due_launch() {
+        let mut clock = TempoClock::new(120.0, 4);
+        let mut queue = LaunchQueue::default();
+        let address = ClipAddress {
+            deck: DeckId::A,
+            slot: 1,
+        };
+        queue.queue(address, Quantization::Beat, clock, 0.1);
+        queue.anchor_clock(&mut clock, 1.01, 0.5);
+        assert_eq!(queue.take_due(clock, 0.5), vec![address]);
     }
 
     #[test]

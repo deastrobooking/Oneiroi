@@ -62,8 +62,8 @@ Before another large subsystem lands:
    remains)
 5. Complete the operator UI split. Clip grid, deck, master FX, MIDI, theme,
    toolbar, setup and diagnostics modules are implemented. (implemented)
-6. Add checked-in golden v1-v5 projects and migration/save-reload tests before
-   introducing project schema v6. (implemented)
+6. Maintain checked-in golden v1-v6 projects and migration/save-reload tests
+   before introducing further schema changes. (implemented)
 
 Acceptance criteria:
 

@@ -1,6 +1,31 @@
 //! Branded paths and non-destructive access to pre-VIRTUAL show data.
 use std::path::{Path, PathBuf};
 
+/// Finder does not provide a writable working directory. Bundled launches keep
+/// recovery data in Application Support; command-line launches retain their
+/// chosen workspace and its existing recovery files.
+pub(crate) fn workspace_directory() -> std::io::Result<PathBuf> {
+    let current = std::env::current_dir()?;
+    let executable = std::env::current_exe()?;
+    let bundled = executable.parent().is_some_and(|directory| {
+        directory.file_name().is_some_and(|name| name == "MacOS")
+            && directory.parent().is_some_and(|contents| {
+                contents.file_name().is_some_and(|name| name == "Contents")
+                    && contents.join("Info.plist").is_file()
+            })
+    });
+    if cfg!(target_os = "macos") && bundled {
+        let home = std::env::var_os("HOME").ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "home directory unavailable")
+        })?;
+        let workspace = PathBuf::from(home).join("Library/Application Support/VIRTUAL");
+        std::fs::create_dir_all(&workspace)?;
+        Ok(workspace)
+    } else {
+        Ok(current)
+    }
+}
+
 pub(crate) fn is_project_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())

@@ -1,9 +1,10 @@
 //! Native audio input and bounded analysis worker.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample, Stream};
@@ -11,6 +12,7 @@ use thiserror::Error;
 use virtual_core::{AUDIO_ANALYSIS_SIZE, AudioAnalysisSettings, AudioAnalyzer, AudioSnapshot};
 
 const AUDIO_QUEUE_CAPACITY: usize = 8;
+const AUDIO_INPUT_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AudioInputDevice {
@@ -249,10 +251,21 @@ fn spawn_analysis_worker(
         .name("virtual-audio-analysis".to_owned())
         .spawn(move || {
             let mut analyzer = AudioAnalyzer::new(sample_rate);
-            while let Ok(chunk) = receiver.recv() {
-                let settings = *settings.lock().expect("audio settings lock");
-                let snapshot = analyzer.analyze(&chunk.samples[..chunk.len], settings);
-                *analysis.lock().expect("audio analysis lock") = snapshot;
+            loop {
+                match receiver.recv_timeout(AUDIO_INPUT_TIMEOUT) {
+                    Ok(chunk) => {
+                        let settings = *settings.lock().expect("audio settings lock");
+                        let snapshot = analyzer.analyze(&chunk.samples[..chunk.len], settings);
+                        *analysis.lock().expect("audio analysis lock") = snapshot;
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        // A driver may stop callbacks without reporting an error.
+                        // Do not leave modulation frozen at the last loud frame.
+                        *analysis.lock().expect("audio analysis lock") = AudioSnapshot::default();
+                        analyzer = AudioAnalyzer::new(sample_rate);
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
             }
         })
         .expect("spawn audio analysis worker")
@@ -261,6 +274,41 @@ fn spawn_analysis_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stalled_audio_input_clears_modulation_and_recovers() {
+        let (sender, receiver) = sync_channel(1);
+        let analysis = Arc::new(Mutex::new(AudioSnapshot::default()));
+        let settings = Arc::new(Mutex::new(AudioAnalysisSettings {
+            noise_floor: 0.0,
+            attack_ms: 1.0,
+            release_ms: 1.0,
+            ..Default::default()
+        }));
+        let worker = spawn_analysis_worker(receiver, 48_000, analysis.clone(), settings);
+        let chunk = AudioChunk {
+            samples: [0.8; AUDIO_ANALYSIS_SIZE],
+            len: AUDIO_ANALYSIS_SIZE,
+        };
+        let wait_for = |active: bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while (analysis.lock().unwrap().rms > 0.0) != active {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "audio worker did not update"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        sender.send(chunk.clone()).unwrap();
+        wait_for(true);
+        wait_for(false);
+        assert_eq!(*analysis.lock().unwrap(), AudioSnapshot::default());
+        sender.send(chunk).unwrap();
+        wait_for(true);
+        drop(sender);
+        worker.join().unwrap();
+    }
 
     #[test]
     fn analysis_worker_publishes_latest_bounded_chunk() {

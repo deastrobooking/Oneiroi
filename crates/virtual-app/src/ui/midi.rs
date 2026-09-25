@@ -178,7 +178,7 @@ fn draw_clock_sync(
         .default_open(false)
         .show(ui, |ui| {
             // --- Follow ---------------------------------------------------
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label("Tempo from");
                 for (source, label, hint) in [
                     (
@@ -210,32 +210,39 @@ fn draw_clock_sync(
                 if state.midi_clock_source == ClockSource::AbletonLink {
                     ui.label(format!("Link · {} peers", state.link_peers));
                 }
-                ui.label("From");
-                let selected = if state.midi_clock_input_device.is_empty() {
-                    "Any connected device"
-                } else {
-                    state.midi_clock_input_device.as_str()
-                };
-                egui::ComboBox::from_id_salt("midi-clock-input")
-                    .selected_text(selected)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut state.midi_clock_input_device,
-                            String::new(),
-                            "Any connected device",
-                        );
-                        for device in inputs {
+                if state.midi_clock_source == ClockSource::MidiInput {
+                    ui.label("From");
+                    let selected = if state.midi_clock_input_device.is_empty() {
+                        "Any connected device"
+                    } else {
+                        state.midi_clock_input_device.as_str()
+                    };
+                    egui::ComboBox::from_id_salt("midi-clock-input")
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
                             ui.selectable_value(
                                 &mut state.midi_clock_input_device,
-                                device.id.clone(),
-                                &device.label,
+                                String::new(),
+                                "Any connected device",
                             );
-                        }
-                    });
+                            for device in inputs {
+                                ui.selectable_value(
+                                    &mut state.midi_clock_input_device,
+                                    device.id.clone(),
+                                    &device.label,
+                                );
+                            }
+                        });
+                }
             });
             ui.horizontal(|ui| {
-                let (color, text) = if state.midi_clock_source != ClockSource::MidiInput {
-                    (ui.visuals().weak_text_color(), "Not following".to_owned())
+                let (color, text) = if state.midi_clock_source == ClockSource::AbletonLink {
+                    (
+                        ui.visuals().text_color(),
+                        format!("Link · {} peers · {:.2} BPM", state.link_peers, state.bpm),
+                    )
+                } else if state.midi_clock_source == ClockSource::Internal {
+                    (ui.visuals().weak_text_color(), "Internal tempo".to_owned())
                 } else if clock.locked {
                     (
                         ui.visuals().selection.bg_fill,
@@ -258,12 +265,14 @@ fn draw_clock_sync(
                 };
                 ui.colored_label(color, text);
             });
-            ui.weak(format!(
-                "pulses {} · jitter {:.2} ms · resyncs {}",
-                clock.pulses,
-                clock.jitter_micros as f64 / 1_000.0,
-                clock.resyncs
-            ));
+            if state.midi_clock_source == ClockSource::MidiInput {
+                ui.weak(format!(
+                    "pulses {} · jitter {:.2} ms · resyncs {}",
+                    clock.pulses,
+                    clock.jitter_micros as f64 / 1_000.0,
+                    clock.resyncs
+                ));
+            }
             if !clock.status.is_empty() {
                 ui.weak(clock.status);
             }

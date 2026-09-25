@@ -10,6 +10,10 @@ Licensed under [GPL-2.0-or-later](LICENSE). Ableton Link tempo/phase
 synchronization is available under MIDI → Clock sync → Ableton Link.
 See [Link setup and validation](docs/ABLETON_LINK.md).
 
+For the local macOS event build, run `sh scripts/build-macos.sh` and open
+`target/release/VIRTUAL.app`. See [event setup](docs/EVENT_SETUP.md) for projector,
+sound-reactive modulation, tap tempo and HDMI capture. This bundle uses the
+FFmpeg libraries installed on the build Mac; it is not a portable distribution.
 
 ## At a glance
 
