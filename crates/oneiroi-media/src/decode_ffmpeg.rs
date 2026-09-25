@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::capture_interrupt::{CaptureCancellation, CaptureInterrupt};
 
-use crate::{CameraConfig, FrameBufferPool, RgbaFrame, camera_pts};
+use crate::{CameraConfig, FrameBufferPool, RgbaFrame};
 
 const LIVE_READ_RETRY_DELAY: Duration = Duration::from_millis(10);
 
@@ -49,6 +49,8 @@ fn read_packet_with_retry(
 
 #[derive(Debug, Error)]
 pub enum FfmpegDecodeError {
+    #[error("video input configuration: {0}")]
+    CaptureConfiguration(String),
     #[error("camera operation canceled")]
     CaptureCanceled,
     #[error("camera stopped responding before the read/open deadline")]
@@ -122,6 +124,7 @@ pub struct FfmpegVideoDecoder {
     sequence: u64,
     allow_missing_timestamp: bool,
     fallback_fps: u32,
+    fallback_fps_denominator: u32,
     live: bool,
     frame_pool: FrameBufferPool,
 }
@@ -216,10 +219,11 @@ impl FfmpegVideoDecoder {
         if let Some([width, height]) = config.requested_extent {
             options.set("video_size", &format!("{width}x{height}"));
         }
-        if let Some(fps) = config.requested_fps {
-            options.set("framerate", &fps.to_string());
+        if let Some(rate) = config.frame_rate_option() {
+            options.set("framerate", &rate);
         }
-        let input_name = std::ffi::CString::new(config.input_name()).map_err(|_| {
+        let resolved_name = config.resolved_input_name().map_err(FfmpegDecodeError::CaptureConfiguration)?;
+        let input_name = std::ffi::CString::new(resolved_name).map_err(|_| {
             FfmpegDecodeError::CameraBackendUnavailable("invalid camera ID".to_owned())
         })?;
         // The safe wrapper cannot combine a device format, dictionary and owned
@@ -273,6 +277,7 @@ impl FfmpegVideoDecoder {
             frame_pool,
         )?;
         decoder.capture_interrupt = Some(interrupt);
+        decoder.fallback_fps_denominator = config.fps_denominator.max(1);
         Ok(decoder)
     }
 
@@ -342,6 +347,7 @@ impl FfmpegVideoDecoder {
             sequence: 0,
             allow_missing_timestamp,
             fallback_fps,
+            fallback_fps_denominator: 1,
             live,
             frame_pool,
         })
@@ -460,7 +466,9 @@ impl FfmpegVideoDecoder {
                 self.time_base.denominator(),
             )?
         } else if self.allow_missing_timestamp {
-            camera_pts(self.sequence, self.fallback_fps)
+            let ticks = self.sequence.checked_mul(u64::from(self.fallback_fps_denominator))
+                .and_then(|ticks| i64::try_from(ticks).ok()).ok_or(MediaTimeError::Overflow)?;
+            MediaTime::new(ticks, i64::from(self.fallback_fps.max(1)))?
         } else {
             return Err(FfmpegDecodeError::MissingTimestamp);
         };

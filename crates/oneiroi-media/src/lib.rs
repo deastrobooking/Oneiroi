@@ -22,7 +22,7 @@ mod transport;
 mod worker;
 
 pub use capture::{
-    CAMERA_SCHEME, CameraConfig, CameraDevice, CameraDiscoveryError, camera_pts, discover_cameras,
+    CAMERA_SCHEME, CapturePixelFormat, CameraConfig, CameraDevice, CameraDiscoveryError, camera_pts, discover_cameras,
 };
 pub use clips::{
     CLIPS_PER_DECK, ClipAddress, ClipBank, ClipLaunchMode, ClipPlayback, ClipRestoreRequest,

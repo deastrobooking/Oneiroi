@@ -356,6 +356,8 @@ fn deck_worker_decodes_a_bounded_live_capture_source() {
         },
         requested_extent: None,
         requested_fps: None,
+        fps_denominator: 1,
+        pixel_format: oneiroi_media::CapturePixelFormat::Auto,
     };
     let decoder = DeckDecoder::spawn(1);
     decoder.connect_camera(config, 44);
