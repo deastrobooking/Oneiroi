@@ -2,6 +2,27 @@
 
 use super::*;
 
+const CLIP_CELL: egui::Vec2 = egui::vec2(132.0, 50.0);
+const SCENE_CELL: egui::Vec2 = egui::vec2(132.0, 28.0);
+const CLIP_THUMBNAIL: egui::Vec2 = egui::vec2(48.0, 27.0);
+
+/// Gives a grid cell an exact rect. A child scope placed straight into the
+/// grid (drag sources, MIDI-map overlays) gets a max rect reaching the bottom
+/// of the panel and the row's centred layout, which drops each button lower
+/// than the one before and grows the row.
+fn fixed_cell<R>(ui: &mut egui::Ui, size: egui::Vec2, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(
+        size,
+        egui::Layout::centered_and_justified(egui::Direction::TopDown),
+        |ui| {
+            ui.set_min_size(size);
+            ui.set_max_size(size);
+            add(ui)
+        },
+    )
+    .inner
+}
+
 pub(super) struct ClipGridContext<'a> {
     pub launches: &'a LaunchQueue,
     pub midi_map: &'a MidiMapUi,
@@ -30,21 +51,23 @@ pub(super) fn draw_clip_grid(
         .show(ui, |ui| {
             ui.strong("SCENE");
             for slot in 0..CLIPS_PER_DECK {
-                let scene = mappable(
-                    ui,
-                    midi_map,
-                    ControlTarget::SceneLaunch(slot as u8),
-                    actions,
-                    |ui| {
-                        ui.add_sized(
-                            [96.0, 28.0],
-                            egui::Button::new(
-                                egui::RichText::new(format!("SCENE {}", slot + 1)).strong(),
+                let scene = fixed_cell(ui, SCENE_CELL, |ui| {
+                    mappable(
+                        ui,
+                        midi_map,
+                        ControlTarget::SceneLaunch(slot as u8),
+                        actions,
+                        |ui| {
+                            ui.add_sized(
+                                SCENE_CELL,
+                                egui::Button::new(
+                                    egui::RichText::new(format!("SCENE {}", slot + 1)).strong(),
+                                )
+                                .fill(palette.control_tint(palette.secondary, 0.22)),
                             )
-                            .fill(palette.control_tint(palette.secondary, 0.22)),
-                        )
-                    },
-                );
+                        },
+                    )
+                });
                 if scene
                     .on_hover_text(format!(
                         "Launch scene {} on the next quantized boundary",
@@ -86,7 +109,7 @@ pub(super) fn draw_clip_grid(
                             .split('.')
                             .next()
                             .unwrap_or(&movie.display_name);
-                        let short: String = name.chars().take(8).collect();
+                        let short: String = name.chars().take(14).collect();
                         if queued {
                             format!("◷ {short}")
                         } else if active {
@@ -110,7 +133,10 @@ pub(super) fn draw_clip_grid(
                     };
                     let button =
                         if let Some(thumbnail) = state.thumbnail(address, clips.path(address)) {
-                            egui::Button::image_and_text(thumbnail, label)
+                            egui::Button::image_and_text(
+                                egui::Image::new(thumbnail).fit_to_exact_size(CLIP_THUMBNAIL),
+                                label,
+                            )
                         } else {
                             let label = if state
                                 .thumbnail_failure(address, clips.path(address))
@@ -122,6 +148,7 @@ pub(super) fn draw_clip_grid(
                             };
                             egui::Button::new(label)
                         }
+                        .truncate()
                         .selected(selected || active)
                         .fill(if active {
                             palette.control_tint(palette.success, 0.24)
@@ -151,30 +178,32 @@ pub(super) fn draw_clip_grid(
                         && (slot_state.movie.is_some()
                             || slot_state.pending_path.is_some()
                             || slot_state.error.is_some());
-                    let response = if midi_map.active {
-                        mappable(
-                            ui,
-                            midi_map,
-                            ControlTarget::ClipLaunch {
-                                deck: deck.index() as u8,
-                                slot: slot as u8,
-                            },
-                            actions,
-                            |ui| ui.add_sized([96.0, 46.0], button),
-                        )
-                    } else if draggable {
-                        // Drag moves the clip to another slot; a plain click
-                        // still selects and launches because the drag only
-                        // starts past egui's drag threshold.
-                        ui.dnd_drag_source(
-                            egui::Id::new(("clip-slot-drag", deck.index(), slot)),
-                            address,
-                            |ui| ui.add_sized([96.0, 46.0], button),
-                        )
-                        .inner
-                    } else {
-                        ui.add_sized([96.0, 46.0], button)
-                    };
+                    let response = fixed_cell(ui, CLIP_CELL, |ui| {
+                        if midi_map.active {
+                            mappable(
+                                ui,
+                                midi_map,
+                                ControlTarget::ClipLaunch {
+                                    deck: deck.index() as u8,
+                                    slot: slot as u8,
+                                },
+                                actions,
+                                |ui| ui.add_sized(CLIP_CELL, button),
+                            )
+                        } else if draggable {
+                            // Drag moves the clip to another slot; a plain click
+                            // still selects and launches because the drag only
+                            // starts past egui's drag threshold.
+                            ui.dnd_drag_source(
+                                egui::Id::new(("clip-slot-drag", deck.index(), slot)),
+                                address,
+                                |ui| ui.add_sized(CLIP_CELL, button),
+                            )
+                            .inner
+                        } else {
+                            ui.add_sized(CLIP_CELL, button)
+                        }
+                    });
                     let response = if draggable {
                         response.on_hover_cursor(egui::CursorIcon::Grab)
                     } else {

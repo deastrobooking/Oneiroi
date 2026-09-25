@@ -28,8 +28,8 @@ pub use graph_plan::{BuiltInRenderStage, FusedDeckNodes, LoweredPlanError, Lower
 pub use mixer::{
     BlendModeGroup, DeckEffects, DeckLfos, DeckPackageFrameStats, DeckPackageTimingStats,
     DeckTransform, EFFECT_SLOTS_PER_DECK, EffectGroup, EffectLfo, EffectPreset, EffectSlot,
-    EffectTarget, FourDeckCompositor, LayerBlendMode, LfoWaveform, MOD_ROUTES_PER_DECK, MixerBus,
-    MixerParams, MixerUploadError, ModulationRoute, SourceMode,
+    EffectTarget, FourDeckCompositor, LayerBlendMode, LfoShaping, LfoWaveform, MOD_ROUTES_PER_DECK,
+    MixerBus, MixerParams, MixerUploadError, ModulationRoute, SourceMode,
 };
 pub use program::{
     EFFECT_PARAMETER_CAPACITY, EffectParameterValue, MASTER_EFFECT_SLOTS, MASTER_MODULATION_ROUTES,

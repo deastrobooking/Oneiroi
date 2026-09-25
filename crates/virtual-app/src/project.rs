@@ -327,6 +327,9 @@ fn master_modulation_to_project(modulation: MasterModulation) -> MasterModulatio
                 beats_per_cycle: lfo.beats_per_cycle,
                 depth: lfo.depth,
                 phase: lfo.phase,
+                offset: lfo.offset,
+                unipolar: lfo.unipolar,
+                invert: lfo.invert,
             })
             .collect(),
         routes: modulation
@@ -354,6 +357,9 @@ fn master_modulation_from_project(project: &MasterModulationProject) -> MasterMo
             beats_per_cycle: source.beats_per_cycle,
             depth: source.depth,
             phase: source.phase,
+            offset: source.offset,
+            unipolar: source.unipolar,
+            invert: source.invert,
         };
     }
     for (destination, source) in modulation.routes.iter_mut().zip(&project.routes) {
@@ -375,6 +381,8 @@ fn waveform_to_project(waveform: LfoWaveform) -> LfoWaveformProject {
         LfoWaveform::Saw => LfoWaveformProject::Saw,
         LfoWaveform::SawDown => LfoWaveformProject::SawDown,
         LfoWaveform::Square => LfoWaveformProject::Square,
+        LfoWaveform::SampleHold => LfoWaveformProject::SampleHold,
+        LfoWaveform::SmoothRandom => LfoWaveformProject::SmoothRandom,
     }
 }
 
@@ -385,6 +393,8 @@ fn waveform_from_project(waveform: LfoWaveformProject) -> LfoWaveform {
         LfoWaveformProject::Saw => LfoWaveform::Saw,
         LfoWaveformProject::SawDown => LfoWaveform::SawDown,
         LfoWaveformProject::Square => LfoWaveform::Square,
+        LfoWaveformProject::SampleHold => LfoWaveform::SampleHold,
+        LfoWaveformProject::SmoothRandom => LfoWaveform::SmoothRandom,
     }
 }
 
@@ -696,18 +706,15 @@ fn lfo_to_project(lfo: EffectLfo) -> LfoProject {
         enabled: lfo.enabled,
         direct_enabled: lfo.direct_enabled,
         target: effect_target_to_project(lfo.target),
-        waveform: match lfo.waveform {
-            LfoWaveform::Sine => LfoWaveformProject::Sine,
-            LfoWaveform::Triangle => LfoWaveformProject::Triangle,
-            LfoWaveform::Saw => LfoWaveformProject::Saw,
-            LfoWaveform::SawDown => LfoWaveformProject::SawDown,
-            LfoWaveform::Square => LfoWaveformProject::Square,
-        },
+        waveform: waveform_to_project(lfo.waveform),
         rate_hz: lfo.rate_hz,
         tempo_sync: lfo.tempo_sync,
         beats_per_cycle: lfo.beats_per_cycle,
         depth: lfo.depth,
         phase: lfo.phase,
+        offset: lfo.offset,
+        unipolar: lfo.unipolar,
+        invert: lfo.invert,
     }
 }
 
@@ -716,18 +723,15 @@ fn lfo_from_project(lfo: &LfoProject) -> EffectLfo {
         enabled: lfo.enabled,
         direct_enabled: lfo.direct_enabled,
         target: effect_target_from_project(lfo.target),
-        waveform: match lfo.waveform {
-            LfoWaveformProject::Sine => LfoWaveform::Sine,
-            LfoWaveformProject::Triangle => LfoWaveform::Triangle,
-            LfoWaveformProject::Saw => LfoWaveform::Saw,
-            LfoWaveformProject::SawDown => LfoWaveform::SawDown,
-            LfoWaveformProject::Square => LfoWaveform::Square,
-        },
+        waveform: waveform_from_project(lfo.waveform),
         rate_hz: lfo.rate_hz,
         tempo_sync: lfo.tempo_sync,
         beats_per_cycle: lfo.beats_per_cycle,
         depth: lfo.depth,
         phase: lfo.phase,
+        offset: lfo.offset,
+        unipolar: lfo.unipolar,
+        invert: lfo.invert,
     }
 }
 

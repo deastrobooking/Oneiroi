@@ -968,6 +968,27 @@ impl State {
             .saturating_duration_since(self.performance_started)
             .as_secs_f32();
         let beat_position = self.tempo.beat_at(f64::from(effect_time)) as f32;
+        {
+            let audio = self.audio_snapshot.analysis;
+            let audio_sources = [
+                audio.rms,
+                audio.bass,
+                audio.mid,
+                audio.high,
+                audio.transient,
+            ];
+            self.ui.mod_sources = std::array::from_fn(|index| {
+                self.ui.lfos[index].source_values_with_audio(
+                    effect_time,
+                    beat_position,
+                    audio_sources,
+                )
+            });
+            self.ui.master_mod_sources =
+                self.ui
+                    .master_modulation
+                    .source_values(effect_time, beat_position, audio_sources);
+        }
         let mut encoder = self
             .gpu
             .device
@@ -1241,6 +1262,7 @@ fn current_control_value(
                 1 => lfo.rate_hz,
                 2 => lfo.depth,
                 3 => lfo.phase,
+                4 => lfo.offset,
                 _ => 0.0,
             })
             .unwrap_or_default(),
@@ -1310,7 +1332,7 @@ fn performance_control_snapshot(
             });
         }
         for lfo in 0..3_u8 {
-            for parameter in 0..4_u8 {
+            for parameter in 0..virtual_io::LFO_CONTROL_PARAMETERS {
                 targets.push(ControlTarget::LfoParameter {
                     deck,
                     lfo,
@@ -1438,8 +1460,13 @@ mod output_health_tests {
 
         let snapshot = performance_control_snapshot(&ui, &mixer, &transports);
 
-        assert_eq!(snapshot.len(), 208);
+        assert_eq!(snapshot.len(), 220);
         assert!(snapshot.contains_key(&ControlTarget::Crossfader));
+        assert!(snapshot.contains_key(&ControlTarget::LfoParameter {
+            deck: 3,
+            lfo: 2,
+            parameter: 4,
+        }));
         assert!(snapshot.contains_key(&ControlTarget::EffectParameter {
             deck: 3,
             effect: 17,

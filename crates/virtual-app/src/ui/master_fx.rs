@@ -1,5 +1,6 @@
 //! Custom master effect controls and master modulation routing.
 
+use super::deck::{LfoFields, algorithm_tiles, draw_lfo_shape, modulation_meter};
 use super::*;
 
 pub(super) fn draw_custom_effect(
@@ -7,29 +8,33 @@ pub(super) fn draw_custom_effect(
     slot_index: usize,
     slot: &mut MasterEffectSlot,
     packages: &[EffectDescriptor],
+    palette: ThemePalette,
     actions: &mut Vec<UiAction>,
 ) {
     let selected = packages
         .iter()
         .find(|package| package.id == slot.package_id)
         .map_or("Missing package", |package| package.name.as_str());
-    let previous_id = slot.package_id.clone();
-    egui::ComboBox::from_id_salt(format!("master-custom-package-{slot_index}"))
-        .selected_text(selected)
-        .show_ui(ui, |ui| {
-            for package in packages {
-                if ui
-                    .selectable_label(slot.package_id == package.id, &package.name)
-                    .clicked()
-                {
-                    slot.package_id.clone_from(&package.id);
-                }
-            }
-        });
-    if slot.package_id != previous_id
-        && let Some(package) = packages
-            .iter()
-            .find(|package| package.id == slot.package_id)
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("◆ ALGORITHMIC FX")
+                .size(18.0)
+                .strong()
+                .color(palette.accent),
+        );
+        ui.label(egui::RichText::new(selected).size(16.0).strong());
+    });
+    if algorithm_tiles(
+        ui,
+        &mut slot.package_id,
+        packages,
+        palette,
+        palette.accent,
+        false,
+        true,
+    ) && let Some(package) = packages
+        .iter()
+        .find(|package| package.id == slot.package_id)
     {
         slot.parameters = package
             .parameters
@@ -180,102 +185,134 @@ pub(super) fn draw_master_modulation(
     modulation: &mut MasterModulation,
     effects: &MasterEffectChain,
     packages: &[EffectDescriptor],
+    palette: ThemePalette,
+    live_sources: [f32; MASTER_MODULATION_SOURCES],
 ) {
-    egui::CollapsingHeader::new("Master modulation matrix")
-        .default_open(false)
-        .show(ui, |ui| {
-            for (index, lfo) in modulation.lfos.iter_mut().enumerate() {
-                ui.group(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut lfo.enabled, format!("LFO {}", index + 1));
-                        egui::ComboBox::from_id_salt(("master-lfo-wave", index))
-                            .selected_text(waveform_label(lfo.waveform))
-                            .show_ui(ui, |ui| {
-                                for waveform in LFO_WAVEFORMS {
-                                    ui.selectable_value(
-                                        &mut lfo.waveform,
-                                        waveform,
-                                        waveform_label(waveform),
-                                    );
-                                }
-                            });
-                        ui.checkbox(&mut lfo.tempo_sync, "Sync");
-                    });
-                    ui.horizontal(|ui| {
-                        if lfo.tempo_sync {
-                            ui.add(
-                                egui::Slider::new(&mut lfo.beats_per_cycle, 0.0625..=8.0)
-                                    .text("beats"),
-                            );
-                        } else {
-                            ui.add(
-                                egui::Slider::new(&mut lfo.rate_hz, 0.01..=20.0)
-                                    .logarithmic(true)
-                                    .text("Hz"),
+    let active_routes = modulation
+        .routes
+        .iter()
+        .filter(|route| route.enabled)
+        .count();
+    egui::CollapsingHeader::new(format!(
+        "Master modulation matrix · {active_routes}/{} routes",
+        modulation.routes.len()
+    ))
+    .id_salt("master-modulation-matrix")
+    .default_open(false)
+    .show(ui, |ui| {
+        for (index, lfo) in modulation.lfos.iter_mut().enumerate() {
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut lfo.enabled, format!("LFO {}", index + 1));
+                    if ui.small_button("Reset").clicked() {
+                        *lfo = MasterLfo {
+                            enabled: lfo.enabled,
+                            ..MasterLfo::default()
+                        };
+                    }
+                });
+                draw_lfo_shape(
+                    ui,
+                    egui::Id::new(("master-lfo", index)),
+                    palette.accent,
+                    lfo.enabled,
+                    live_sources[index],
+                    LfoFields {
+                        waveform: &mut lfo.waveform,
+                        tempo_sync: &mut lfo.tempo_sync,
+                        rate_hz: &mut lfo.rate_hz,
+                        beats_per_cycle: &mut lfo.beats_per_cycle,
+                        depth: &mut lfo.depth,
+                        phase: &mut lfo.phase,
+                        offset: &mut lfo.offset,
+                        unipolar: &mut lfo.unipolar,
+                        invert: &mut lfo.invert,
+                    },
+                );
+            });
+        }
+
+        ui.horizontal(|ui| {
+            ui.strong("Routes");
+            if ui.button("Mute all").clicked() {
+                for route in &mut modulation.routes {
+                    route.enabled = false;
+                }
+            }
+            if ui.button("Clear routes").clicked() {
+                modulation.routes.fill(Default::default());
+            }
+        });
+        for (index, route) in modulation.routes.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut route.enabled, format!("{}", index + 1));
+                egui::ComboBox::from_id_salt(("master-mod-source", index))
+                    .selected_text(master_mod_source_label(route.source))
+                    .show_ui(ui, |ui| {
+                        for source in 0..10 {
+                            ui.selectable_value(
+                                &mut route.source,
+                                source,
+                                master_mod_source_label(source),
                             );
                         }
-                        ui.add(egui::Slider::new(&mut lfo.depth, 0.0..=1.0).text("depth"));
-                        ui.add(egui::Slider::new(&mut lfo.phase, 0.0..=1.0).text("phase"));
                     });
-                });
-            }
-
-            for (index, route) in modulation.routes.iter_mut().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut route.enabled, format!("{}", index + 1));
-                    egui::ComboBox::from_id_salt(("master-mod-source", index))
-                        .selected_text(master_mod_source_label(route.source))
-                        .show_ui(ui, |ui| {
-                            for source in 0..10 {
-                                ui.selectable_value(
-                                    &mut route.source,
-                                    source,
-                                    master_mod_source_label(source),
-                                );
+                egui::ComboBox::from_id_salt(("master-mod-target", index))
+                    .selected_text(master_mod_target_label(route, effects, packages))
+                    .show_ui(ui, |ui| {
+                        for (slot_index, slot) in effects.slots.iter().enumerate() {
+                            if slot.kind != MasterEffectKind::Custom {
+                                continue;
                             }
-                        });
-                    egui::ComboBox::from_id_salt(("master-mod-target", index))
-                        .selected_text(master_mod_target_label(route, effects, packages))
-                        .show_ui(ui, |ui| {
-                            for (slot_index, slot) in effects.slots.iter().enumerate() {
-                                if slot.kind != MasterEffectKind::Custom {
-                                    continue;
-                                }
-                                let Some(package) = packages
-                                    .iter()
-                                    .find(|package| package.id == slot.package_id)
-                                else {
-                                    continue;
-                                };
-                                for parameter in &package.parameters {
-                                    let key = effect_parameter_key(&package.id, &parameter.id);
-                                    if ui
-                                        .selectable_label(
-                                            usize::from(route.target_slot) == slot_index
-                                                && route.parameter_key == key,
-                                            format!(
-                                                "Slot {} · {}",
-                                                slot_index + 1,
-                                                parameter.label
-                                            ),
-                                        )
-                                        .clicked()
-                                    {
-                                        route.target_slot = slot_index as u8;
-                                        route.parameter_key = key;
-                                    }
+                            let Some(package) = packages
+                                .iter()
+                                .find(|package| package.id == slot.package_id)
+                            else {
+                                continue;
+                            };
+                            for parameter in &package.parameters {
+                                let key = effect_parameter_key(&package.id, &parameter.id);
+                                if ui
+                                    .selectable_label(
+                                        usize::from(route.target_slot) == slot_index
+                                            && route.parameter_key == key,
+                                        format!("Slot {} · {}", slot_index + 1, parameter.label),
+                                    )
+                                    .clicked()
+                                {
+                                    route.target_slot = slot_index as u8;
+                                    route.parameter_key = key;
                                 }
                             }
-                        });
-                    ui.add(
-                        egui::Slider::new(&mut route.amount, -1.0..=1.0)
-                            .text("amount")
-                            .show_value(true),
-                    );
-                });
-            }
-            ui.weak("Sources: three master LFOs, audio analysis, beat and bar phase.");
-        });
+                        }
+                    });
+                ui.add(
+                    egui::Slider::new(&mut route.amount, -1.0..=1.0)
+                        .text("amount")
+                        .show_value(true),
+                );
+                if ui
+                    .small_button("±")
+                    .on_hover_text("Invert this route")
+                    .clicked()
+                {
+                    route.amount = -route.amount;
+                }
+                let live = live_sources
+                    .get(usize::from(route.source))
+                    .copied()
+                    .unwrap_or_default()
+                    * route.amount;
+                modulation_meter(
+                    ui,
+                    if route.enabled { live } else { 0.0 },
+                    palette.accent,
+                    70.0,
+                );
+            });
+        }
+        ui.weak("Sources: three master LFOs, audio analysis, beat and bar phase.");
+    });
 }
 
 pub(super) fn master_mod_source_label(source: u8) -> &'static str {

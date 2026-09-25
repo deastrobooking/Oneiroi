@@ -41,9 +41,10 @@ use virtual_media::{
 };
 use virtual_render::{
     BlendModeGroup, DeckEffects, DeckLfos, DeckPackageModulationRoute, DeckPackageSlot,
-    DeckTransform, EffectDescriptor, EffectHistoryResource, EffectParameterControl,
-    EffectParameterValue, EffectPreset, EffectTarget, LayerBlendMode, LfoWaveform,
-    MasterEffectChain, MasterEffectKind, MasterEffectSlot, MasterModulation, SourceMode,
+    DeckTransform, EffectDescriptor, EffectHistoryResource, EffectLfo, EffectParameterControl,
+    EffectParameterValue, EffectPreset, EffectTarget, LayerBlendMode, LfoShaping, LfoWaveform,
+    MASTER_MODULATION_SOURCES, MOD_ROUTES_PER_DECK, MasterEffectChain, MasterEffectKind,
+    MasterEffectSlot, MasterLfo, MasterModulation, ModulationRoute, SourceMode,
 };
 
 /// Everything the overlay owns. All plain data — no GPU handles, no channels.
@@ -77,6 +78,9 @@ pub struct UiState {
     pub solo: [bool; 4],
     pub bypassed: [bool; 4],
     pub lfos: [DeckLfos; 4],
+    /// Last rendered modulation source values per deck, for UI meters.
+    pub mod_sources: [[f32; 10]; 4],
+    pub master_mod_sources: [f32; MASTER_MODULATION_SOURCES],
     pub bpm: f64,
     pub quantization: Quantization,
     pub project_path: String,
@@ -150,6 +154,8 @@ impl Default for UiState {
             solo: [false; 4],
             bypassed: [false; 4],
             lfos: [DeckLfos::default(); 4],
+            mod_sources: [[0.0; 10]; 4],
+            master_mod_sources: [0.0; MASTER_MODULATION_SOURCES],
             bpm: 120.0,
             quantization: Quantization::Immediate,
             project_path: "show.virtual".to_owned(),
@@ -663,6 +669,7 @@ pub fn draw(
                 let bypassed_ref = &mut state.bypassed;
                 let effects_ref = &mut state.effects;
                 let lfos_ref = &mut state.lfos;
+                let mod_sources = state.mod_sources;
                 let deck_packages_ref = &mut state.deck_packages;
                 let deck_effect_packages = &state.deck_effect_packages;
                 let actions_ref = &mut actions;
@@ -682,6 +689,7 @@ pub fn draw(
                             bypassed: &mut bypassed_ref[deck_id.index()],
                             effects: &mut effects_ref[deck_id.index()],
                             lfos: &mut lfos_ref[deck_id.index()],
+                            mod_sources: mod_sources[deck_id.index()],
                             package: &mut deck_packages_ref[deck_id.index()],
                             packages: deck_effect_packages,
                         },
@@ -856,6 +864,7 @@ pub fn draw(
                                     index,
                                     slot,
                                     effect_packages,
+                                    palette,
                                     &mut actions,
                                 );
                             }
@@ -876,6 +885,8 @@ pub fn draw(
                         &mut state.master_modulation,
                         master_effects,
                         effect_packages,
+                        palette,
+                        state.master_mod_sources,
                     );
                     ui.separator();
                     ui.label("Effect package");
@@ -935,12 +946,14 @@ pub fn draw(
     actions
 }
 
-const LFO_WAVEFORMS: [LfoWaveform; 5] = [
+const LFO_WAVEFORMS: [LfoWaveform; 7] = [
     LfoWaveform::Sine,
     LfoWaveform::Triangle,
     LfoWaveform::Saw,
     LfoWaveform::SawDown,
     LfoWaveform::Square,
+    LfoWaveform::SampleHold,
+    LfoWaveform::SmoothRandom,
 ];
 
 fn waveform_label(waveform: LfoWaveform) -> &'static str {
@@ -950,6 +963,8 @@ fn waveform_label(waveform: LfoWaveform) -> &'static str {
         LfoWaveform::Saw => "Saw up",
         LfoWaveform::SawDown => "Saw down",
         LfoWaveform::Square => "Square",
+        LfoWaveform::SampleHold => "Sample & hold",
+        LfoWaveform::SmoothRandom => "Smooth random",
     }
 }
 

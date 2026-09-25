@@ -287,10 +287,17 @@ pub enum LfoWaveform {
     Saw,
     SawDown,
     Square,
+    /// Holds a new random level for each cycle.
+    SampleHold,
+    /// Glides between a new random level each cycle.
+    SmoothRandom,
 }
 
 impl LfoWaveform {
+    /// `phase` is the unwrapped cycle position; the integer part selects the
+    /// random step for the random shapes, so they stay deterministic.
     pub fn sample(self, phase: f32) -> f32 {
+        let step = phase.floor();
         let phase = phase.rem_euclid(1.0);
         match self {
             Self::Sine => (phase * std::f32::consts::TAU).sin(),
@@ -304,7 +311,63 @@ impl LfoWaveform {
                     -1.0
                 }
             }
+            Self::SampleHold => random_step(step),
+            Self::SmoothRandom => {
+                let eased = phase * phase * (3.0 - 2.0 * phase);
+                let from = random_step(step);
+                from + (random_step(step + 1.0) - from) * eased
+            }
         }
+    }
+}
+
+/// Deterministic value in `-1..=1` for one LFO cycle index.
+fn random_step(step: f32) -> f32 {
+    let mut x = (step as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    x ^= x >> 31;
+    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x ^= x >> 29;
+    ((x >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+}
+
+/// Output shaping shared by deck and master LFOs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LfoShaping {
+    pub depth: f32,
+    /// Added after depth, in `-1..=1`.
+    pub offset: f32,
+    /// Maps the wave into `0..=1` so it only pushes a destination one way.
+    pub unipolar: bool,
+    pub invert: bool,
+}
+
+impl LfoShaping {
+    pub fn output(self, raw: f32) -> f32 {
+        let mut value = if self.unipolar { raw * 0.5 + 0.5 } else { raw };
+        if self.invert {
+            value = if self.unipolar { 1.0 - value } else { -value };
+        }
+        let offset = if self.offset.is_finite() {
+            self.offset.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        (value * self.depth.clamp(0.0, 1.0) + offset).clamp(-1.0, 1.0)
+    }
+}
+
+/// Unwrapped cycle position of an LFO at a time and musical position.
+pub fn lfo_cycle(
+    tempo_sync: bool,
+    beats_per_cycle: f32,
+    rate_hz: f32,
+    time_seconds: f32,
+    beat_position: f32,
+) -> f32 {
+    if tempo_sync {
+        beat_position / beats_per_cycle.clamp(0.0625, 8.0)
+    } else {
+        time_seconds * rate_hz.clamp(0.01, 20.0)
     }
 }
 
@@ -342,6 +405,32 @@ pub struct EffectLfo {
     pub beats_per_cycle: f32,
     pub depth: f32,
     pub phase: f32,
+    pub offset: f32,
+    pub unipolar: bool,
+    pub invert: bool,
+}
+
+impl EffectLfo {
+    pub fn shaping(self) -> LfoShaping {
+        LfoShaping {
+            depth: self.depth,
+            offset: self.offset,
+            unipolar: self.unipolar,
+            invert: self.invert,
+        }
+    }
+
+    pub fn output(self, time_seconds: f32, beat_position: f32) -> f32 {
+        let cycle = lfo_cycle(
+            self.tempo_sync,
+            self.beats_per_cycle,
+            self.rate_hz,
+            time_seconds,
+            beat_position,
+        );
+        self.shaping()
+            .output(self.waveform.sample(cycle + self.phase))
+    }
 }
 
 impl Default for EffectLfo {
@@ -356,6 +445,9 @@ impl Default for EffectLfo {
             beats_per_cycle: 1.0,
             depth: 0.5,
             phase: 0.0,
+            offset: 0.0,
+            unipolar: false,
+            invert: false,
         }
     }
 }
@@ -403,13 +495,7 @@ impl DeckLfos {
             if !lfo.enabled {
                 continue;
             }
-            let cycle = if lfo.tempo_sync {
-                beat_position / lfo.beats_per_cycle.clamp(0.0625, 8.0)
-            } else {
-                time_seconds * lfo.rate_hz.clamp(0.01, 20.0)
-            };
-            source_values[index] =
-                lfo.waveform.sample(cycle + lfo.phase) * lfo.depth.clamp(0.0, 1.0);
+            source_values[index] = lfo.output(time_seconds, beat_position);
         }
         source_values
     }
@@ -2024,6 +2110,7 @@ mod tests {
                     beats_per_cycle: 1.0,
                     depth: 1.0,
                     phase: 0.0,
+                    ..EffectLfo::default()
                 },
                 EffectLfo {
                     enabled: true,
@@ -2035,6 +2122,7 @@ mod tests {
                     beats_per_cycle: 1.0,
                     depth: 2.0,
                     phase: 0.0,
+                    ..EffectLfo::default()
                 },
                 EffectLfo::default(),
             ],
@@ -2059,6 +2147,7 @@ mod tests {
             beats_per_cycle: 1.0,
             depth: 1.0,
             phase: 0.0,
+            ..EffectLfo::default()
         };
         lfos.routes[0] = ModulationRoute {
             enabled: true,
@@ -2133,10 +2222,61 @@ mod tests {
             beats_per_cycle: 2.0,
             depth: 1.0,
             phase: 0.0,
+            ..EffectLfo::default()
         };
         let first = lfos.apply(DeckEffects::default(), 100.0, 0.5);
         let later_wall_time = lfos.apply(DeckEffects::default(), 900.0, 0.5);
         assert!((first.hue - 0.5).abs() < 0.0001);
         assert_eq!(first, later_wall_time);
+    }
+
+    #[test]
+    fn random_waveforms_are_deterministic_and_bounded() {
+        for step in 0..64 {
+            let base = step as f32;
+            let held = LfoWaveform::SampleHold.sample(base + 0.1);
+            assert_eq!(held, LfoWaveform::SampleHold.sample(base + 0.9));
+            assert!((-1.0..=1.0).contains(&held));
+            let smooth = LfoWaveform::SmoothRandom.sample(base + 0.5);
+            assert!((-1.0..=1.0).contains(&smooth));
+            assert!(
+                (LfoWaveform::SmoothRandom.sample(base) - held).abs() < 0.0001,
+                "smooth random starts each cycle on the held level"
+            );
+        }
+        let distinct = (0..16)
+            .map(|step| LfoWaveform::SampleHold.sample(step as f32).to_bits())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(distinct.len() > 8);
+    }
+
+    #[test]
+    fn lfo_shaping_applies_polarity_invert_and_offset() {
+        let shaping = LfoShaping {
+            depth: 1.0,
+            offset: 0.0,
+            unipolar: true,
+            invert: false,
+        };
+        assert_eq!(shaping.output(-1.0), 0.0);
+        assert_eq!(shaping.output(1.0), 1.0);
+        let inverted = LfoShaping {
+            invert: true,
+            ..shaping
+        };
+        assert_eq!(inverted.output(-1.0), 1.0);
+        let bipolar_inverted = LfoShaping {
+            unipolar: false,
+            ..inverted
+        };
+        assert_eq!(bipolar_inverted.output(0.5), -0.5);
+        let offset = LfoShaping {
+            depth: 0.5,
+            offset: 0.75,
+            unipolar: false,
+            invert: false,
+        };
+        assert_eq!(offset.output(1.0), 1.0);
+        assert_eq!(offset.output(-1.0), 0.25);
     }
 }

@@ -345,6 +345,8 @@ fn apply_deck_effect_structure(
             parameters,
             &format!("{path}.beats_per_cycle"),
         );
+        assign_bool(&mut lfo.unipolar, parameters, &format!("{path}.unipolar"));
+        assign_bool(&mut lfo.invert, parameters, &format!("{path}.invert"));
     }
     for route in 0..8 {
         let path = format!("{root}.modulation.route.{route}");
@@ -430,6 +432,9 @@ fn apply_master_modulation_structure(
         );
         assign_f32(&mut lfo.depth, parameters, &format!("{root}.depth"));
         assign_f32(&mut lfo.phase, parameters, &format!("{root}.phase"));
+        assign_f32(&mut lfo.offset, parameters, &format!("{root}.offset"));
+        assign_bool(&mut lfo.unipolar, parameters, &format!("{root}.unipolar"));
+        assign_bool(&mut lfo.invert, parameters, &format!("{root}.invert"));
     }
     for index in 0..ui.master_modulation.routes.len() {
         let route = &mut ui.master_modulation.routes[index];
@@ -504,6 +509,8 @@ fn parse_waveform(value: &str) -> Option<LfoWaveform> {
         "saw" => LfoWaveform::Saw,
         "saw_down" => LfoWaveform::SawDown,
         "square" => LfoWaveform::Square,
+        "sample_hold" => LfoWaveform::SampleHold,
+        "smooth_random" => LfoWaveform::SmoothRandom,
         _ => return None,
     })
 }
@@ -688,6 +695,13 @@ fn diff_deck_effect_structure(
             old.beats_per_cycle,
             new.beats_per_cycle,
         );
+        changed_bool(
+            commands,
+            format!("{lfo}.unipolar"),
+            old.unipolar,
+            new.unipolar,
+        );
+        changed_bool(commands, format!("{lfo}.invert"), old.invert, new.invert);
     }
     for route in 0..8 {
         let path = format!("{root}.modulation.route.{route}");
@@ -897,6 +911,14 @@ fn diff_master_modulation(
         );
         changed_f32(commands, format!("{root}.depth"), old.depth, new.depth);
         changed_f32(commands, format!("{root}.phase"), old.phase, new.phase);
+        changed_f32(commands, format!("{root}.offset"), old.offset, new.offset);
+        changed_bool(
+            commands,
+            format!("{root}.unipolar"),
+            old.unipolar,
+            new.unipolar,
+        );
+        changed_bool(commands, format!("{root}.invert"), old.invert, new.invert);
     }
     for index in 0..old.routes.len() {
         let old = old.routes[index];
@@ -960,6 +982,8 @@ fn waveform_name(value: LfoWaveform) -> &'static str {
         LfoWaveform::Saw => "saw",
         LfoWaveform::SawDown => "saw_down",
         LfoWaveform::Square => "square",
+        LfoWaveform::SampleHold => "sample_hold",
+        LfoWaveform::SmoothRandom => "smooth_random",
     }
 }
 fn master_kind_name(value: MasterEffectKind) -> &'static str {
@@ -1051,7 +1075,9 @@ mod tests {
         desired.buses[0] = CrossfadeBus::Right;
         desired.transforms[0].source_mode = SourceMode::Fill;
         desired.effect_slots[1][2].group = EffectGroup::Geometry;
-        desired.lfos[2].lanes[1].waveform = LfoWaveform::Square;
+        desired.lfos[2].lanes[1].waveform = LfoWaveform::SampleHold;
+        desired.lfos[2].lanes[1].unipolar = true;
+        desired.lfos[2].lanes[1].invert = true;
         desired.lfos[2].routes[3].target = EffectTarget::Jitter;
         desired.deck_packages[3] = DeckPackageSlot {
             mix: 0.6,
@@ -1070,6 +1096,10 @@ mod tests {
         };
         desired.master_effects.slots[0].kind = MasterEffectKind::Feedback;
         desired.master_modulation.routes[0].target_slot = 1;
+        desired.master_modulation.lfos[0].waveform = LfoWaveform::SmoothRandom;
+        desired.master_modulation.lfos[0].offset = -0.3;
+        desired.master_modulation.lfos[0].unipolar = true;
+        desired.master_modulation.lfos[0].invert = true;
         let parameters = before
             .commands_to(&desired)
             .into_iter()

@@ -14,7 +14,7 @@ use virtual_core::effect_parameter_key;
 use crate::{
     EffectHistoryResource, EffectManifest, EffectPackageAbi, EffectPackageRole,
     EffectPackageTarget, EffectParameterSchema, ValidatedEffectPackage, load_effect_package,
-    mixer::LfoWaveform,
+    mixer::{LfoShaping, LfoWaveform, lfo_cycle},
 };
 
 pub const PROGRAM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -240,6 +240,28 @@ pub struct MasterLfo {
     pub beats_per_cycle: f32,
     pub depth: f32,
     pub phase: f32,
+    pub offset: f32,
+    pub unipolar: bool,
+    pub invert: bool,
+}
+
+impl MasterLfo {
+    pub fn output(self, time_seconds: f32, beat_position: f32) -> f32 {
+        let cycle = lfo_cycle(
+            self.tempo_sync,
+            self.beats_per_cycle,
+            self.rate_hz,
+            time_seconds,
+            beat_position,
+        );
+        LfoShaping {
+            depth: self.depth,
+            offset: self.offset,
+            unipolar: self.unipolar,
+            invert: self.invert,
+        }
+        .output(self.waveform.sample(cycle + self.phase))
+    }
 }
 
 impl Default for MasterLfo {
@@ -252,6 +274,9 @@ impl Default for MasterLfo {
             beats_per_cycle: 1.0,
             depth: 0.5,
             phase: 0.0,
+            offset: 0.0,
+            unipolar: false,
+            invert: false,
         }
     }
 }
@@ -284,7 +309,7 @@ pub struct MasterModulation {
 }
 
 impl MasterModulation {
-    fn source_values(
+    pub fn source_values(
         self,
         time_seconds: f32,
         beat_position: f32,
@@ -295,12 +320,7 @@ impl MasterModulation {
             if !lfo.enabled {
                 continue;
             }
-            let cycle = if lfo.tempo_sync {
-                beat_position / lfo.beats_per_cycle.clamp(0.0625, 8.0)
-            } else {
-                time_seconds * lfo.rate_hz.clamp(0.01, 20.0)
-            };
-            sources[index] = lfo.waveform.sample(cycle + lfo.phase) * lfo.depth.clamp(0.0, 1.0);
+            sources[index] = lfo.output(time_seconds, beat_position);
         }
         sources[3..8].copy_from_slice(&audio.map(|value| value.clamp(0.0, 1.0)));
         sources[8] = beat_position.rem_euclid(1.0);

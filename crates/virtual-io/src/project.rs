@@ -11,6 +11,8 @@ use virtual_graph::ProjectGraph;
 
 pub const PROJECT_FORMAT: &str = "oneiroi-project";
 pub const PROJECT_VERSION: u32 = 6;
+/// Enabled, rate, depth, phase and offset.
+pub const LFO_CONTROL_PARAMETERS: u8 = 5;
 const MINIMUM_PROJECT_VERSION: u32 = 1;
 pub const DECK_COUNT: usize = 4;
 pub const CLIPS_PER_DECK: usize = 8;
@@ -186,6 +188,7 @@ impl ProjectFile {
                         || !effect_value(lfo.beats_per_cycle, 0.0625, 8.0)
                         || !unit(lfo.depth)
                         || !unit(lfo.phase)
+                        || !effect_value(lfo.offset, -1.0, 1.0)
                 })
                 || deck.mod_routes.len() > 8
                 || deck
@@ -352,6 +355,7 @@ fn valid_master_modulation(modulation: &MasterModulationProject) -> bool {
                 && effect_value(lfo.beats_per_cycle, 0.0625, 8.0)
                 && unit(lfo.depth)
                 && unit(lfo.phase)
+                && effect_value(lfo.offset, -1.0, 1.0)
         })
         && modulation.routes.iter().all(|route| {
             route.source < 10
@@ -393,7 +397,7 @@ fn valid_control_target(target: ControlTargetProject) -> bool {
             deck,
             lfo,
             parameter,
-        } => deck < 4 && lfo < 3 && parameter < 4,
+        } => deck < 4 && lfo < 3 && parameter < LFO_CONTROL_PARAMETERS,
         ControlTargetProject::ModRouteParameter {
             deck,
             route,
@@ -651,6 +655,12 @@ pub struct MasterLfoProject {
     pub depth: f32,
     #[serde(default)]
     pub phase: f32,
+    #[serde(default)]
+    pub offset: f32,
+    #[serde(default)]
+    pub unipolar: bool,
+    #[serde(default)]
+    pub invert: bool,
 }
 
 impl Default for MasterLfoProject {
@@ -663,6 +673,9 @@ impl Default for MasterLfoProject {
             beats_per_cycle: 1.0,
             depth: default_lfo_depth(),
             phase: 0.0,
+            offset: 0.0,
+            unipolar: false,
+            invert: false,
         }
     }
 }
@@ -1126,6 +1139,8 @@ pub enum LfoWaveformProject {
     Saw,
     SawDown,
     Square,
+    SampleHold,
+    SmoothRandom,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1165,6 +1180,12 @@ pub struct LfoProject {
     pub beats_per_cycle: f32,
     pub depth: f32,
     pub phase: f32,
+    #[serde(default)]
+    pub offset: f32,
+    #[serde(default)]
+    pub unipolar: bool,
+    #[serde(default)]
+    pub invert: bool,
 }
 
 impl Default for LfoProject {
@@ -1179,6 +1200,9 @@ impl Default for LfoProject {
             beats_per_cycle: 1.0,
             depth: 0.5,
             phase: 0.0,
+            offset: 0.0,
+            unipolar: false,
+            invert: false,
         }
     }
 }
@@ -1491,12 +1515,15 @@ mod tests {
             enabled: true,
             direct_enabled: false,
             target: EffectTargetProject::Neon,
-            waveform: LfoWaveformProject::Triangle,
+            waveform: LfoWaveformProject::SampleHold,
             rate_hz: 0.5,
             tempo_sync: true,
             beats_per_cycle: 2.0,
             depth: 0.75,
             phase: 0.25,
+            offset: -0.25,
+            unipolar: true,
+            invert: true,
         };
         project.decks[1].mod_routes[0] = ModRouteProject {
             enabled: true,

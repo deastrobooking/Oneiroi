@@ -384,7 +384,7 @@ pub(super) fn midi_targets() -> Vec<ControlTarget> {
             });
         }
         for lfo in 0..3 {
-            for parameter in 0..4 {
+            for parameter in 0..virtual_io::LFO_CONTROL_PARAMETERS {
                 targets.push(ControlTarget::LfoParameter {
                     deck,
                     lfo,
@@ -435,7 +435,7 @@ pub(super) fn midi_target_label(target: ControlTarget) -> String {
             "Deck {} · LFO {} · {}",
             deck_label(deck),
             lfo + 1,
-            ["Enabled", "Rate", "Depth", "Phase"]
+            ["Enabled", "Rate", "Depth", "Phase", "Offset"]
                 .get(usize::from(parameter))
                 .copied()
                 .unwrap_or("Unknown")

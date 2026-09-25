@@ -13,6 +13,8 @@ pub(super) struct DeckControls<'a> {
     pub(super) bypassed: &'a mut bool,
     pub(super) effects: &'a mut DeckEffects,
     pub(super) lfos: &'a mut DeckLfos,
+    /// Last rendered value of each modulation source, for the meters.
+    pub(super) mod_sources: [f32; 10],
     pub(super) package: &'a mut DeckPackageSlot,
     pub(super) packages: &'a [EffectDescriptor],
 }
@@ -35,6 +37,7 @@ pub(super) fn draw_deck(
         bypassed,
         effects,
         lfos,
+        mod_sources,
         package,
         packages,
     } = controls;
@@ -362,6 +365,8 @@ pub(super) fn draw_deck(
                 });
         }
         let effect_controls = |ui: &mut egui::Ui| {
+            draw_deck_package(ui, id, show_mode, palette, accent, package, packages, actions);
+            ui.add_space(4.0);
             if show_mode {
                 ui.horizontal_wrapped(|ui| {
                     ui.strong("LIVE DECK EFFECTS");
@@ -554,8 +559,6 @@ pub(super) fn draw_deck(
                 }
                 ui.weak("Effects run independently on this deck before mixing.");
             });
-            ui.separator();
-            draw_deck_package(ui, id, show_mode, package, packages, actions);
         };
         if show_mode || selected {
             ui.group(effect_controls);
@@ -565,185 +568,562 @@ pub(super) fn draw_deck(
                 .show(ui, effect_controls);
         }
         if !show_mode {
-            egui::CollapsingHeader::new("LFOs + Mod Matrix")
-                .id_salt(format!("lfos-{}", id.label()))
-                .show(ui, |ui| {
-                    ui.strong("Sources");
-                    for (index, lfo) in lfos.lanes.iter_mut().enumerate() {
-                        ui.group(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut lfo.enabled, format!("LFO {}", index + 1));
-                                ui.checkbox(&mut lfo.direct_enabled, "Direct");
-                                ui.add_enabled_ui(lfo.direct_enabled, |ui| {
-                                    egui::ComboBox::from_id_salt(format!(
-                                        "lfo-target-{}-{index}",
-                                        id.label()
-                                    ))
-                                    .selected_text(effect_target_label(lfo.target))
-                                    .show_ui(ui, |ui| {
-                                        for target in EFFECT_TARGETS {
-                                            ui.selectable_value(
-                                                &mut lfo.target,
-                                                target,
-                                                effect_target_label(target),
-                                            );
-                                        }
-                                    });
-                                });
+            let active_lfos = lfos.lanes.iter().filter(|lfo| lfo.enabled).count();
+            let active_routes = lfos.routes.iter().filter(|route| route.enabled).count();
+            egui::CollapsingHeader::new(format!(
+                "LFOs + Mod Matrix · {active_lfos}/3 LFOs · {active_routes}/{MOD_ROUTES_PER_DECK} routes"
+            ))
+            .id_salt(format!("lfos-{}", id.label()))
+            .show(ui, |ui| {
+                ui.strong("Sources");
+                for (index, lfo) in lfos.lanes.iter_mut().enumerate() {
+                    let mut add_route = None;
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut lfo.enabled, format!("LFO {}", index + 1));
+                            ui.checkbox(&mut lfo.direct_enabled, "Direct")
+                                .on_hover_text("Drive the destination below without a matrix route");
+                            ui.add_enabled_ui(lfo.direct_enabled, |ui| {
                                 egui::ComboBox::from_id_salt(format!(
-                                    "lfo-wave-{}-{index}",
+                                    "lfo-target-{}-{index}",
                                     id.label()
                                 ))
-                                .selected_text(waveform_label(lfo.waveform))
-                                .show_ui(ui, |ui| {
-                                    for waveform in LFO_WAVEFORMS {
-                                        ui.selectable_value(
-                                            &mut lfo.waveform,
-                                            waveform,
-                                            waveform_label(waveform),
-                                        );
-                                    }
-                                });
-                            });
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut lfo.tempo_sync, "Sync");
-                                if lfo.tempo_sync {
-                                    egui::ComboBox::from_id_salt(format!(
-                                        "lfo-division-{}-{index}",
-                                        id.label()
-                                    ))
-                                    .selected_text(beat_division_label(lfo.beats_per_cycle))
-                                    .show_ui(ui, |ui| {
-                                        for (beats, label) in BEAT_DIVISIONS {
-                                            ui.selectable_value(
-                                                &mut lfo.beats_per_cycle,
-                                                beats,
-                                                label,
-                                            );
-                                        }
-                                    });
-                                } else {
-                                    ui.add(
-                                        egui::Slider::new(&mut lfo.rate_hz, 0.01..=20.0)
-                                            .logarithmic(true)
-                                            .text("Hz"),
-                                    );
-                                }
-                                ui.add(egui::Slider::new(&mut lfo.depth, 0.0..=1.0).text("depth"));
-                                ui.add(egui::Slider::new(&mut lfo.phase, 0.0..=1.0).text("phase"));
-                            });
-                        });
-                    }
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.strong("Modulation routes");
-                        ui.weak(
-                            "One source can drive multiple destinations; negative amounts invert.",
-                        );
-                        if ui.button("Clear routes").clicked() {
-                            lfos.routes.fill(Default::default());
-                        }
-                    });
-                    egui::Grid::new(format!("mod-matrix-{}", id.label()))
-                        .num_columns(4)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            ui.strong("On");
-                            ui.strong("Source");
-                            ui.strong("Destination");
-                            ui.strong("Amount");
-                            ui.end_row();
-                            for (index, route) in lfos.routes.iter_mut().enumerate() {
-                                ui.checkbox(&mut route.enabled, "");
-                                egui::ComboBox::from_id_salt(format!(
-                                    "mod-source-{}-{index}",
-                                    id.label()
-                                ))
-                                .selected_text(mod_source_label(route.source))
-                                .show_ui(ui, |ui| {
-                                    for source in 0..10 {
-                                        ui.selectable_value(
-                                            &mut route.source,
-                                            source,
-                                            mod_source_label(source),
-                                        );
-                                    }
-                                });
-                                egui::ComboBox::from_id_salt(format!(
-                                    "mod-target-{}-{index}",
-                                    id.label()
-                                ))
-                                .selected_text(effect_target_label(route.target))
+                                .selected_text(effect_target_label(lfo.target))
                                 .show_ui(ui, |ui| {
                                     for target in EFFECT_TARGETS {
                                         ui.selectable_value(
-                                            &mut route.target,
+                                            &mut lfo.target,
                                             target,
                                             effect_target_label(target),
                                         );
                                     }
                                 });
-                                ui.add(
-                                    egui::Slider::new(&mut route.amount, -1.0..=1.0)
-                                        .show_value(true),
-                                );
-                                ui.end_row();
+                            });
+                            if ui
+                                .small_button("+ Route")
+                                .on_hover_text("Send this LFO to another destination through the matrix")
+                                .clicked()
+                            {
+                                add_route = Some(lfo.target);
+                            }
+                            if ui.small_button("Reset").clicked() {
+                                *lfo = EffectLfo {
+                                    enabled: lfo.enabled,
+                                    target: lfo.target,
+                                    ..EffectLfo::default()
+                                };
                             }
                         });
+                        draw_lfo_shape(
+                            ui,
+                            egui::Id::new(("deck-lfo", id.index(), index)),
+                            accent,
+                            lfo.enabled,
+                            mod_sources[index],
+                            LfoFields {
+                                waveform: &mut lfo.waveform,
+                                tempo_sync: &mut lfo.tempo_sync,
+                                rate_hz: &mut lfo.rate_hz,
+                                beats_per_cycle: &mut lfo.beats_per_cycle,
+                                depth: &mut lfo.depth,
+                                phase: &mut lfo.phase,
+                                offset: &mut lfo.offset,
+                                unipolar: &mut lfo.unipolar,
+                                invert: &mut lfo.invert,
+                            },
+                        );
+                    });
+                    if let Some(target) = add_route
+                        && let Some(route) = lfos.routes.iter_mut().find(|route| !route.enabled)
+                    {
+                        *route = ModulationRoute {
+                            enabled: true,
+                            source: index as u8,
+                            target,
+                            amount: 0.5,
+                        };
+                        lfo.enabled = true;
+                    }
+                }
+                ui.separator();
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong("Modulation routes");
+                    ui.weak("One source can drive multiple destinations; negative amounts invert.");
                 });
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            lfos.routes.iter().any(|route| !route.enabled),
+                            egui::Button::new("Add route"),
+                        )
+                        .clicked()
+                        && let Some(route) = lfos.routes.iter_mut().find(|route| !route.enabled)
+                    {
+                        route.enabled = true;
+                    }
+                    if ui.button("Enable all").clicked() {
+                        for route in &mut lfos.routes {
+                            route.enabled = true;
+                        }
+                    }
+                    if ui.button("Mute all").clicked() {
+                        for route in &mut lfos.routes {
+                            route.enabled = false;
+                        }
+                    }
+                    if ui.button("Clear routes").clicked() {
+                        lfos.routes.fill(Default::default());
+                    }
+                });
+                egui::Grid::new(format!("mod-matrix-{}", id.label()))
+                    .num_columns(7)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.strong("On");
+                        ui.strong("Source");
+                        ui.strong("Destination");
+                        ui.strong("Amount");
+                        ui.strong("");
+                        ui.strong("Live");
+                        ui.strong("");
+                        ui.end_row();
+                        for (index, route) in lfos.routes.iter_mut().enumerate() {
+                            ui.checkbox(&mut route.enabled, format!("{}", index + 1));
+                            egui::ComboBox::from_id_salt(format!(
+                                "mod-source-{}-{index}",
+                                id.label()
+                            ))
+                            .selected_text(mod_source_label(route.source))
+                            .show_ui(ui, |ui| {
+                                for source in 0..10 {
+                                    ui.selectable_value(
+                                        &mut route.source,
+                                        source,
+                                        mod_source_label(source),
+                                    );
+                                }
+                            });
+                            egui::ComboBox::from_id_salt(format!(
+                                "mod-target-{}-{index}",
+                                id.label()
+                            ))
+                            .selected_text(effect_target_label(route.target))
+                            .show_ui(ui, |ui| {
+                                for target in EFFECT_TARGETS {
+                                    ui.selectable_value(
+                                        &mut route.target,
+                                        target,
+                                        effect_target_label(target),
+                                    );
+                                }
+                            });
+                            ui.add(
+                                egui::Slider::new(&mut route.amount, -1.0..=1.0)
+                                    .show_value(true),
+                            );
+                            if ui
+                                .small_button("±")
+                                .on_hover_text("Invert this route")
+                                .clicked()
+                            {
+                                route.amount = -route.amount;
+                            }
+                            let live = mod_sources
+                                .get(usize::from(route.source))
+                                .copied()
+                                .unwrap_or_default()
+                                * route.amount;
+                            modulation_meter(
+                                ui,
+                                if route.enabled { live } else { 0.0 },
+                                accent,
+                                70.0,
+                            );
+                            if ui
+                                .small_button("✕")
+                                .on_hover_text("Clear this route")
+                                .clicked()
+                            {
+                                *route = ModulationRoute::default();
+                            }
+                            ui.end_row();
+                        }
+                    });
+            });
         }
     });
 }
 
+pub(super) struct LfoFields<'a> {
+    pub(super) waveform: &'a mut LfoWaveform,
+    pub(super) tempo_sync: &'a mut bool,
+    pub(super) rate_hz: &'a mut f32,
+    pub(super) beats_per_cycle: &'a mut f32,
+    pub(super) depth: &'a mut f32,
+    pub(super) phase: &'a mut f32,
+    pub(super) offset: &'a mut f32,
+    pub(super) unipolar: &'a mut bool,
+    pub(super) invert: &'a mut bool,
+}
+
+/// Waveform, rate and output-shaping controls shared by deck and master LFOs.
+pub(super) fn draw_lfo_shape(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    color: egui::Color32,
+    enabled: bool,
+    live: f32,
+    lfo: LfoFields<'_>,
+) {
+    let LfoFields {
+        waveform,
+        tempo_sync,
+        rate_hz,
+        beats_per_cycle,
+        depth,
+        phase,
+        offset,
+        unipolar,
+        invert,
+    } = lfo;
+    ui.horizontal(|ui| {
+        lfo_preview(
+            ui,
+            *waveform,
+            LfoShaping {
+                depth: *depth,
+                offset: *offset,
+                unipolar: *unipolar,
+                invert: *invert,
+            },
+            *phase,
+            live,
+            color,
+            enabled,
+        );
+        ui.vertical(|ui| {
+            egui::ComboBox::from_id_salt(id.with("wave"))
+                .selected_text(waveform_label(*waveform))
+                .show_ui(ui, |ui| {
+                    for candidate in LFO_WAVEFORMS {
+                        ui.selectable_value(waveform, candidate, waveform_label(candidate));
+                    }
+                });
+            ui.horizontal(|ui| {
+                ui.toggle_value(unipolar, "Unipolar")
+                    .on_hover_text("Output 0…1 instead of −1…1, so it only pushes one way");
+                ui.toggle_value(invert, "Invert");
+            });
+            modulation_meter(ui, if enabled { live } else { 0.0 }, color, 120.0);
+        });
+    });
+    ui.horizontal(|ui| {
+        ui.toggle_value(tempo_sync, "Sync")
+            .on_hover_text("Lock the cycle to the tempo clock");
+        if *tempo_sync {
+            egui::ComboBox::from_id_salt(id.with("division"))
+                .selected_text(beat_division_label(*beats_per_cycle))
+                .show_ui(ui, |ui| {
+                    for (beats, label) in BEAT_DIVISIONS {
+                        ui.selectable_value(beats_per_cycle, beats, label);
+                    }
+                });
+        } else {
+            ui.add(
+                egui::Slider::new(rate_hz, 0.01..=20.0)
+                    .logarithmic(true)
+                    .text("Hz"),
+            );
+        }
+        if ui.small_button("÷2").on_hover_text("Half speed").clicked() {
+            if *tempo_sync {
+                *beats_per_cycle = (*beats_per_cycle * 2.0).min(8.0);
+            } else {
+                *rate_hz = (*rate_hz * 0.5).max(0.01);
+            }
+        }
+        if ui
+            .small_button("×2")
+            .on_hover_text("Double speed")
+            .clicked()
+        {
+            if *tempo_sync {
+                *beats_per_cycle = (*beats_per_cycle * 0.5).max(0.0625);
+            } else {
+                *rate_hz = (*rate_hz * 2.0).min(20.0);
+            }
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.add(egui::Slider::new(depth, 0.0..=1.0).text("depth"));
+        ui.add(egui::Slider::new(phase, 0.0..=1.0).text("phase"));
+        if ui
+            .add(egui::Slider::new(offset, -1.0..=1.0).text("offset"))
+            .on_hover_text("Shifts the whole wave; double-click to reset")
+            .double_clicked()
+        {
+            *offset = 0.0;
+        }
+    });
+}
+
+/// One cycle of the shaped wave (four for the random shapes) with the
+/// current output marked on the right edge.
+fn lfo_preview(
+    ui: &mut egui::Ui,
+    waveform: LfoWaveform,
+    shaping: LfoShaping,
+    phase: f32,
+    live: f32,
+    color: egui::Color32,
+    enabled: bool,
+) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 44.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let visuals = ui.visuals();
+    painter.rect_filled(rect, 4.0, visuals.extreme_bg_color);
+    let weak = visuals.weak_text_color();
+    painter.line_segment(
+        [rect.left_center(), rect.right_center()],
+        egui::Stroke::new(1.0, weak.gamma_multiply(0.5)),
+    );
+    let inner = rect.shrink2(egui::vec2(4.0, 4.0));
+    let to_y = |value: f32| inner.center().y - value.clamp(-1.0, 1.0) * inner.height() * 0.5;
+    let cycles = if matches!(
+        waveform,
+        LfoWaveform::SampleHold | LfoWaveform::SmoothRandom
+    ) {
+        4.0
+    } else {
+        1.0
+    };
+    let points = (0..=120)
+        .map(|step| {
+            let t = step as f32 / 120.0;
+            let value = shaping.output(waveform.sample(t * cycles + phase));
+            egui::pos2(inner.left() + t * inner.width(), to_y(value))
+        })
+        .collect();
+    let stroke_color = if enabled { color } else { weak };
+    painter.add(egui::Shape::line(
+        points,
+        egui::Stroke::new(1.5, stroke_color),
+    ));
+    if enabled {
+        painter.circle_filled(egui::pos2(inner.right(), to_y(live)), 3.5, color);
+    }
+}
+
+/// Centre-zero bar for a bipolar modulation value.
+pub(super) fn modulation_meter(ui: &mut egui::Ui, value: f32, color: egui::Color32, width: f32) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 10.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);
+    let value = if value.is_finite() {
+        value.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    let centre = rect.center().x;
+    let end = centre + value * rect.width() * 0.5;
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(centre.min(end), rect.top() + 2.0),
+            egui::pos2(centre.max(end), rect.bottom() - 2.0),
+        ),
+        2.0,
+        color,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(centre, rect.top()),
+            egui::pos2(centre, rect.bottom()),
+        ],
+        egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+    );
+    response.on_hover_text(format!("{value:+.2}"));
+}
+
+/// Large selectable tiles for picking an algorithmic effect package.
+/// Returns true when the selection changed.
+pub(super) fn algorithm_tiles(
+    ui: &mut egui::Ui,
+    selected_id: &mut String,
+    packages: &[EffectDescriptor],
+    palette: ThemePalette,
+    accent: egui::Color32,
+    allow_none: bool,
+    enabled: bool,
+) -> bool {
+    let previous = selected_id.clone();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+        if allow_none
+            && algorithm_tile(ui, "Off", selected_id.is_empty(), palette, accent, enabled)
+                .on_hover_text("No algorithmic effect")
+                .clicked()
+        {
+            selected_id.clear();
+        }
+        for package in packages {
+            let response = algorithm_tile(
+                ui,
+                &package.name,
+                *selected_id == package.id,
+                palette,
+                accent,
+                enabled,
+            );
+            let response = if package.description.is_empty() {
+                response
+            } else {
+                response.on_hover_text(&package.description)
+            };
+            if response.clicked() {
+                selected_id.clone_from(&package.id);
+            }
+        }
+    });
+    *selected_id != previous
+}
+
+fn algorithm_tile(
+    ui: &mut egui::Ui,
+    label: &str,
+    selected: bool,
+    palette: ThemePalette,
+    accent: egui::Color32,
+    enabled: bool,
+) -> egui::Response {
+    let text = egui::RichText::new(label).size(15.0).strong();
+    let text = if selected {
+        text.color(ui.visuals().strong_text_color())
+    } else {
+        text
+    };
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(text)
+            .min_size(egui::vec2(136.0, 44.0))
+            .selected(selected)
+            .fill(if selected {
+                palette.control_tint(accent, 0.55)
+            } else {
+                palette.control
+            })
+            .stroke(egui::Stroke::new(
+                if selected {
+                    palette.outline_width + 1.5
+                } else {
+                    palette.outline_width
+                },
+                if selected { accent } else { palette.stroke },
+            )),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn draw_deck_package(
     ui: &mut egui::Ui,
     id: DeckId,
     show_mode: bool,
+    palette: ThemePalette,
+    accent: egui::Color32,
     slot: &mut DeckPackageSlot,
     packages: &[EffectDescriptor],
     actions: &mut Vec<UiAction>,
 ) {
-    ui.strong("Algorithmic package");
+    egui::Frame::group(ui.style())
+        .fill(palette.surface_tint(accent, if palette.dark { 0.18 } else { 0.10 }))
+        .stroke(egui::Stroke::new(palette.outline_width + 1.0, accent))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(10.0)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            draw_deck_package_body(ui, id, show_mode, palette, accent, slot, packages, actions);
+        });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_deck_package_body(
+    ui: &mut egui::Ui,
+    id: DeckId,
+    show_mode: bool,
+    palette: ThemePalette,
+    accent: egui::Color32,
+    slot: &mut DeckPackageSlot,
+    packages: &[EffectDescriptor],
+    actions: &mut Vec<UiAction>,
+) {
     let selected = packages
         .iter()
         .find(|candidate| candidate.id == slot.package_id);
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("◆ ALGORITHMIC FX")
+                .size(20.0)
+                .strong()
+                .color(accent),
+        );
+        ui.label(
+            egui::RichText::new(selected.map_or("Off", |package| package.name.as_str()))
+                .size(18.0)
+                .strong(),
+        );
+    });
     if show_mode {
-        ui.label(selected.map_or("None", |package| package.name.as_str()));
-    } else {
-        let previous_id = slot.package_id.clone();
-        egui::ComboBox::from_id_salt(("deck-package", id.index()))
-            .selected_text(selected.map_or("None", |package| package.name.as_str()))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut slot.package_id, String::new(), "None");
-                for package in packages {
-                    ui.selectable_value(&mut slot.package_id, package.id.clone(), &package.name);
-                }
-            });
-        if slot.package_id != previous_id {
-            slot.parameters = packages
-                .iter()
-                .find(|candidate| candidate.id == slot.package_id)
-                .map(|package| {
-                    package
-                        .parameters
-                        .iter()
-                        .map(|parameter| EffectParameterValue {
-                            id: parameter.id.clone(),
-                            value: parameter.default,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            slot.modulation.fill(DeckPackageModulationRoute::default());
-        }
+        ui.weak("Algorithm choice is locked in Show Mode.");
+    } else if algorithm_tiles(
+        ui,
+        &mut slot.package_id,
+        packages,
+        palette,
+        accent,
+        true,
+        true,
+    ) {
+        slot.parameters = packages
+            .iter()
+            .find(|candidate| candidate.id == slot.package_id)
+            .map(|package| {
+                package
+                    .parameters
+                    .iter()
+                    .map(|parameter| EffectParameterValue {
+                        id: parameter.id.clone(),
+                        value: parameter.default,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        slot.modulation.fill(DeckPackageModulationRoute::default());
     }
 
     if slot.package_id.is_empty() {
         ui.weak("Select a deck-v1 package to run it before this layer is blended.");
         return;
     }
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.checkbox(&mut slot.bypassed, "Bypass package");
+        let bypass = egui::Button::new(
+            egui::RichText::new(if slot.bypassed { "BYPASSED" } else { "ACTIVE" })
+                .size(15.0)
+                .strong(),
+        )
+        .min_size(egui::vec2(110.0, 34.0))
+        .fill(if slot.bypassed {
+            palette.control_tint(palette.warning, 0.35)
+        } else {
+            palette.control_tint(palette.success, 0.35)
+        });
+        if ui
+            .add(bypass)
+            .on_hover_text("Toggle the algorithm without losing its settings")
+            .clicked()
+        {
+            slot.bypassed = !slot.bypassed;
+        }
+        ui.spacing_mut().slider_width = (ui.available_width() - 60.0).clamp(120.0, 320.0);
         ui.add(egui::Slider::new(&mut slot.mix, 0.0..=1.0).text("wet"));
     });
     let Some(package) = packages
@@ -764,9 +1144,18 @@ fn draw_deck_package(
     }
     if !package.presets.is_empty() && !show_mode {
         ui.horizontal_wrapped(|ui| {
-            ui.label("Looks");
+            ui.strong("Looks");
             for preset in &package.presets {
-                if ui.small_button(&preset.label).clicked() {
+                let response = ui.add(
+                    egui::Button::new(egui::RichText::new(&preset.label).size(14.0))
+                        .min_size(egui::vec2(0.0, 28.0)),
+                );
+                let response = if preset.description.is_empty() {
+                    response
+                } else {
+                    response.on_hover_text(&preset.description)
+                };
+                if response.clicked() {
                     for (parameter_id, preset_value) in &preset.values {
                         if let Some(value) = slot
                             .parameters
@@ -947,12 +1336,18 @@ pub(super) const EFFECT_TARGETS: [EffectTarget; 18] = [
     EffectTarget::BloomChroma,
 ];
 
-pub(super) const BEAT_DIVISIONS: [(f32, &str); 8] = [
+pub(super) const BEAT_DIVISIONS: [(f32, &str); 14] = [
     (0.0625, "1/16 beat"),
     (0.125, "1/8 beat"),
+    (1.0 / 6.0, "1/6 beat (triplet)"),
     (0.25, "1/4 beat"),
+    (1.0 / 3.0, "1/3 beat (triplet)"),
+    (0.375, "3/8 beat (dotted)"),
     (0.5, "1/2 beat"),
+    (2.0 / 3.0, "2/3 beat (triplet)"),
+    (0.75, "3/4 beat (dotted)"),
     (1.0, "1 beat"),
+    (1.5, "1.5 beats (dotted)"),
     (2.0, "2 beats"),
     (4.0, "4 beats"),
     (8.0, "8 beats"),
@@ -1004,6 +1399,6 @@ pub(super) fn mod_source_label(source: u8) -> &'static str {
 pub(super) fn beat_division_label(beats: f32) -> &'static str {
     BEAT_DIVISIONS
         .iter()
-        .find(|(candidate, _)| (*candidate - beats).abs() < f32::EPSILON)
+        .find(|(candidate, _)| (*candidate - beats).abs() < 1.0e-4)
         .map_or("Custom", |(_, label)| *label)
 }

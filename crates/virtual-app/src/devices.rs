@@ -700,6 +700,7 @@ impl State {
                         1 => lfo.rate_hz = update.value.clamp(0.01, 20.0),
                         2 => lfo.depth = update.value.clamp(0.0, 1.0),
                         3 => lfo.phase = update.value.rem_euclid(1.0),
+                        4 => lfo.offset = update.value.clamp(-1.0, 1.0),
                         _ => {}
                     }
                 }
