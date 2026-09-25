@@ -29,7 +29,7 @@ Keep a local, redistribution-safe fixture folder containing:
 - conventional long-GOP H.264 or H.265 and intraframe ProRes/DNx media;
 - one PNG and one JPEG still;
 - one live camera or capture-card input when hardware is available;
-- a saved v5 project that fills representative slots and enables deck/master FX.
+- a saved v6 project that fills representative slots and enables deck/master FX.
 
 Record media duration, codec, dimensions and frame rate. Do not commit licensed
 show content to the repository.
@@ -60,6 +60,18 @@ stuck deck selection or stale frame after seek/source replacement.
 - Exercise a composition-size change and verify feedback/history resets cleanly.
 
 ## Device and failure rehearsal
+
+- Change parameters while project storage is slow or unavailable. Manual saves
+  and autosaves must not stall program output; queue-full and I/O errors must be
+  visible. Save As, switch projects while a save is pending, and close with
+  pending saves; verify recovery belongs to the correct project and contains
+  the latest state.
+- Stop camera frame delivery, then replace the source and close the application.
+  Check deadline/cancellation diagnostics and recovery on the real capture
+  backend; synthetic tests do not prove a native driver honors interrupts.
+- Record a camera while forcing frame drops, including immediately before Stop.
+  Check exported duration and playback speed, test capture/requested FPS
+  mismatch, and rehearse disk-full and recording-directory failures.
 
 - Deny then grant camera/microphone permission on a clean test account.
 - Disconnect/reconnect the selected audio input and each requested MIDI device.

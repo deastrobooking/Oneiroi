@@ -8,6 +8,8 @@ use std::time::Duration;
 use oneiroi_core::MediaTime;
 use oneiroi_hap::Decoder as HapDecoder;
 
+use crate::capture_interrupt::CaptureCancellation;
+
 use crate::{
     CameraConfig, DecodePath, FfmpegVideoDecoder, FrameBufferPool, FramePoolStats, HapDemuxer,
     ScheduledFrame, VideoFramePayload,
@@ -23,6 +25,7 @@ enum DecoderCommand {
         seek_to: Option<MediaTime>,
     },
     Camera {
+        cancellation: CaptureCancellation,
         config: CameraConfig,
         generation: u64,
     },
@@ -87,6 +90,7 @@ impl ArmedDecoderFailure {
 }
 
 pub struct DeckDecoder {
+    capture_cancellation: CaptureCancellation,
     commands: mpsc::Sender<DecoderCommand>,
     frames: Receiver<ScheduledFrame<VideoFramePayload>>,
     events: Receiver<DecoderEvent>,
@@ -127,6 +131,7 @@ impl DeckDecoder {
             })
             .expect("spawn deck decoder");
         Self {
+            capture_cancellation: CaptureCancellation::default(),
             commands: commands_tx,
             frames: frames_rx,
             events: events_rx,
@@ -162,6 +167,7 @@ impl DeckDecoder {
         start_at: Option<MediaTime>,
         seek_to: Option<MediaTime>,
     ) {
+        let _ = self.capture_cancellation.next();
         let _ = self.commands.send(DecoderCommand::Load {
             path,
             decode_path,
@@ -172,13 +178,17 @@ impl DeckDecoder {
     }
 
     pub fn stop(&self) {
+        let _ = self.capture_cancellation.next();
         let _ = self.commands.send(DecoderCommand::Stop);
     }
 
     pub fn connect_camera(&self, config: CameraConfig, generation: u64) {
-        let _ = self
-            .commands
-            .send(DecoderCommand::Camera { config, generation });
+        let cancellation = self.capture_cancellation.next();
+        let _ = self.commands.send(DecoderCommand::Camera {
+            config,
+            generation,
+            cancellation,
+        });
     }
 
     pub fn try_frame(&self) -> Result<ScheduledFrame<VideoFramePayload>, TryRecvError> {
@@ -210,6 +220,7 @@ impl DeckDecoder {
 
 impl Drop for DeckDecoder {
     fn drop(&mut self) {
+        let _ = self.capture_cancellation.next();
         let _ = self.commands.send(DecoderCommand::Shutdown);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -463,9 +474,21 @@ fn handle_command(
             }
             false
         }
-        DecoderCommand::Camera { config, generation } => {
+        DecoderCommand::Camera {
+            config,
+            generation,
+            cancellation,
+        } => {
             *pending = None;
-            match FfmpegVideoDecoder::open_camera_with_pool(&config, frame_pool.clone()) {
+            *session = None;
+            if cancellation.is_canceled() {
+                return false;
+            }
+            match FfmpegVideoDecoder::open_camera_cancellable(
+                &config,
+                frame_pool.clone(),
+                cancellation,
+            ) {
                 Ok(decoder) => {
                     if let Some(failure) = failure.as_mut() {
                         failure.arm(generation);

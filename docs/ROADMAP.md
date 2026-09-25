@@ -4,11 +4,24 @@ This plan was revised after reviewing the application against the original MVP
 notes. The ordering is based on stage usability and dependency risk, not on
 which feature is most visually interesting.
 
+## September 2026 reliability follow-up
+
+Implemented: background project saves/autosaves, camera read cancellation and
+cooperative open/read deadlines, capture-timed camera recording with dropped-tail
+preservation, raw-recording storage estimates and a v6 golden project fixture.
+
+Next: certify these changes with the physical failure matrix, produce the
+self-contained macOS bundle, and add frame-time/decode/upload diagnostics.
+Camera recording still uses uncompressed RGBA; compressed recording and disk
+capacity feedback remain open. Clip automation has a tested core evaluator but
+still needs application wiring, persistence and an editor. Program-output
+recording is separate from the implemented camera-to-clip recorder.
+
 ## Current execution sequence
 
 The August 2026 upgrade audit is being applied in this order:
 
-1. **Certify the baseline.** Keep strict Clippy, workspace tests, v1-v5 golden
+1. **Certify the baseline.** Keep strict Clippy, workspace tests, v1-v6 golden
    projects and the release build green. Run the separate physical-hardware
    matrix on the target show machine and record the binary hash.
 2. **Reduce app and UI coupling.** Route UI intent through one action boundary,

@@ -161,8 +161,8 @@ The current source tree includes:
 - Versioned `.oneiroi` JSON projects containing all 32 media paths, active and
   selected clips, per-clip playback settings, mixer/transport/effect state,
   tempo settings and MIDI maps.
-- Atomic Save/Save As-style path workflow, `Cmd/Ctrl+S`, five-second autosave,
-  close-time recovery snapshots and explicit crash-recovery loading.
+- Atomic Save/Save As-style path workflow, `Cmd/Ctrl+S`, bounded background
+  project writes and five-second autosave, close-time recovery snapshots and explicit crash-recovery loading.
 - Asynchronous 32-slot project restoration with project-epoch rejection;
   missing media remains visible with its original path and can be relinked
   through a native per-slot file browser without losing clip settings.
@@ -179,6 +179,9 @@ The current source tree includes:
   connectable to any of the four decks at a requested resolution/frame rate.
 - Bounded low-latency live decoding that drops stale capture frames under
   render backpressure instead of accumulating camera delay.
+- Cancellable camera reads with cooperative open/read deadlines, plus bounded
+  camera-to-clip recording that preserves capture timing across dropped frames.
+  Raw RGBA recording storage estimates are visible beside the record controls.
 - Camera-aware deck controls and project persistence; saved live inputs
   reconnect when a project is restored.
 - A typed, device-neutral audiovisual `ProjectGraph` with versioned contracts,

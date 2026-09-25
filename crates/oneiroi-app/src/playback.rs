@@ -124,10 +124,10 @@ impl State {
                 }
                 if self.live_configs[index].is_some()
                     && let oneiroi_media::VideoFramePayload::Rgba8(rgba) = &frame.payload
-                    && let Some(recording) = &self.camera_recordings[index]
+                    && let Some(recording) = &mut self.camera_recordings[index]
                     && !recording.finalizing
                 {
-                    recording.recorder.try_push(rgba);
+                    recording.recorder.try_push(rgba, frame.pts, frame.duration);
                 }
                 self.media_origins[index].get_or_insert(frame.pts);
                 if self.schedulers[index].enqueue(frame).is_err() {

@@ -6,6 +6,7 @@
 //! timestamped scheduling will be assembled here.
 
 mod capture;
+mod capture_interrupt;
 mod clips;
 mod decode_ffmpeg;
 mod demux;

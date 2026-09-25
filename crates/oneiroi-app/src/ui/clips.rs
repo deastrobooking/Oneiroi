@@ -387,6 +387,13 @@ pub(super) fn draw_clip_grid(
         if !camera_status.is_empty() {
             ui.weak(camera_status);
         }
+        if let DeckState::Live(config) = &mixer.deck(deck).state
+            && let (Some([width, height]), Some(fps)) = (config.requested_extent, config.requested_fps)
+        {
+            let megabytes = f64::from(width) * f64::from(height) * 4.0 * f64::from(fps) / 1_000_000.0;
+            ui.weak(format!("Raw recording ≈ {megabytes:.0} MB/s · {:.1} GB/min", megabytes * 60.0 / 1000.0))
+                .on_hover_text("Storage estimate from the requested camera format. Actual capture rate may differ.");
+        }
     });
 
     if state.show_mode {

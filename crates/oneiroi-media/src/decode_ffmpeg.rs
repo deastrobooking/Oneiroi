@@ -7,6 +7,8 @@ use ffmpeg_next as ffmpeg;
 use oneiroi_core::{MediaTime, MediaTimeError};
 use thiserror::Error;
 
+use crate::capture_interrupt::{CaptureCancellation, CaptureInterrupt};
+
 use crate::{CameraConfig, FrameBufferPool, RgbaFrame, camera_pts};
 
 const LIVE_READ_RETRY_DELAY: Duration = Duration::from_millis(10);
@@ -18,8 +20,39 @@ fn is_temporary_live_read_error(live: bool, error: &ffmpeg::Error) -> bool {
     )
 }
 
+// Returning EOF separately lets the caller drain the codec. Cancellation and
+// deadlines also cover backends that repeatedly return EAGAIN without invoking
+// FFmpeg's interrupt callback.
+fn read_packet_with_retry(
+    live: bool,
+    interrupt: Option<&CaptureInterrupt>,
+    mut read: impl FnMut() -> Result<(), ffmpeg::Error>,
+) -> Result<bool, FfmpegDecodeError> {
+    loop {
+        if let Some(interrupt) = interrupt {
+            interrupt.check()?;
+        }
+        let result = read();
+        if let Some(interrupt) = interrupt {
+            interrupt.check()?;
+        }
+        match result {
+            Ok(()) => return Ok(true),
+            Err(ffmpeg::Error::Eof) => return Ok(false),
+            Err(error) if is_temporary_live_read_error(live, &error) => {
+                std::thread::sleep(LIVE_READ_RETRY_DELAY);
+            }
+            Err(error) => return Err(FfmpegDecodeError::Read(error)),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum FfmpegDecodeError {
+    #[error("camera operation canceled")]
+    CaptureCanceled,
+    #[error("camera stopped responding before the read/open deadline")]
+    CaptureTimeout,
     #[error("initialize FFmpeg: {0}")]
     Initialize(ffmpeg::Error),
     #[error("open media file {path}: {source}")]
@@ -75,7 +108,9 @@ pub struct DecodedRgbaFrame {
 }
 
 pub struct FfmpegVideoDecoder {
+    // Field order matters: close the input before freeing its callback state.
     input: ffmpeg::format::context::Input,
+    capture_interrupt: Option<Box<CaptureInterrupt>>,
     stream_index: usize,
     time_base: ffmpeg::Rational,
     average_duration: Option<MediaTime>,
@@ -149,6 +184,16 @@ impl FfmpegVideoDecoder {
         config: &CameraConfig,
         frame_pool: FrameBufferPool,
     ) -> Result<Self, FfmpegDecodeError> {
+        Self::open_camera_cancellable(config, frame_pool, CaptureCancellation::default())
+    }
+
+    pub(crate) fn open_camera_cancellable(
+        config: &CameraConfig,
+        frame_pool: FrameBufferPool,
+        cancellation: CaptureCancellation,
+    ) -> Result<Self, FfmpegDecodeError> {
+        let mut interrupt = Box::new(CaptureInterrupt::new(cancellation));
+        interrupt.check()?;
         ffmpeg::init().map_err(FfmpegDecodeError::Initialize)?;
         ffmpeg::device::register_all();
         let backend = std::ffi::CString::new(config.device.backend.as_str()).map_err(|_| {
@@ -161,10 +206,6 @@ impl FfmpegVideoDecoder {
                 config.device.backend.clone(),
             ));
         }
-        // SAFETY: av_find_input_format returns a process-lifetime descriptor;
-        // the wrapper does not free it.
-        let input_format = unsafe { ffmpeg::format::format::Input::wrap(format_ptr.cast_mut()) };
-        let format = ffmpeg::Format::Input(input_format);
         let mut options = ffmpeg::Dictionary::new();
         options.set("fflags", "nobuffer");
         options.set("flags", "low_delay");
@@ -178,27 +219,61 @@ impl FfmpegVideoDecoder {
         if let Some(fps) = config.requested_fps {
             options.set("framerate", &fps.to_string());
         }
-        let input_name = config.input_name();
-        let context =
-            ffmpeg::format::open_with(&input_name, &format, options).map_err(|source| {
-                FfmpegDecodeError::OpenCamera {
+        let input_name = std::ffi::CString::new(config.input_name()).map_err(|_| {
+            FfmpegDecodeError::CameraBackendUnavailable("invalid camera ID".to_owned())
+        })?;
+        // The safe wrapper cannot combine a device format, dictionary and owned
+        // interrupt callback. Keep ownership explicit on every failure path.
+        // SAFETY: All pointers refer to live local values or FFmpeg allocations.
+        // On success Input owns the context; its callback's box moves with it.
+        let input = unsafe {
+            let mut context = ffmpeg::ffi::avformat_alloc_context();
+            if context.is_null() {
+                return Err(FfmpegDecodeError::OpenCamera {
                     device: config.device.label.clone(),
-                    source,
-                }
-            })?;
-        let ffmpeg::format::Context::Input(input) = context else {
-            return Err(FfmpegDecodeError::CameraBackendUnavailable(
-                config.device.backend.clone(),
-            ));
+                    source: ffmpeg::Error::Other {
+                        errno: ffmpeg::error::ENOMEM,
+                    },
+                });
+            }
+            (*context).interrupt_callback = interrupt.callback();
+            let mut dictionary = options.disown();
+            let opened = ffmpeg::ffi::avformat_open_input(
+                &mut context,
+                input_name.as_ptr(),
+                format_ptr,
+                &mut dictionary,
+            );
+            drop(ffmpeg::Dictionary::own(dictionary));
+            if opened < 0 {
+                // avformat_open_input frees and nulls the context on failure.
+                interrupt.check()?;
+                return Err(FfmpegDecodeError::OpenCamera {
+                    device: config.device.label.clone(),
+                    source: ffmpeg::Error::from(opened),
+                });
+            }
+            let input = ffmpeg::format::context::Input::wrap(context);
+            let found = ffmpeg::ffi::avformat_find_stream_info(context, std::ptr::null_mut());
+            interrupt.check()?;
+            if found < 0 {
+                return Err(FfmpegDecodeError::OpenCamera {
+                    device: config.device.label.clone(),
+                    source: ffmpeg::Error::from(found),
+                });
+            }
+            input
         };
-        Self::from_input(
+        let mut decoder = Self::from_input(
             input,
             true,
             true,
             config.requested_fps.unwrap_or(30),
             true,
             frame_pool,
-        )
+        )?;
+        decoder.capture_interrupt = Some(interrupt);
+        Ok(decoder)
     }
 
     fn from_input(
@@ -255,6 +330,7 @@ impl FfmpegVideoDecoder {
 
         Ok(Self {
             input,
+            capture_interrupt: None,
             stream_index,
             time_base,
             average_duration,
@@ -290,7 +366,11 @@ impl FfmpegVideoDecoder {
     }
 
     pub fn next_frame(&mut self) -> Result<Option<DecodedRgbaFrame>, FfmpegDecodeError> {
+        if let Some(interrupt) = &mut self.capture_interrupt {
+            interrupt.begin_read();
+        }
         loop {
+            self.check_capture_interrupt()?;
             match self.decoder.receive_frame(&mut self.decoded) {
                 Ok(()) => return self.copy_decoded().map(Some),
                 Err(ffmpeg::Error::Eof) => return Ok(None),
@@ -305,21 +385,17 @@ impl FfmpegVideoDecoder {
             }
             let mut packet = ffmpeg::Packet::empty();
             loop {
-                match packet.read(&mut self.input) {
-                    Ok(()) if packet.stream() == self.stream_index => break,
-                    Ok(()) => continue,
-                    Err(ffmpeg::Error::Eof) => {
-                        self.decoder.send_eof().map_err(FfmpegDecodeError::Submit)?;
-                        self.draining = true;
-                        break;
-                    }
-                    Err(error) if is_temporary_live_read_error(self.live, &error) => {
-                        // AVFoundation can report EAGAIN until its capture callback has
-                        // delivered the next frame. Match FFmpeg's demux loop: wait briefly
-                        // and retry instead of disconnecting an otherwise healthy camera.
-                        std::thread::sleep(LIVE_READ_RETRY_DELAY);
-                    }
-                    Err(error) => return Err(FfmpegDecodeError::Read(error)),
+                let has_packet =
+                    read_packet_with_retry(self.live, self.capture_interrupt.as_deref(), || {
+                        packet.read(&mut self.input)
+                    })?;
+                if !has_packet {
+                    self.decoder.send_eof().map_err(FfmpegDecodeError::Submit)?;
+                    self.draining = true;
+                    break;
+                }
+                if packet.stream() == self.stream_index {
+                    break;
                 }
             }
             if !self.draining {
@@ -328,6 +404,12 @@ impl FfmpegVideoDecoder {
                     .map_err(FfmpegDecodeError::Submit)?;
             }
         }
+    }
+
+    fn check_capture_interrupt(&self) -> Result<(), FfmpegDecodeError> {
+        self.capture_interrupt
+            .as_ref()
+            .map_or(Ok(()), |interrupt| interrupt.check())
     }
 
     fn copy_decoded(&mut self) -> Result<DecodedRgbaFrame, FfmpegDecodeError> {
@@ -423,5 +505,56 @@ mod tests {
         assert!(is_temporary_live_read_error(true, &eagain));
         assert!(!is_temporary_live_read_error(false, &eagain));
         assert!(!is_temporary_live_read_error(true, &eio));
+    }
+
+    #[test]
+    fn stalled_live_read_can_be_canceled_without_waiting_for_another_frame() {
+        let owner = CaptureCancellation::default();
+        let cancellation = owner.next();
+        let (entered, started) = std::sync::mpsc::sync_channel(1);
+        let (finished, completion) = std::sync::mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let mut interrupt = CaptureInterrupt::new(cancellation);
+            interrupt.begin_read();
+            let result = read_packet_with_retry(true, Some(&interrupt), || {
+                let _ = entered.try_send(());
+                Err(ffmpeg::Error::Other {
+                    errno: ffmpeg::error::EAGAIN,
+                })
+            });
+            finished.send(result).unwrap();
+        });
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        let _ = owner.next();
+        let result = completion.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(result, Err(FfmpegDecodeError::CaptureCanceled)));
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn live_retry_keeps_temporary_underruns_distinct_from_end_of_stream() {
+        let mut reads = 0;
+        assert!(
+            read_packet_with_retry(true, None, || {
+                reads += 1;
+                if reads == 1 {
+                    Err(ffmpeg::Error::Other {
+                        errno: ffmpeg::error::EAGAIN,
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap()
+        );
+        assert!(!read_packet_with_retry(true, None, || Err(ffmpeg::Error::Eof)).unwrap());
+        assert!(matches!(
+            read_packet_with_retry(false, None, || {
+                Err(ffmpeg::Error::Other {
+                    errno: ffmpeg::error::EAGAIN,
+                })
+            }),
+            Err(FfmpegDecodeError::Read(_))
+        ));
     }
 }

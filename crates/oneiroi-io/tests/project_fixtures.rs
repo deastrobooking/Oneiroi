@@ -20,7 +20,7 @@ fn fixture_path(relative: &str) -> PathBuf {
 }
 
 #[test]
-fn v1_golden_project_migrates_to_v5_and_round_trips() {
+fn v1_golden_project_migrates_to_current_and_round_trips() {
     let raw: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/project-v1.oneiroi")).unwrap();
     assert_eq!(raw["version"], 1);
@@ -79,7 +79,7 @@ fn v1_golden_project_migrates_to_v5_and_round_trips() {
 }
 
 #[test]
-fn v2_golden_project_migrates_to_v5_and_round_trips() {
+fn v2_golden_project_migrates_to_current_and_round_trips() {
     let raw: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/project-v2.oneiroi")).unwrap();
     assert_eq!(raw["version"], 2);
@@ -143,7 +143,7 @@ fn v2_golden_project_migrates_to_v5_and_round_trips() {
 }
 
 #[test]
-fn v3_golden_project_migrates_to_v5_and_round_trips() {
+fn v3_golden_project_migrates_to_current_and_round_trips() {
     let raw: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/project-v3.oneiroi")).unwrap();
     assert_eq!(raw["version"], 3);
@@ -195,7 +195,7 @@ fn v3_golden_project_migrates_to_v5_and_round_trips() {
 }
 
 #[test]
-fn v4_golden_project_migrates_to_v5_and_round_trips() {
+fn v4_golden_project_migrates_to_current_and_round_trips() {
     let raw: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/project-v4.oneiroi")).unwrap();
     assert_eq!(raw["version"], 4);
@@ -269,4 +269,46 @@ fn v5_golden_project_migrates_to_v6_and_round_trips() {
     let reloaded: ProjectFile = load_project(&round_trip_path).unwrap();
     assert_eq!(reloaded, project);
     fs::remove_file(round_trip_path).unwrap();
+}
+
+#[test]
+fn v6_golden_project_preserves_packages_modulation_and_clock_rig() {
+    let project = load_project(fixture_path("tests/fixtures/project-v6.oneiroi")).unwrap();
+    assert_eq!(project.version, PROJECT_VERSION);
+    let package = &project.decks[0].package;
+    assert_eq!(package.package_id, "chromatic-split");
+    assert!(!package.bypassed);
+    assert_eq!(package.mix, 0.75);
+    assert_eq!(package.parameters[0].id, "amount");
+    assert_eq!(package.parameters[0].value, 0.025);
+    let key = oneiroi_core::effect_parameter_key("chromatic-split", "amount");
+    assert!(package.modulation[0].enabled);
+    assert_eq!(package.modulation[0].source, 3);
+    assert_eq!(package.modulation[0].parameter_key, key);
+    assert_eq!(package.modulation[0].amount, -0.35);
+    assert_eq!(
+        project.midi_mappings[0].target,
+        ControlTargetProject::DeckEffectParameter {
+            deck: 0,
+            parameter_key: key
+        }
+    );
+    assert_eq!(
+        project.settings.midi_clock.source,
+        oneiroi_io::ClockSourceProject::MidiInput
+    );
+    assert_eq!(project.settings.midi_clock.input_device, "v6-clock-in");
+    assert_eq!(project.settings.midi_clock.output_device, "v6-clock-out");
+    assert!(project.settings.midi_clock.send);
+    let plan = GraphCompiler::new(&builtin_registry(), CompileBudget::default())
+        .compile(project.graph.as_ref().unwrap())
+        .unwrap();
+    assert_eq!(plan.nodes().len(), 11);
+    let path = std::env::temp_dir().join(format!(
+        "oneiroi-project-v6-golden-{}.oneiroi",
+        std::process::id()
+    ));
+    save_project_atomic(&path, &project).unwrap();
+    assert_eq!(load_project(&path).unwrap(), project);
+    fs::remove_file(path).unwrap();
 }

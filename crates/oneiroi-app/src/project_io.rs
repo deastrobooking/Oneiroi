@@ -10,6 +10,7 @@ use oneiroi_io::{
 use oneiroi_media::{ClipAddress, ClipBank, ClipRestoreRequest, DeckId, LaunchQueue};
 use oneiroi_session::{CommandOperation, CommandOrigin};
 
+use super::project_save::{SaveCompletion, SaveKind, SaveRequest};
 use super::{State, display_path, project, resolve_project_paths};
 
 impl State {
@@ -67,15 +68,63 @@ impl State {
             self.project_status = "Enter a project path first.".to_owned();
             return;
         };
-        let snapshot = self.project_snapshot();
-        match save_project_atomic(&path, &snapshot) {
-            Ok(()) => {
-                self.project_path = Some(path.clone());
-                self.last_saved_project = Some(snapshot);
+        let request = SaveRequest {
+            epoch: self.project_epoch,
+            path,
+            snapshot: self.project_snapshot(),
+            kind: SaveKind::Project,
+        };
+        self.project_status = match self.project_saver.submit(request) {
+            Ok(()) => "Saving project…".to_owned(),
+            Err(error) => error.to_owned(),
+        };
+    }
+
+    pub(crate) fn poll_project_saves(&mut self) {
+        while let Some(completion) = self.project_saver.try_recv() {
+            self.apply_save_completion(completion);
+        }
+    }
+
+    fn apply_save_completion(&mut self, completion: SaveCompletion) {
+        if !completion.belongs_to(self.project_epoch) {
+            return;
+        }
+        let request = completion.request;
+        // Save As may have changed the recovery destination while this older
+        // autosave was in flight. It must not advertise the old recovery file.
+        if request.kind == SaveKind::Recovery
+            && request.path != autosave_path(self.project_path.as_deref(), &self.workspace)
+        {
+            return;
+        }
+        match completion.result {
+            Ok(()) if request.kind == SaveKind::Project => {
+                self.project_path = Some(request.path.clone());
+                self.last_saved_project = Some(request.snapshot);
                 self.recovery_path = None;
-                self.project_status = format!("Saved {}", display_path(&path));
+                self.project_status = format!("Saved {}", display_path(&request.path));
+            }
+            Ok(()) => {
+                self.recovery_path = Some(request.path);
+                self.project_status = "Autosaved recovery snapshot.".to_owned();
             }
             Err(error) => self.project_status = format!("Save failed: {error}"),
+        }
+    }
+
+    pub(crate) fn finish_project_saves(&mut self) {
+        // Closing has ended presentation: finish accepted Save/Save As requests
+        // before choosing the final recovery path, then durably save the latest
+        // state even when the background queue had been full.
+        for completion in self.project_saver.finish() {
+            self.apply_save_completion(completion);
+        }
+        if self.project_dirty() {
+            let path = autosave_path(self.project_path.as_deref(), &self.workspace);
+            if let Err(error) = save_project_atomic(&path, &self.project_snapshot()) {
+                log::error!("close-time recovery save failed: {error}");
+            }
         }
     }
 
@@ -329,12 +378,14 @@ impl State {
             return;
         }
         let path = autosave_path(self.project_path.as_deref(), &self.workspace);
-        match save_project_atomic(&path, &self.project_snapshot()) {
-            Ok(()) => {
-                self.recovery_path = Some(path);
-                self.project_status = "Autosaved recovery snapshot.".to_owned();
-            }
-            Err(error) => self.project_status = format!("Autosave failed: {error}"),
+        let request = SaveRequest {
+            epoch: self.project_epoch,
+            path,
+            snapshot: self.project_snapshot(),
+            kind: SaveKind::Recovery,
+        };
+        if let Err(error) = self.project_saver.submit(request) {
+            self.project_status = format!("Autosave deferred: {error}");
         }
     }
 }

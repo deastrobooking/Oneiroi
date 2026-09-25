@@ -10,6 +10,7 @@ mod output;
 mod playback;
 mod project;
 mod project_io;
+mod project_save;
 mod recovery;
 mod runtime;
 mod structural;
@@ -115,6 +116,7 @@ struct State {
     project_id: String,
     project_takes: Vec<TakeMetadataProject>,
     last_saved_project: Option<ProjectFile>,
+    project_saver: project_save::ProjectSaver,
     recovery_path: Option<PathBuf>,
     workspace: PathBuf,
     project_status: String,
@@ -251,7 +253,7 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => {
-                state.autosave_recovery();
+                state.finish_project_saves();
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => state.gpu.resize(size.width, size.height),
@@ -665,6 +667,8 @@ impl State {
             project_id,
             project_takes: Vec::new(),
             last_saved_project: None,
+            project_saver: project_save::ProjectSaver::new()
+                .context("start project save worker")?,
             recovery_path,
             workspace,
             project_status: String::new(),
@@ -723,6 +727,7 @@ impl State {
             self.ui.deck_effect_reload_status =
                 self.compositor.deck_effect_reload_status().to_owned();
         }
+        self.poll_project_saves();
         self.poll_imports();
         self.poll_folder_scans();
         self.poll_camera_recordings();

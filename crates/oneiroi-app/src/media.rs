@@ -524,7 +524,11 @@ impl State {
             deck.label(),
             address.slot + 1
         ));
-        match CameraRecorder::start(path.clone(), self.ui.camera_fps) {
+        let fps = self.live_configs[deck.index()]
+            .as_ref()
+            .and_then(|config| config.requested_fps)
+            .unwrap_or(30);
+        match CameraRecorder::start(path.clone(), fps) {
             Ok(recorder) => {
                 self.clips.begin_restore(address, path.clone());
                 self.recording_pending.insert(address);

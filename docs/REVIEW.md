@@ -1,6 +1,13 @@
 # Application review
 
-Review date: 2026-08-04
+Review date: 2026-09-24
+
+September follow-up: project writes now run on a bounded background worker;
+active camera reads support cancellation/deadlines; camera recordings retain
+capture timing across dropped frames; and golden fixtures cover v1-v6. These
+changes have automated coverage. Physical camera/display/storage failure
+certification and macOS packaging remain open. See the reliability entry in
+[release notes](RELEASE_NOTES.md) for behavior and limits.
 
 ## Executive assessment
 
@@ -55,7 +62,7 @@ gates rather than displace them.
 
 ### Persistence and validation
 
-- Project schema v5 migrates supported v1-v4 projects, validates values and
+- Project schema v6 migrates supported v1-v5 projects, validates values and
   persists graph, take identity and deterministic seeds.
 - Structural edits and performance controls enter an origin-aware command log.
   Bounded JSONL journals, checkpoints, recovery branches, markers and exported
@@ -81,8 +88,8 @@ notices must be settled before calling a build stage-ready.
 ### 3. Diagnostics depth
 
 FPS, surface health, decoder drop/repeat/late totals and RGBA lease counters are
-visible. GPU pass/upload timings, queue occupancy and per-deck decode latency are
-still needed to explain a marginal show machine without attaching a profiler.
+visible. Deck-package GPU pass timings are implemented. Upload timing, frame-time
+history, queue occupancy and per-deck decode latency are still needed to explain a marginal show machine without attaching a profiler.
 
 ### 4. Shader-path budgeting
 
@@ -98,10 +105,10 @@ See [Shader system](SHADER_SYSTEM.md) for the accepted sequence and invariants.
 
 ### Concentrated application orchestration
 
-`oneiroi-app/src/main.rs` remains roughly 1,350 lines and still coordinates
+`oneiroi-app/src/main.rs` remains roughly 1,450 lines and still coordinates
 windowing, media, projects, cameras, tempo and rendering. Action dispatch,
 output lifecycle and the toolbar/setup/diagnostics surfaces have been extracted;
-`ui.rs` is now roughly 930 lines with focused `clips`, `deck`, `master_fx`,
+`ui.rs` is now roughly 990 lines with focused `clips`, `deck`, `master_fx`,
 `midi`, `midi_manager` and `theme` modules.
 
 Next seams:
@@ -115,7 +122,7 @@ checkpoints.
 ### Project migration discipline
 
 Schema evolution reached v5 before golden project files were established. The
-repository now checks in v1-v5 fixtures and proves migration, current-schema
+repository now checks in v1-v6 fixtures and proves migration, current-schema
 save/reload and typed-graph compilation. Keep that fixture chain mandatory for
 every future schema revision.
 

@@ -14,9 +14,18 @@ Baseline recorded on 2026-08-30 from commit `2bfff4f`:
 The development hash is evidence for the baseline only. The final archive must
 record the hash of the packaged, signed release artifact.
 
-Step 1 validation after the implemented code gates: 273 workspace tests pass;
-the extended decoder soak remains intentionally ignored until target-machine
-certification.
+September 24 reliability follow-up, working tree based on `4589d51`:
+
+- `cargo test --workspace --locked`: 285 passed, zero failed; one opt-in soak.
+- The opt-in 10,000-reopen decoder soak was run separately and passed locally.
+- Formatting, strict all-target/all-feature Clippy and the locked release build
+  passed.
+- Background project saves, camera cancellation/deadlines, capture-timed
+  recording and the v6 golden project are implemented.
+- Development release binary SHA-256: `016662a77be1f4258f5bacfa4ab1726a3087d1fdb2fff5fb74f837af060256d2`.
+
+These are local development results. The target-machine matrix, packaged
+artifact hash and clean-machine installation checks below remain required.
 
 ## 1. Close advertised shader release gates
 

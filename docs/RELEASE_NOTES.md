@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Reliability follow-up (2026-09-24)
+
+- Moved manual project saves and five-second recovery autosaves to a bounded,
+  serialized worker. Save errors remain visible, stale project completions are
+  ignored, and close-time recovery drains accepted saves before capturing the
+  final state. Closing may still wait for storage; rendering does not wait for
+  project writes.
+- Added camera cancellation on source replacement, Stop and shutdown, with a
+  15-second open deadline and a two-second frame-read deadline. EAGAIN retry
+  loops check cancellation, and FFmpeg receives an owned interrupt callback.
+  Native calls that do not consult the callback still require hardware testing.
+- Preserved capture timestamps in camera recordings, including gaps and dropped
+  tail frames. The preceding image holds across a gap rather than shortening
+  the clip; capture duration takes precedence over the requested FPS fallback.
+- Moved recording-directory creation to the recorder worker and added a visible
+  raw-recording storage estimate. Recording remains uncompressed RGBA MOV;
+  compressed recording and disk-capacity monitoring remain future work.
+- Added a v6 golden project covering deck packages, stable modulation/MIDI
+  parameter identities, the MIDI clock rig and graph/save-reload compatibility.
+
 ### Operator interface
 
 - Added five project-persisted palette presets, an optional accent override,
