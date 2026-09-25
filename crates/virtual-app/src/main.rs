@@ -171,6 +171,7 @@ struct State {
     /// project so an audio-reactive rig reconnects on load.
     audio_wanted: bool,
     audio_snapshot: AudioInputSnapshot,
+    audio_visual: virtual_core::AudioVisual,
     audio_status: String,
     session_recoveries: Vec<recovery::RecoveryEntry>,
     session_recovery_status: String,
@@ -714,6 +715,7 @@ impl State {
             audio_input: None,
             audio_wanted: false,
             audio_snapshot: AudioInputSnapshot::default(),
+            audio_visual: virtual_core::AudioVisual::default(),
             audio_status,
             session_recoveries: Vec::new(),
             session_recovery_status: "Session recovery catalog not scanned".to_owned(),
@@ -751,6 +753,7 @@ impl State {
         if let Some(input) = &self.audio_input {
             input.set_settings(self.ui.audio_analysis);
             self.audio_snapshot = input.snapshot();
+            self.audio_visual = input.visual();
             if self.audio_snapshot.callback_errors > 0 {
                 self.audio_status = format!(
                     "Audio callback errors: {}",
@@ -826,6 +829,7 @@ impl State {
                     audio_status: &self.audio_status,
                     audio_connected: self.audio_input.is_some(),
                     audio_snapshot: self.audio_snapshot,
+                    audio_visual: &self.audio_visual,
                     midi: ui::MidiMetrics {
                         inputs: &self.midi_inputs,
                         status: &self.midi_status,

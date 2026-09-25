@@ -26,6 +26,26 @@ pub const SPECTRUM_BAND_LABELS: [&str; SPECTRUM_BANDS] = [
     "Brilliance",
     "Air",
 ];
+/// Log-spaced points in the fine spectrum curve, 20 Hz to 20 kHz.
+pub const SPECTRUM_CURVE_POINTS: usize = 256;
+const SPECTRUM_CURVE_LOW_HZ: f32 = 20.0;
+const SPECTRUM_CURVE_HIGH_HZ: f32 = 20_000.0;
+/// Frequency ratio between neighbouring curve points.
+const SPECTRUM_CURVE_RATIO: f32 = 1.027_459_5;
+
+pub fn spectrum_curve_frequency(point: usize) -> f32 {
+    SPECTRUM_CURVE_LOW_HZ
+        * (SPECTRUM_CURVE_HIGH_HZ / SPECTRUM_CURVE_LOW_HZ)
+            .powf(point as f32 / (SPECTRUM_CURVE_POINTS - 1) as f32)
+}
+
+/// Position of `frequency` along the curve, 0 at 20 Hz and 1 at 20 kHz.
+pub fn spectrum_curve_position(frequency: f32) -> f32 {
+    ((frequency / SPECTRUM_CURVE_LOW_HZ).ln()
+        / (SPECTRUM_CURVE_HIGH_HZ / SPECTRUM_CURVE_LOW_HZ).ln())
+    .clamp(0.0, 1.0)
+}
+
 /// RMS, bass, mid, high, transient, then the eight spectrum bands.
 pub const AUDIO_MOD_SOURCES: usize = 5 + SPECTRUM_BANDS;
 
@@ -117,6 +137,7 @@ pub struct AudioAnalyzer {
     smoothed: AudioSnapshot,
     previous_input_rms: f32,
     normalization_gain: f32,
+    effective_gain: f32,
 }
 
 impl AudioAnalyzer {
@@ -135,6 +156,7 @@ impl AudioAnalyzer {
             smoothed: AudioSnapshot::default(),
             previous_input_rms: 0.0,
             normalization_gain: 1.0,
+            effective_gain: 1.0,
         }
     }
 
@@ -192,6 +214,7 @@ impl AudioAnalyzer {
             self.normalization_gain = 1.0;
         }
         let effective_gain = settings.gain * self.normalization_gain;
+        self.effective_gain = effective_gain;
         let normalize =
             |value: f32| ((value - settings.noise_floor).max(0.0) * effective_gain).clamp(0.0, 1.0);
         let bands = std::array::from_fn(|band| {
@@ -273,6 +296,38 @@ impl AudioAnalyzer {
         for (slot, sample) in self.history[start..].iter_mut().zip(samples) {
             *slot = finite_or(*sample, 0.0).clamp(-1.0, 1.0);
         }
+    }
+
+    /// Fine spectrum of the latest analysis in dBFS, after input gain but
+    /// before band EQ, at [`spectrum_curve_frequency`] points.
+    pub fn spectrum_curve(&self) -> [f32; SPECTRUM_CURVE_POINTS] {
+        let window_sum: f32 = self.band_window.iter().sum();
+        let scale = 2.0 / window_sum.max(1.0) * self.effective_gain;
+        let bin_hz = self.sample_rate as f32 / SPECTRUM_ANALYSIS_SIZE as f32;
+        let last_bin = SPECTRUM_ANALYSIS_SIZE / 2;
+        let magnitude = |bin: usize| self.band_spectrum[bin.min(last_bin)].norm() * scale;
+        std::array::from_fn(|point| {
+            let frequency = spectrum_curve_frequency(point);
+            // Each point covers the span halfway to its neighbours.
+            let step = SPECTRUM_CURVE_RATIO.sqrt();
+            let low_bin = (frequency / step / bin_hz).ceil() as usize;
+            let high_bin = (frequency * step / bin_hz).floor() as usize;
+            let amplitude = if high_bin >= low_bin && low_bin <= last_bin {
+                (low_bin.max(1)..=high_bin.min(last_bin))
+                    .map(magnitude)
+                    .fold(0.0, f32::max)
+            } else {
+                let position = frequency / bin_hz;
+                let below = position.floor() as usize;
+                if below >= last_bin {
+                    0.0
+                } else {
+                    let fraction = position - below as f32;
+                    magnitude(below.max(1)) * (1.0 - fraction) + magnitude(below + 1) * fraction
+                }
+            };
+            (20.0 * amplitude.max(1.0e-6).log10()).max(-120.0)
+        })
     }
 
     /// RMS amplitude of each spectrum band over the rolling history window.
@@ -401,6 +456,40 @@ mod tests {
                 snapshot.bands[band] > 0.4,
                 "{centre:.0} Hz: {:?}",
                 snapshot.bands
+            );
+        }
+    }
+
+    #[test]
+    fn curve_ratio_matches_point_spacing() {
+        let ratio = spectrum_curve_frequency(1) / spectrum_curve_frequency(0);
+        assert!((ratio - SPECTRUM_CURVE_RATIO).abs() < 1.0e-5, "{ratio}");
+        assert!((spectrum_curve_frequency(SPECTRUM_CURVE_POINTS - 1) - 20_000.0).abs() < 1.0);
+        assert!((spectrum_curve_position(632.46) - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn spectrum_curve_peaks_at_the_input_frequency() {
+        for frequency in [45.0, 440.0, 7_000.0] {
+            let mut analyzer = AudioAnalyzer::new(48_000);
+            let signal = continuous_sine(frequency, 48_000, 0.5);
+            for chunk in signal.chunks(AUDIO_ANALYSIS_SIZE) {
+                analyzer.analyze(chunk, immediate());
+            }
+            let curve = analyzer.spectrum_curve();
+            let loudest = (0..SPECTRUM_CURVE_POINTS)
+                .max_by(|a, b| curve[*a].total_cmp(&curve[*b]))
+                .unwrap();
+            let peak = spectrum_curve_frequency(loudest);
+            assert!(
+                (peak / frequency).ln().abs() < 0.08,
+                "{frequency} Hz peaked at {peak} Hz"
+            );
+            // A 0.5 peak sine is about -6 dBFS.
+            assert!(
+                (curve[loudest] + 6.0).abs() < 2.0,
+                "level {}",
+                curve[loudest]
             );
         }
     }

@@ -29,10 +29,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use virtual_core::{
-    AUDIO_MAP_SOURCES, AudioAnalysisSettings, AudioBinding, AudioMapMode, AudioMapper, ClockSource,
-    ControlTarget, FIXED_DECK_EFFECT_PARAMETER_COUNT, FrameTime, MappingMode, MidiMapper,
-    Quantization, SPECTRUM_BAND_EDGES_HZ, SPECTRUM_BAND_LABELS, SPECTRUM_BANDS, TempoClock,
-    audio_map_source_label, audio_map_sources, effect_parameter_key,
+    AUDIO_MAP_SOURCES, AudioAnalysisSettings, AudioBinding, AudioMapMode, AudioMapper, AudioVisual,
+    ClockSource, ControlTarget, FIXED_DECK_EFFECT_PARAMETER_COUNT, FrameTime, MappingMode,
+    MidiMapper, Quantization, SPECTRUM_BAND_EDGES_HZ, SPECTRUM_BAND_LABELS, SPECTRUM_BANDS,
+    SPECTRUM_CURVE_POINTS, TempoClock, audio_map_source_label, audio_map_sources,
+    effect_parameter_key,
 };
 use virtual_io::{
     AudioInputDevice, AudioInputSnapshot, MidiInputDevice, MidiInputStats, MidiOutputDevice,
@@ -103,6 +104,10 @@ pub struct UiState {
     pub audio_learn: Option<AudioLearn>,
     /// Decaying per-band peaks for the spectrum display.
     pub spectrum_peaks: [f32; SPECTRUM_BANDS],
+    /// Decaying peak of the fine spectrum curve, in dBFS.
+    pub spectrum_curve_peaks: Vec<f32>,
+    /// Waveform and spectrum held for inspection while frozen.
+    pub audio_display_frozen: Option<AudioVisual>,
     pub midi_device_id: String,
     pub midi_target: ControlTarget,
     /// Where the transport takes its tempo from.
@@ -182,6 +187,8 @@ impl Default for UiState {
             audio_map: AudioMapper::default(),
             audio_learn: None,
             spectrum_peaks: [0.0; SPECTRUM_BANDS],
+            spectrum_curve_peaks: vec![-120.0; SPECTRUM_CURVE_POINTS],
+            audio_display_frozen: None,
             midi_device_id: String::new(),
             midi_target: ControlTarget::Crossfader,
             midi_clock_source: ClockSource::Internal,
@@ -464,6 +471,7 @@ pub struct PerformanceMetrics<'a> {
     pub audio_status: &'a str,
     pub audio_connected: bool,
     pub audio_snapshot: AudioInputSnapshot,
+    pub audio_visual: &'a AudioVisual,
     pub midi: MidiMetrics<'a>,
     pub osc: OscMetrics<'a>,
     pub output_displays: &'a [OutputDisplay],
@@ -739,6 +747,7 @@ pub fn draw(
                     status: metrics.audio_status,
                     connected: metrics.audio_connected,
                     snapshot: metrics.audio_snapshot,
+                    visual: metrics.audio_visual,
                     palette,
                 },
                 &mut actions,

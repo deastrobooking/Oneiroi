@@ -5,6 +5,7 @@
 
 pub mod audio;
 pub mod audio_map;
+pub mod audio_visual;
 pub mod automation;
 pub mod clock;
 pub mod control;
@@ -15,12 +16,14 @@ pub mod tempo;
 pub use audio::{
     AUDIO_ANALYSIS_SIZE, AUDIO_MOD_SOURCES, AudioAnalysisSettings, AudioAnalyzer, AudioSnapshot,
     SPECTRUM_ANALYSIS_SIZE, SPECTRUM_BAND_EDGES_HZ, SPECTRUM_BAND_LABELS, SPECTRUM_BANDS,
+    SPECTRUM_CURVE_POINTS, spectrum_curve_frequency, spectrum_curve_position,
 };
 pub use audio_map::{
     AUDIO_MAP_LEVEL, AUDIO_MAP_SOURCES, AUDIO_MAP_TRANSIENT, AudioBinding, AudioMapMode,
     AudioMapper, MAX_AUDIO_BINDINGS, audio_map_source_label, audio_map_sources,
     default_output_range,
 };
+pub use audio_visual::{AudioScope, AudioVisual, SCOPE_SAMPLES, WAVEFORM_BLOCK, WAVEFORM_COLUMNS};
 pub use automation::{
     AutomationKeyframe, ClipAutomation, ClipAutomationLane, CurveType, MAX_AUTOMATION_KEYFRAMES,
     MAX_AUTOMATION_LANES, clip_position,

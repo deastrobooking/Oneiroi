@@ -9,7 +9,10 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample, Stream};
 use thiserror::Error;
-use virtual_core::{AUDIO_ANALYSIS_SIZE, AudioAnalysisSettings, AudioAnalyzer, AudioSnapshot};
+use virtual_core::{
+    AUDIO_ANALYSIS_SIZE, AudioAnalysisSettings, AudioAnalyzer, AudioScope, AudioSnapshot,
+    AudioVisual,
+};
 
 const AUDIO_QUEUE_CAPACITY: usize = 8;
 const AUDIO_INPUT_TIMEOUT: Duration = Duration::from_millis(250);
@@ -75,6 +78,7 @@ pub fn discover_audio_inputs() -> Result<Vec<AudioInputDevice>, AudioInputError>
 pub struct AudioInput {
     stream: Option<Stream>,
     analysis: Arc<Mutex<AudioSnapshot>>,
+    visual: Arc<Mutex<AudioVisual>>,
     settings: Arc<Mutex<AudioAnalysisSettings>>,
     queue_overruns: Arc<AtomicU64>,
     callback_errors: Arc<AtomicU64>,
@@ -136,14 +140,21 @@ impl AudioInput {
         }?;
         let analysis = Arc::new(Mutex::new(AudioSnapshot::default()));
         let settings = Arc::new(Mutex::new(settings.sanitized()));
-        let worker =
-            spawn_analysis_worker(receiver, sample_rate, analysis.clone(), settings.clone());
+        let visual = Arc::new(Mutex::new(AudioVisual::default()));
+        let worker = spawn_analysis_worker(
+            receiver,
+            sample_rate,
+            analysis.clone(),
+            visual.clone(),
+            settings.clone(),
+        );
         stream
             .play()
             .map_err(|error| AudioInputError::StartStream(error.to_string()))?;
         Ok(Self {
             stream: Some(stream),
             analysis,
+            visual,
             settings,
             queue_overruns,
             callback_errors,
@@ -156,6 +167,11 @@ impl AudioInput {
 
     pub fn set_settings(&self, settings: AudioAnalysisSettings) {
         *self.settings.lock().expect("audio settings lock") = settings.sanitized();
+    }
+
+    /// Waveform, scope and fine spectrum for the operator display.
+    pub fn visual(&self) -> AudioVisual {
+        self.visual.lock().expect("audio visual lock").clone()
     }
 
     pub fn snapshot(&self) -> AudioInputSnapshot {
@@ -270,24 +286,35 @@ fn spawn_analysis_worker(
     receiver: Receiver<AudioChunk>,
     sample_rate: u32,
     analysis: Arc<Mutex<AudioSnapshot>>,
+    visual: Arc<Mutex<AudioVisual>>,
     settings: Arc<Mutex<AudioAnalysisSettings>>,
 ) -> JoinHandle<()> {
     thread::Builder::new()
         .name("virtual-audio-analysis".to_owned())
         .spawn(move || {
             let mut analyzer = AudioAnalyzer::new(sample_rate);
+            let mut scope = AudioScope::new(sample_rate);
             loop {
                 match receiver.recv_timeout(AUDIO_INPUT_TIMEOUT) {
                     Ok(chunk) => {
                         let settings = *settings.lock().expect("audio settings lock");
-                        let snapshot = analyzer.analyze(&chunk.samples[..chunk.len], settings);
+                        let samples = &chunk.samples[..chunk.len];
+                        let snapshot = analyzer.analyze(samples, settings);
+                        scope.push(samples);
+                        let display = scope.visual(&analyzer);
                         *analysis.lock().expect("audio analysis lock") = snapshot;
+                        *visual.lock().expect("audio visual lock") = display;
                     }
                     Err(RecvTimeoutError::Timeout) => {
                         // A driver may stop callbacks without reporting an error.
                         // Do not leave modulation frozen at the last loud frame.
                         *analysis.lock().expect("audio analysis lock") = AudioSnapshot::default();
                         analyzer = AudioAnalyzer::new(sample_rate);
+                        scope = AudioScope::new(sample_rate);
+                        *visual.lock().expect("audio visual lock") = AudioVisual {
+                            sample_rate,
+                            ..AudioVisual::default()
+                        };
                     }
                     Err(RecvTimeoutError::Disconnected) => break,
                 }
@@ -310,7 +337,13 @@ mod tests {
             release_ms: 1.0,
             ..Default::default()
         }));
-        let worker = spawn_analysis_worker(receiver, 48_000, analysis.clone(), settings);
+        let worker = spawn_analysis_worker(
+            receiver,
+            48_000,
+            analysis.clone(),
+            Arc::new(Mutex::new(AudioVisual::default())),
+            settings,
+        );
         let chunk = AudioChunk {
             samples: [0.8; AUDIO_ANALYSIS_SIZE],
             len: AUDIO_ANALYSIS_SIZE,
@@ -345,7 +378,13 @@ mod tests {
             release_ms: 1.0,
             ..Default::default()
         }));
-        let worker = spawn_analysis_worker(receiver, 48_000, analysis.clone(), settings);
+        let worker = spawn_analysis_worker(
+            receiver,
+            48_000,
+            analysis.clone(),
+            Arc::new(Mutex::new(AudioVisual::default())),
+            settings,
+        );
         let mut chunk = AudioChunk {
             len: AUDIO_ANALYSIS_SIZE,
             ..Default::default()

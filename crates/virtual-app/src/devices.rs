@@ -46,6 +46,7 @@ impl State {
     pub(crate) fn connect_audio_input(&mut self, device_id: String) {
         self.audio_input = None;
         self.audio_snapshot = AudioInputSnapshot::default();
+        self.audio_visual = virtual_core::AudioVisual::default();
         self.ui.audio_map.reset();
         match AudioInput::connect(&device_id, self.ui.audio_channel, self.ui.audio_analysis) {
             Ok(input) => {
@@ -87,6 +88,7 @@ impl State {
         self.audio_input = None;
         self.audio_wanted = false;
         self.audio_snapshot = AudioInputSnapshot::default();
+        self.audio_visual = virtual_core::AudioVisual::default();
         self.ui.audio_map.reset();
         self.audio_status = "Audio input disconnected".to_owned();
     }

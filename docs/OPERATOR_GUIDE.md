@@ -428,6 +428,18 @@ interface, pick one channel or **All channels (mono mix)**; changing the
 channel while connected reconnects immediately. The strip's header shows a live
 mini-spectrum even when collapsed.
 
+### Waveform and spectrum view
+
+Above the band bars, a fine spectrum curve runs from 20 Hz to 20 kHz on a log
+scale with the eight bands shaded behind it and a slowly falling peak-hold
+trace. Hover it to read the exact frequency, level and band; click a band's
+region to start mapping that band. The readout above it names the loudest
+frequency and its band, which is the quickest way to find where a kick, bass
+line or hi-hat sits. Below, the waveform shows the last four seconds of input
+(red columns are clipping) beside an oscilloscope of the latest ~21 ms.
+**Freeze** holds both views for inspection; **Reset peaks** clears the
+peak-hold trace.
+
 ### 8-band spectrum EQ
 
 The spectrum splits the input into eight bands: Sub 20–60 Hz, Bass 60–150 Hz,

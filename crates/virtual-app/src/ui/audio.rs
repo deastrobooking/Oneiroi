@@ -2,7 +2,8 @@
 
 use super::*;
 use virtual_core::{
-    AUDIO_MAP_LEVEL, AUDIO_MAP_TRANSIENT, MAX_AUDIO_BINDINGS, default_output_range,
+    AUDIO_MAP_LEVEL, AUDIO_MAP_TRANSIENT, MAX_AUDIO_BINDINGS, SCOPE_SAMPLES, WAVEFORM_BLOCK,
+    WAVEFORM_COLUMNS, default_output_range, spectrum_curve_frequency, spectrum_curve_position,
 };
 
 pub(super) struct AudioPanelContext<'a> {
@@ -10,6 +11,7 @@ pub(super) struct AudioPanelContext<'a> {
     pub status: &'a str,
     pub connected: bool,
     pub snapshot: AudioInputSnapshot,
+    pub visual: &'a AudioVisual,
     pub palette: ThemePalette,
 }
 
@@ -44,6 +46,8 @@ pub(super) fn draw_audio_panel(
         .body(|ui| {
             draw_input_row(ui, state, &context, actions);
             ui.separator();
+            draw_signal_views(ui, state, &context);
+            ui.separator();
             draw_spectrum(ui, state, &context);
             ui.separator();
             draw_response(ui, state, &context);
@@ -64,6 +68,348 @@ pub(super) fn draw_audio_panel(
             }
         });
     }
+}
+
+/// Floor of the fine spectrum display in dBFS.
+const CURVE_FLOOR_DB: f32 = -96.0;
+const FREQUENCY_TICKS: [f32; 10] = [
+    20.0, 50.0, 100.0, 200.0, 500.0, 1_000.0, 2_000.0, 5_000.0, 10_000.0, 20_000.0,
+];
+
+fn band_for_frequency(frequency: f32) -> Option<usize> {
+    SPECTRUM_BAND_EDGES_HZ
+        .windows(2)
+        .position(|edges| (edges[0]..edges[1]).contains(&frequency))
+}
+
+fn frequency_label(frequency: f32) -> String {
+    if frequency >= 1_000.0 {
+        format!("{:.1} kHz", frequency / 1_000.0)
+    } else {
+        format!("{frequency:.0} Hz")
+    }
+}
+
+/// Waveform history, oscilloscope and fine spectrum, for choosing bands.
+fn draw_signal_views(ui: &mut egui::Ui, state: &mut UiState, context: &AudioPanelContext<'_>) {
+    let visual = state
+        .audio_display_frozen
+        .clone()
+        .unwrap_or_else(|| context.visual.clone());
+    if state.audio_display_frozen.is_none() {
+        let dt = ui.input(|input| input.stable_dt).clamp(0.0, 0.1);
+        for (peak, level) in state
+            .spectrum_curve_peaks
+            .iter_mut()
+            .zip(&visual.spectrum_db)
+        {
+            *peak = (*peak - dt * 20.0).max(*level).max(CURVE_FLOOR_DB);
+        }
+    }
+    let loudest = (0..visual.spectrum_db.len())
+        .max_by(|a, b| visual.spectrum_db[*a].total_cmp(&visual.spectrum_db[*b]))
+        .filter(|point| visual.spectrum_db[*point] > CURVE_FLOOR_DB + 12.0);
+    let peak_sample = visual
+        .waveform
+        .iter()
+        .rev()
+        .take(24)
+        .map(|[low, high]| low.abs().max(high.abs()))
+        .fold(0.0_f32, f32::max);
+
+    ui.horizontal_wrapped(|ui| {
+        let mut frozen = state.audio_display_frozen.is_some();
+        if ui
+            .toggle_value(&mut frozen, "Freeze")
+            .on_hover_text("Hold the waveform and spectrum to inspect them")
+            .changed()
+        {
+            state.audio_display_frozen = frozen.then(|| context.visual.clone());
+        }
+        if ui.button("Reset peaks").clicked() {
+            state.spectrum_curve_peaks.fill(CURVE_FLOOR_DB);
+        }
+        match loudest {
+            Some(point) => {
+                let frequency = spectrum_curve_frequency(point);
+                let band = band_for_frequency(frequency);
+                ui.label(format!(
+                    "Loudest {} · {:.0} dBFS",
+                    frequency_label(frequency),
+                    visual.spectrum_db[point]
+                ));
+                if let Some(band) = band {
+                    ui.colored_label(
+                        band_color(band),
+                        format!("→ {} band", SPECTRUM_BAND_LABELS[band]),
+                    );
+                }
+            }
+            None => {
+                ui.weak("No signal");
+            }
+        }
+        let peak_db = 20.0 * peak_sample.max(1.0e-6).log10();
+        if peak_sample >= 0.99 {
+            ui.colored_label(context.palette.danger, "CLIPPING · lower the input gain");
+        } else {
+            ui.weak(format!("Input peak {peak_db:.0} dBFS"));
+        }
+    });
+
+    let width = ui.available_width().clamp(420.0, 880.0);
+    if let Some(band) = spectrum_curve(ui, state, &visual, width) {
+        start_learn(state, band);
+    }
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        let scope_width = (width * 0.22).clamp(120.0, 200.0);
+        waveform_history(ui, &visual, width - scope_width - 8.0, context.palette);
+        oscilloscope(ui, &visual, scope_width, context.palette);
+    });
+}
+
+/// Returns a band the operator clicked, to start mapping it.
+fn spectrum_curve(
+    ui: &mut egui::Ui,
+    state: &UiState,
+    visual: &AudioVisual,
+    width: f32,
+) -> Option<u8> {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 170.0), egui::Sense::click());
+    let painter = ui.painter_at(rect);
+    let visuals = ui.visuals();
+    painter.rect_filled(rect, 4.0, visuals.extreme_bg_color);
+    let plot = rect.shrink2(egui::vec2(0.0, 14.0));
+    let x_for = |frequency: f32| plot.left() + spectrum_curve_position(frequency) * plot.width();
+    let y_for = |db: f32| {
+        plot.bottom() - ((db - CURVE_FLOOR_DB) / -CURVE_FLOOR_DB).clamp(0.0, 1.0) * plot.height()
+    };
+    let weak = visuals.weak_text_color();
+    let font = egui::FontId::proportional(10.0);
+
+    for band in 0..SPECTRUM_BANDS {
+        let left = x_for(SPECTRUM_BAND_EDGES_HZ[band]);
+        let right = x_for(SPECTRUM_BAND_EDGES_HZ[band + 1]);
+        let color = band_color(band);
+        let armed = state
+            .audio_learn
+            .is_some_and(|learn| usize::from(learn.source) == band);
+        painter.rect_filled(
+            egui::Rect::from_x_y_ranges(left..=right, plot.y_range()),
+            0.0,
+            color.gamma_multiply(if armed { 0.28 } else { 0.08 }),
+        );
+        painter.vline(
+            left,
+            rect.y_range(),
+            egui::Stroke::new(1.0, color.gamma_multiply(0.5)),
+        );
+        painter.text(
+            egui::pos2((left + right) * 0.5, rect.top() + 2.0),
+            egui::Align2::CENTER_TOP,
+            SPECTRUM_BAND_LABELS[band],
+            font.clone(),
+            color,
+        );
+    }
+    let mut db = -12.0;
+    while db > CURVE_FLOOR_DB {
+        let y = y_for(db);
+        painter.hline(
+            plot.x_range(),
+            y,
+            egui::Stroke::new(1.0, weak.gamma_multiply(0.2)),
+        );
+        painter.text(
+            egui::pos2(plot.right() - 2.0, y),
+            egui::Align2::RIGHT_BOTTOM,
+            format!("{db:.0}"),
+            font.clone(),
+            weak.gamma_multiply(0.7),
+        );
+        db -= 24.0;
+    }
+    for tick in FREQUENCY_TICKS {
+        painter.text(
+            egui::pos2(x_for(tick), rect.bottom() - 1.0),
+            egui::Align2::CENTER_BOTTOM,
+            frequency_label(tick)
+                .replace(" Hz", "")
+                .replace(" kHz", "k"),
+            font.clone(),
+            weak,
+        );
+    }
+
+    let points: Vec<egui::Pos2> = visual
+        .spectrum_db
+        .iter()
+        .enumerate()
+        .map(|(point, db)| egui::pos2(x_for(spectrum_curve_frequency(point)), y_for(*db)))
+        .collect();
+    let column = plot.width() / visual.spectrum_db.len().max(1) as f32 + 0.5;
+    for (point, position) in points.iter().enumerate() {
+        let band = band_for_frequency(spectrum_curve_frequency(point)).unwrap_or(0);
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(position.x - column * 0.5, position.y),
+                egui::pos2(position.x + column * 0.5, plot.bottom()),
+            ),
+            0.0,
+            band_color(band).gamma_multiply(0.45),
+        );
+    }
+    let peaks: Vec<egui::Pos2> = state
+        .spectrum_curve_peaks
+        .iter()
+        .enumerate()
+        .map(|(point, db)| egui::pos2(x_for(spectrum_curve_frequency(point)), y_for(*db)))
+        .collect();
+    painter.add(egui::Shape::line(
+        peaks,
+        egui::Stroke::new(1.0, weak.gamma_multiply(0.8)),
+    ));
+    painter.add(egui::Shape::line(
+        points,
+        egui::Stroke::new(1.5, visuals.strong_text_color()),
+    ));
+
+    let mut clicked = None;
+    if let Some(pointer) = response.hover_pos() {
+        let position = ((pointer.x - plot.left()) / plot.width()).clamp(0.0, 1.0);
+        let frequency = 20.0 * 1_000.0_f32.powf(position);
+        let point = ((position * (visual.spectrum_db.len() - 1) as f32).round() as usize)
+            .min(visual.spectrum_db.len() - 1);
+        painter.vline(pointer.x, plot.y_range(), egui::Stroke::new(1.0, weak));
+        let band = band_for_frequency(frequency);
+        let text = format!(
+            "{} · {:.0} dBFS{}",
+            frequency_label(frequency),
+            visual.spectrum_db[point],
+            band.map_or_else(String::new, |band| format!(
+                " · {} band · click to map",
+                SPECTRUM_BAND_LABELS[band]
+            ))
+        );
+        let anchor = if pointer.x > plot.center().x {
+            egui::Align2::RIGHT_TOP
+        } else {
+            egui::Align2::LEFT_TOP
+        };
+        painter.text(
+            egui::pos2(
+                pointer.x
+                    + if pointer.x > plot.center().x {
+                        -6.0
+                    } else {
+                        6.0
+                    },
+                plot.top() + 4.0,
+            ),
+            anchor,
+            text,
+            egui::FontId::proportional(12.0),
+            visuals.strong_text_color(),
+        );
+        if response.clicked() {
+            clicked = band.map(|band| band as u8);
+        }
+    }
+    clicked
+}
+
+fn waveform_history(ui: &mut egui::Ui, visual: &AudioVisual, width: f32, palette: ThemePalette) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 96.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let visuals = ui.visuals();
+    painter.rect_filled(rect, 4.0, visuals.extreme_bg_color);
+    let weak = visuals.weak_text_color();
+    painter.hline(
+        rect.x_range(),
+        rect.center().y,
+        egui::Stroke::new(1.0, weak.gamma_multiply(0.3)),
+    );
+    let half = rect.height() * 0.5 - 4.0;
+    let column_width = rect.width() / WAVEFORM_COLUMNS as f32;
+    // Newest on the right; history fills in from the right after connecting.
+    let offset = WAVEFORM_COLUMNS - visual.waveform.len().min(WAVEFORM_COLUMNS);
+    for (index, [low, high]) in visual.waveform.iter().enumerate() {
+        let x = rect.left() + (offset + index) as f32 * column_width;
+        let color = if low.abs().max(high.abs()) >= 0.99 {
+            palette.danger
+        } else {
+            palette.accent
+        };
+        painter.vline(
+            x,
+            (rect.center().y - high * half)..=(rect.center().y - low * half + 0.5),
+            egui::Stroke::new(column_width.max(1.0), color),
+        );
+    }
+    let seconds = if visual.sample_rate > 0 {
+        (WAVEFORM_COLUMNS * WAVEFORM_BLOCK) as f32 / visual.sample_rate as f32
+    } else {
+        0.0
+    };
+    let font = egui::FontId::proportional(10.0);
+    painter.text(
+        rect.left_bottom() + egui::vec2(4.0, -2.0),
+        egui::Align2::LEFT_BOTTOM,
+        format!("−{seconds:.1} s"),
+        font.clone(),
+        weak,
+    );
+    painter.text(
+        rect.right_bottom() + egui::vec2(-4.0, -2.0),
+        egui::Align2::RIGHT_BOTTOM,
+        "now",
+        font,
+        weak,
+    );
+    response.on_hover_text("Input waveform history · red columns are clipping");
+}
+
+fn oscilloscope(ui: &mut egui::Ui, visual: &AudioVisual, width: f32, palette: ThemePalette) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 96.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let visuals = ui.visuals();
+    painter.rect_filled(rect, 4.0, visuals.extreme_bg_color);
+    painter.hline(
+        rect.x_range(),
+        rect.center().y,
+        egui::Stroke::new(1.0, visuals.weak_text_color().gamma_multiply(0.3)),
+    );
+    let half = rect.height() * 0.5 - 4.0;
+    let count = visual.scope.len().max(2);
+    let points = visual
+        .scope
+        .iter()
+        .enumerate()
+        .map(|(index, sample)| {
+            egui::pos2(
+                rect.left() + index as f32 / (count - 1) as f32 * rect.width(),
+                rect.center().y - sample * half,
+            )
+        })
+        .collect();
+    painter.add(egui::Shape::line(
+        points,
+        egui::Stroke::new(1.25, palette.success),
+    ));
+    let milliseconds = if visual.sample_rate > 0 {
+        SCOPE_SAMPLES as f32 * 1_000.0 / visual.sample_rate as f32
+    } else {
+        0.0
+    };
+    painter.text(
+        rect.right_bottom() + egui::vec2(-4.0, -2.0),
+        egui::Align2::RIGHT_BOTTOM,
+        format!("{milliseconds:.0} ms"),
+        egui::FontId::proportional(10.0),
+        visuals.weak_text_color(),
+    );
+    response.on_hover_text("Oscilloscope · the latest cycle of the input");
 }
 
 fn decay_peaks(ui: &egui::Ui, state: &mut UiState, bands: &[f32; SPECTRUM_BANDS]) {
@@ -412,17 +758,21 @@ fn map_button(ui: &mut egui::Ui, state: &mut UiState, source: u8, palette: Theme
         if armed {
             cancel_learn(state);
         } else {
-            let restore_map_mode_off = match state.audio_learn {
-                Some(learn) => learn.restore_map_mode_off,
-                None => !state.midi_map_mode,
-            };
-            state.audio_learn = Some(AudioLearn {
-                source,
-                restore_map_mode_off,
-            });
-            state.midi_map_mode = true;
+            start_learn(state, source);
         }
     }
+}
+
+fn start_learn(state: &mut UiState, source: u8) {
+    let restore_map_mode_off = match state.audio_learn {
+        Some(learn) => learn.restore_map_mode_off,
+        None => !state.midi_map_mode,
+    };
+    state.audio_learn = Some(AudioLearn {
+        source,
+        restore_map_mode_off,
+    });
+    state.midi_map_mode = true;
 }
 
 pub(super) fn cancel_learn(state: &mut UiState) {
