@@ -128,8 +128,9 @@ every future schema revision.
 
 ### External integration and licensing
 
-- Ableton Link fits the tempo model, but `rusty_link` is GPL-2.0+ unless a
-  proprietary Ableton license is obtained. Resolve distribution policy first.
+- Update: GPL-2.0-or-later is selected and Link tempo/phase integration is
+  implemented. Network/hardware certification and transport sync remain;
+  see [Link](ABLETON_LINK.md).
 - NDI requires its SDK and redistribution terms. Keep any integration in an
   optional crate/feature with a build that remains functional without the SDK.
 - Syphon/Spout requires platform-specific native texture interop and should not

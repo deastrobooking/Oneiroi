@@ -92,6 +92,7 @@ pub struct UiState {
     pub midi_target: ControlTarget,
     /// Where the transport takes its tempo from.
     pub midi_clock_source: ClockSource,
+    pub link_peers: u64,
     /// Device trusted for incoming clock; empty follows whichever connected
     /// device clocks first.
     pub midi_clock_input_device: String,
@@ -163,6 +164,7 @@ impl Default for UiState {
             midi_device_id: String::new(),
             midi_target: ControlTarget::Crossfader,
             midi_clock_source: ClockSource::Internal,
+            link_peers: 0,
             midi_clock_input_device: String::new(),
             midi_output_device_id: String::new(),
             midi_clock_send: false,

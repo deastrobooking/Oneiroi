@@ -4,6 +4,7 @@
 mod actions;
 mod devices;
 mod effects;
+mod link;
 mod media;
 mod osc;
 mod output;
@@ -92,6 +93,7 @@ struct State {
     clips: ClipBank,
     launches: LaunchQueue,
     tempo: TempoClock,
+    link: link::LinkClock,
     tap_tempo: TapTempo,
     session_started: Instant,
     performance_started: Instant,
@@ -186,9 +188,7 @@ impl ApplicationHandler for App {
         }
         match State::new(event_loop) {
             Ok(mut state) => {
-                if self.initial_files.len() == 1
-                    && paths::is_project_path(&self.initial_files[0])
-                {
+                if self.initial_files.len() == 1 && paths::is_project_path(&self.initial_files[0]) {
                     state.open_project(self.initial_files.remove(0), false);
                 } else {
                     for path in self.initial_files.drain(..) {
@@ -635,6 +635,7 @@ impl State {
             clips: ClipBank::default(),
             launches: LaunchQueue::default(),
             tempo: TempoClock::default(),
+            link: link::LinkClock::new(),
             tap_tempo: TapTempo::default(),
             session_started: started,
             performance_started: started,
@@ -734,6 +735,7 @@ impl State {
         let now = Instant::now();
         self.poll_midi(now);
         self.poll_osc(now);
+        self.poll_link();
         if now.saturating_duration_since(self.output.last_display_refresh) >= Duration::from_secs(2)
         {
             self.refresh_output_displays();

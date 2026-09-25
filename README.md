@@ -6,6 +6,10 @@ validated WGSL custom effect-package runtime.
 
 Repository: <https://github.com/deastrobooking/VIRTUAL>
 
+Licensed under [GPL-2.0-or-later](LICENSE). Ableton Link tempo/phase
+synchronization is available under MIDI → Clock sync → Ableton Link.
+See [Link setup and validation](docs/ABLETON_LINK.md).
+
 
 ## At a glance
 
@@ -338,7 +342,5 @@ clips run at 24/25/30fps.
 
 ## Not decided yet
 
-- Ableton Link is GPLv2+ or a proprietary licence obtained from Ableton. Settle
-  this before `virtual-io` depends on it.
 - Whether ffmpeg is vendored and statically linked, and the LGPL consequences
   for distribution.
