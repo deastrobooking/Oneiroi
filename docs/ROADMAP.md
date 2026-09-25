@@ -411,8 +411,9 @@ effect/modulation route expansion and discovery remain in Phase 8.
 
 Start only after the Phase 7 release gate is repeatable.
 
-1. Decide Ableton Link licensing. If approved, add it behind an optional
-   feature and adapt its tempo/beat phase through the existing clock boundary.
+1. Ableton Link tempo/phase integration is implemented with GPL-2.0-or-later
+   licensing. Finish network/hardware certification, opt-in transport sync and
+   an SDK-free build feature; see [Link](ABLETON_LINK.md).
 2. Add MIDI clock output and Song Position Pointer through the device-neutral
    control layer.
 3. Expand OSC effect/modulation routes and publish route discovery metadata.

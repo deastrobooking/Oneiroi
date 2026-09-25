@@ -836,6 +836,7 @@ fn clock_source_to_project(value: ClockSource) -> ClockSourceProject {
     match value {
         ClockSource::Internal => ClockSourceProject::Internal,
         ClockSource::MidiInput => ClockSourceProject::MidiInput,
+        ClockSource::AbletonLink => ClockSourceProject::AbletonLink,
     }
 }
 
@@ -843,6 +844,7 @@ fn clock_source_from_project(value: ClockSourceProject) -> ClockSource {
     match value {
         ClockSourceProject::Internal => ClockSource::Internal,
         ClockSourceProject::MidiInput => ClockSource::MidiInput,
+        ClockSourceProject::AbletonLink => ClockSource::AbletonLink,
     }
 }
 

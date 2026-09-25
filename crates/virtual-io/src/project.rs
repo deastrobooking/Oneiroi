@@ -479,6 +479,7 @@ pub enum ClockSourceProject {
     #[default]
     Internal,
     MidiInput,
+    AbletonLink,
 }
 
 /// Operator theme choices. Stored as open strings rather than an enum so a

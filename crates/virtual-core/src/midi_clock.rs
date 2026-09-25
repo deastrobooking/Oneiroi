@@ -35,6 +35,8 @@ pub enum ClockSource {
     Internal,
     /// An external 24 PPQN MIDI clock arriving on a connected input.
     MidiInput,
+    /// Ableton Link session tempo and phase.
+    AbletonLink,
 }
 
 /// A MIDI System Real-Time or Song Position message.

@@ -191,6 +191,11 @@ fn draw_clock_sync(
                         "MIDI clock in",
                         "Tempo and beat phase follow an incoming 24 PPQN clock",
                     ),
+                    (
+                        ClockSource::AbletonLink,
+                        "Ableton Link",
+                        "Join a local-network Link session; share tempo and beat phase",
+                    ),
                 ] {
                     if ui
                         .selectable_label(state.midi_clock_source == source, label)
@@ -202,6 +207,9 @@ fn draw_clock_sync(
                     }
                 }
                 ui.separator();
+                if state.midi_clock_source == ClockSource::AbletonLink {
+                    ui.label(format!("Link · {} peers", state.link_peers));
+                }
                 ui.label("From");
                 let selected = if state.midi_clock_input_device.is_empty() {
                     "Any connected device"

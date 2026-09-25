@@ -266,6 +266,9 @@ impl State {
     /// Set the show tempo from any origin, keeping every consumer in step.
     pub(crate) fn apply_tempo(&mut self, bpm: f64, origin: CommandOrigin, now: Instant) {
         let bpm = bpm.clamp(20.0, 400.0);
+        if self.ui.midi_clock_source == ClockSource::AbletonLink {
+            self.link.set_tempo(bpm);
+        }
         self.record_show_operation(origin, now, CommandOperation::SetTempo { bpm });
         self.ui.bpm = bpm;
         self.tempo.set_bpm(
@@ -393,6 +396,10 @@ impl State {
     pub(crate) fn set_clock_source(&mut self, source: ClockSource) {
         self.ui.midi_clock_source = source;
         match source {
+            ClockSource::AbletonLink => {
+                self.tap_tempo.reset();
+                self.midi_clock_status = "Ableton Link".to_owned();
+            }
             ClockSource::Internal => {
                 self.midi_clock_status = "Internal tempo".to_owned();
             }
